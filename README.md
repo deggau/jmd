@@ -44,6 +44,8 @@ A aplicação inicia minimizada na área de notificação. `Win+J` abre a paleta
 
 Com o .NET 10 SDK e o NSIS instalados e `makensis.exe` no `PATH`, execute `./installer/Build-Installer.ps1`. O procedimento e os parâmetros estão descritos em [installer/README.md](installer/README.md).
 
+Quando houver uma release pública, a instalação da versão x64 mais recente poderá ser iniciada com `irm https://raw.githubusercontent.com/deggau/jmd/main/installer/install.ps1 | iex`.
+
 ## Status
 
 MVP inicial em implementação. O protótipo cobre conversão SQL `IN`, paleta WPF, armazenamento local, registro de atalhos globais e operações sobre o clipboard/seleção. O funcionamento real precisa ser validado no Windows nas aplicações alvo, especialmente o atalho `Win+J` e a recuperação da seleção após falhas.
