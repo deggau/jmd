@@ -11,3 +11,4 @@ Esta documentação é a referência inicial do projeto. Decisões marcadas como
 - [Casos de uso](use-cases/README.md): fluxos que orientam implementação e validação.
 - [Decisões técnicas](decisoes/README.md): registro de decisões e pendências.
 - [Riscos](riscos/README.md): limitações e estratégias de mitigação.
+- [Testes](testes/README.md): estratégia e cobertura automatizada dos casos de uso.

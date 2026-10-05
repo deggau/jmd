@@ -1,0 +1,11 @@
+<Application x:Class="DevToolbox.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+  <Application.Resources>
+    <SolidColorBrush x:Key="SurfaceBrush" Color="#FF17191F" />
+    <SolidColorBrush x:Key="CardBrush" Color="#FF22252D" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#FFB4F36A" />
+    <SolidColorBrush x:Key="MutedBrush" Color="#FF969BA7" />
+  </Application.Resources>
+</Application>

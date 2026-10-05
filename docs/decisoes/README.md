@@ -62,6 +62,12 @@ Reconhecer vírgula, pipe, ponto e vírgula ou quebras de linha (CRLF/LF/CR), se
 
 Regra adotada para itens vazios: ignorar separadores sobrando nas extremidades e rejeitar itens vazios entre separadores consecutivos, para evitar alterar silenciosamente a intenção. O usuário pode definir um delimitador preferido na tela de gerenciamento quando a detecção automática empatar.
 
+### D-010 — Ferramenta de instalação: NSIS
+
+**Estado:** aceita para a tarefa de empacotamento.
+
+Usar NSIS (Nullsoft Scriptable Install System) para gerar instalador e desinstalador Windows reproduzíveis. O projeto o descreve como gratuito para qualquer uso; sua licença principal permite uso comercial, com condições de atribuição e preservação de avisos. Revisar os componentes de compressão usados ao distribuir o instalador. [Documentação e licença oficial do NSIS](https://nsis.sourceforge.io/Docs/Chapter1.html).
+
 ## Pendências para validar antes da distribuição
 
 - Qual versão mínima do Windows será suportada?

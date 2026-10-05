@@ -36,7 +36,10 @@
 
 ## Fase 3 — Empacotamento e qualidade
 
-- Definir instalador/forma de distribuição e opção de iniciar com o Windows.
+- Criar instalador Windows com NSIS, ferramenta gratuita para uso pessoal e comercial.
+- Criar script reproduzível que publique a aplicação .NET 10 e gere instalador, incluindo atalhos e desinstalação.
+- Documentar instalação, atualização e remoção; avaliar opção de iniciar com o Windows.
+- Automatizar testes unitários dos casos de uso e executar a suíte antes de cada entrega.
 - Validar em versões e aplicações alvo.
 - Revisar uso de memória, logs, acessibilidade e recuperação após atualização.
 

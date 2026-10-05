@@ -1,0 +1,80 @@
+<Window x:Class="DevToolbox.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DevToolbox" Width="760" Height="570" MinWidth="650" MinHeight="480"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStartupLocation="CenterScreen" ShowInTaskbar="False" Topmost="True"
+        PreviewKeyDown="Window_PreviewKeyDown" Deactivated="Window_Deactivated">
+  <Border Background="{StaticResource SurfaceBrush}" BorderBrush="#FF3A3E48" BorderThickness="1"
+          CornerRadius="18" Padding="22">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+      <Grid Grid.Row="0" Margin="0,0,0,18">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Border Width="34" Height="34" CornerRadius="10" Background="{StaticResource AccentBrush}">
+            <TextBlock Text="J" Foreground="#FF17191F" FontSize="20" FontWeight="Bold"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+            <TextBlock x:Name="PageTitle" Text="DevToolbox" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock x:Name="PageSubtitle" Text="Ferramentas rápidas para desenvolvimento" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <Button x:Name="ManageButton" Content="Gerenciar atalhos" Click="ManageButton_Click"
+                  Padding="14,8" Margin="0,0,8,0" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
+          <Button Content="×" Click="CloseButton_Click" Width="34" Height="34" FontSize="18"
+                  Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
+        </StackPanel>
+      </Grid>
+      <TextBox x:Name="SearchBox" Grid.Row="1" Height="48" Padding="16,12" FontSize="15"
+               Background="#FF242730" Foreground="White" BorderBrush="#FF3A3E48"
+               CaretBrush="{StaticResource AccentBrush}" TextChanged="SearchBox_TextChanged"
+               VerticalContentAlignment="Center" Margin="0,0,0,16"
+               ToolTip="Buscar comando…" />
+      <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+        <ListBox x:Name="CommandsList" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemContainerStyle>
+            <Style TargetType="ListBoxItem">
+              <Setter Property="Padding" Value="0" />
+              <Setter Property="Margin" Value="0" />
+              <Setter Property="Background" Value="Transparent" />
+              <Setter Property="BorderThickness" Value="0" />
+            </Style>
+          </ListBox.ItemContainerStyle>
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Button Tag="{Binding Id}" Click="CommandButton_Click" Padding="16" Margin="0,0,0,9"
+                      Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1"
+                      HorizontalContentAlignment="Stretch" Cursor="Hand">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Description}" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+                    <TextBlock Text="{Binding Status}" Foreground="{Binding StatusBrush}" FontSize="11" Margin="0,7,0,0" />
+                  </StackPanel>
+                  <Border Grid.Column="1" Background="#FF30343E" CornerRadius="6" Padding="9,5" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Shortcut}" Foreground="#FFE4E7EC" FontSize="11" />
+                  </Border>
+                </Grid>
+              </Button>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </ScrollViewer>
+      <ScrollViewer x:Name="SettingsScroll" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="SettingsPanel" />
+      </ScrollViewer>
+      <Grid Grid.Row="3" Margin="0,14,0,0">
+        <TextBlock x:Name="StatusText" Text="Atalhos prontos" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
+        <TextBlock Text="↑ ↓ navegar   Enter executar   Esc fechar" Foreground="#FF777D89" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" />
+      </Grid>
+    </Grid>
+  </Border>
+</Window>
