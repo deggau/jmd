@@ -20,6 +20,7 @@ Permitir que o usuário transforme o conteúdo da área de transferência sem tr
 - C# com .NET 10.
 - WPF para a paleta e a tela de atalhos.
 - APIs Win32 isoladas no projeto `DevToolbox.Windows`.
+- NSIS para o instalador Windows por usuário.
 
 ## Estrutura
 
@@ -38,6 +39,10 @@ dotnet run --project .\src\DevToolbox.App\DevToolbox.App.csproj
 ```
 
 A aplicação inicia minimizada na área de notificação. `Win+J` abre a paleta, `Ctrl+Alt+I` converte o texto do clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração.
+
+## Criar instalador Windows
+
+Com o .NET 10 SDK e o NSIS instalados e `makensis.exe` no `PATH`, execute `./installer/Build-Installer.ps1`. O procedimento e os parâmetros estão descritos em [installer/README.md](installer/README.md).
 
 ## Status
 
