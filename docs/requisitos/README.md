@@ -25,6 +25,7 @@
 - **RF-21** Detectar delimitadores vírgula, pipe, ponto e vírgula e quebras de linha CRLF, LF ou CR.
 - **RF-22** Nunca incluir vírgula depois do último valor produzido.
 - **RF-23** Remover espaços externos dos itens e escapar apóstrofos internos duplicando-os antes de cercar cada item com apóstrofos.
+- **RF-24** Permitir escolher detecção automática ou um delimitador preferido para listas ambíguas, salvando a preferência localmente.
 
 ## Requisitos não funcionais
 

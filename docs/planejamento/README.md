@@ -48,4 +48,4 @@ Avaliar histórico opcional, mais tipos de conteúdo, importação/exportação 
 
 ## Marco de início de implementação
 
-Começar a Fase 1 após decidir as pendências da Fase 0 em [decisões técnicas](../decisoes/README.md). A documentação pode evoluir; não é necessário especificar cada ferramenta futura antes do protótipo.
+A implementação das Fases 1 e 2 começou. As pendências abertas da Fase 0 — versões mínimas do Windows, distribuição, inicialização automática e validação em aplicativos alvo — devem ser fechadas antes de empacotar a primeira versão. A documentação pode evoluir; não é necessário especificar cada ferramenta futura antes do protótipo.

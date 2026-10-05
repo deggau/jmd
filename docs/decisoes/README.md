@@ -16,19 +16,19 @@ Usar C# com .NET 10. .NET 10 é uma versão LTS com suporte previsto até novemb
 
 ### D-003 — Interface desktop: WPF
 
-**Estado:** proposta para o MVP.
+**Estado:** adotada para o setup inicial.
 
 Usar WPF sobre `net10.0-windows` para a aplicação residente, a paleta e a configuração. WPF é suportado no .NET 10 ([novidades do WPF no .NET 10](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/whats-new/net100)) e é uma opção direta para um utilitário Windows. A experiência visual da paleta será customizada e inspirada no fluxo do Raycast.
 
 ### D-004 — Atalhos globais
 
-**Estado:** proposta.
+**Estado:** adotada.
 
 Usar a API nativa `RegisterHotKey`/mensagem `WM_HOTKEY` ou abstração equivalente. O registro pode falhar se a combinação estiver em uso; o conflito deve ser visível e recuperável.
 
 ### D-005 — Primeiro tipo de entrada: texto Unicode
 
-**Estado:** proposta.
+**Estado:** adotada para o MVP.
 
 O MVP lê e escreve texto Unicode. Outros formatos ficam para uma fase posterior, com comportamento explícito por tipo.
 
@@ -56,20 +56,19 @@ Abrir uma paleta pesquisável por um atalho global configurável. Ela lista coma
 
 ### D-009 — Conversão de lista para literais SQL `IN`
 
-**Estado:** proposta para o MVP.
+**Estado:** adotada para o MVP.
 
 Reconhecer vírgula, pipe, ponto e vírgula ou quebras de linha (CRLF/LF/CR), separar os valores, remover espaços externos, escapar apóstrofos duplicando-os (`O'Brien` → `O''Brien`) e envolver cada valor em apóstrofos simples. Juntar os valores por vírgula sem delimitador final. Se não houver delimitador, tratar o texto não vazio como um único item. Se a detecção for ambígua, retornar erro e permitir que o usuário escolha um delimitador, em vez de produzir SQL possivelmente incorreto.
 
-Regra proposta para itens vazios: ignorar separadores sobrando nas extremidades e rejeitar itens vazios entre separadores consecutivos, para evitar alterar silenciosamente a intenção.
+Regra adotada para itens vazios: ignorar separadores sobrando nas extremidades e rejeitar itens vazios entre separadores consecutivos, para evitar alterar silenciosamente a intenção. O usuário pode definir um delimitador preferido na tela de gerenciamento quando a detecção automática empatar.
 
-## Pendências
+## Pendências para validar antes da distribuição
 
 - Qual versão mínima do Windows será suportada?
-- Quais três a cinco transformações comporão o MVP?
-- Deve ser possível atribuir a mesma combinação a dois comandos? Recomendação: não.
+- Deve ser possível atribuir a mesma combinação a dois comandos? A interface atualmente impede duplicatas ao editar.
 - A notificação de sucesso será toast do Windows, ícone da bandeja ou ambas?
 - A instalação oferecerá inicialização automática?
-- Confirmar a regra de desempate/configuração para dados com mais de um delimitador candidato na conversão SQL `IN`.
+- Validar combinações e substituição de texto nas aplicações Windows alvo.
 
 ## Avaliação de viabilidade
 

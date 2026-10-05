@@ -1,8 +1,8 @@
 # Arquitetura inicial
 
-## Direção proposta
+## Direção adotada
 
-Aplicação desktop residente para Windows, organizada em camadas, usando C#/.NET 10. WPF está proposto para a interface do MVP e será usado no setup inicial, mantendo a escolha revisável.
+Aplicação desktop residente para Windows, organizada em camadas, usando C#/.NET 10 e WPF para a interface inicial.
 
 ## Componentes
 
@@ -48,17 +48,14 @@ Atalhos padrão iniciais: `Win+J` abre a paleta, `Ctrl+Alt+I` transforma o clipb
 
 ## Transformação SQL `IN`
 
-Implementar como ferramenta pura do núcleo: recebe texto e opção de delimitador, retorna lista validada e texto formatado ou erro. O adaptador de clipboard não deve conhecer regras SQL. Normalizar CRLF/CR, detectar delimitador dominante, rejeitar empate sem escolha, aparar itens, escapar apóstrofos internos e unir com vírgula. A montagem deve usar `string.Join` sobre os valores já formatados para garantir ausência de vírgula final.
+Implementar como ferramenta pura do núcleo: recebe texto e opção de delimitador, retorna lista validada e texto formatado ou erro. O adaptador de clipboard não deve conhecer regras SQL. Normalizar CRLF/CR, detectar delimitador dominante, rejeitar empate sem escolha, aparar itens, escapar apóstrofos internos e unir com vírgula. A tela de gerenciamento permite salvar um delimitador preferido para entradas ambíguas. A montagem usa `string.Join` sobre os valores formatados para garantir ausência de vírgula final.
 
 ## Extensibilidade
 
 Começar com ferramentas incorporadas e uma interface interna pequena para adicionar novas transformações. Plugins externos e scripts só devem ser considerados após requisitos de segurança, atualização e isolamento.
 
-## Decisões que precisam ser fechadas antes do código
+## Pontos abertos antes da distribuição
 
-- Confirmar WPF como framework da interface do MVP.
 - Versões mínimas do Windows suportadas.
-- Conjunto das primeiras transformações.
-- Modelo de configuração da combinação de teclas e comportamento de conflito.
-- Tecnologia para enviar entrada de teclado sintetizada e critérios para detectar se a cópia da seleção terminou.
+- Validar o funcionamento dos atalhos e a automação de teclado nas aplicações alvo.
 - Se haverá instalador, inicialização com o Windows e atualizações automáticas na primeira entrega.
