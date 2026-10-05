@@ -9,7 +9,7 @@
 - **RF-05** Executar a transformação vinculada ao atalho.
 - **RF-06** Substituir o conteúdo do clipboard pelo resultado apenas quando a transformação terminar com sucesso.
 - **RF-07** Informar sucesso e erro sem interromper o uso da janela atual.
-- **RF-08** Permitir habilitar, desabilitar, editar e remover ferramentas e seus atalhos.
+- **RF-08** Permitir habilitar/desabilitar comandos incorporados e editar seus atalhos; adicionar ou remover ferramentas personalizadas fica fora do MVP.
 - **RF-09** Fornecer a transformação de lista para SQL `IN` como primeira ferramenta do MVP.
 - **RF-10** Permitir testar uma ação pela interface usando uma entrada de exemplo.
 - **RF-11** Oferecer um modo de execução que copie a seleção da aplicação ativa, transforme o texto e cole o resultado sobre a seleção.
@@ -20,6 +20,7 @@
 - **RF-16** Permitir capturar, configurar e alterar a combinação de cada comando e da própria paleta.
 - **RF-17** Mostrar o estado de cada atalho: ativo, desativado ou indisponível por conflito/erro de registro.
 - **RF-18** Permitir tentar novamente o registro de um atalho após o conflito ser resolvido.
+- **RF-25** Permitir habilitar/desabilitar cada comando sem remover sua configuração e oferecer uma ação para tentar registrar novamente atalhos indisponíveis.
 - **RF-19** Definir como atalhos padrão `Win+J` para a paleta, `Ctrl+Alt+I` para transformar o clipboard e `Ctrl+Shift+I` para transformar e substituir a seleção; todos devem continuar configuráveis.
 - **RF-20** Incluir uma transformação que converte uma lista delimitada em valores entre apóstrofos, separados por vírgulas, para uso em cláusula SQL `IN`.
 - **RF-21** Detectar delimitadores vírgula, pipe, ponto e vírgula e quebras de linha CRLF, LF ou CR.

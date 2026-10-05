@@ -37,7 +37,7 @@ dotnet build .\DevToolbox.sln
 dotnet run --project .\src\DevToolbox.App\DevToolbox.App.csproj
 ```
 
-A aplicação inicia minimizada na área de notificação. `Win+J` abre a paleta, `Ctrl+Alt+I` converte o texto do clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta.
+A aplicação inicia minimizada na área de notificação. `Win+J` abre a paleta, `Ctrl+Alt+I` converte o texto do clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração.
 
 ## Status
 

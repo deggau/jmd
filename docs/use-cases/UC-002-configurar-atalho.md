@@ -12,6 +12,8 @@ Usuário de DevToolbox.
 4. DevToolbox tenta registrar a combinação global.
 5. Em caso de sucesso, persiste a configuração e indica que está ativa.
 
+Na mesma tela, o usuário pode desativar um comando sem apagar sua combinação configurada, ou reativá-lo para que o aplicativo tente registrar novamente o atalho.
+
 ## Alternativas
 
 - Se a combinação estiver ocupada ou for recusada pelo sistema, a ferramenta mantém o estado anterior e explica o problema.

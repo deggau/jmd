@@ -38,4 +38,5 @@ Usuário de DevToolbox.
 - O atalho abre a paleta sem encerrar ou desativar a aplicação de origem.
 - O usuário consegue filtrar comandos e ver as combinações associadas.
 - O usuário consegue configurar atalhos e entende quais estão ativos ou indisponíveis.
+- O usuário consegue desativar temporariamente um comando, mantendo sua configuração, e tentar registrar novamente combinações indisponíveis.
 - Fechar a paleta devolve o foco à janela anterior nos fluxos que atuam sobre seleção.
