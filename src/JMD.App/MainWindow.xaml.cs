@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private ConversionHistoryStore? _historyStore;
     private ConversionHistoryRecorder? _historyRecorder;
     private readonly SqlInListTransformation _transformation = new();
+    private readonly StructuredDataFormatter _structuredDataFormatter = new();
     private readonly SqlInConversionGuard _conversionGuard = new();
     private readonly WindowsClipboard _clipboard = new();
     private readonly KeyboardAutomation _keyboard = new();
@@ -54,6 +55,7 @@ public partial class MainWindow : Window
     private IntPtr _previousWindow;
     private bool _closingForExit;
     private bool _conversionRunning;
+    private bool _updatingKeepAwakeToggle;
 
     public event Action<string, string>? TrayNotification;
 
@@ -106,6 +108,10 @@ public partial class MainWindow : Window
             "Converte os valores copiados em uma lista SQL entre apóstrofos.", ShortcutDefaults.ForCommand("clipboard")));
         _commands.Add(new CommandRow("selection", "Substituir seleção formatada",
             "Recorta o texto selecionado, formata e cola o resultado no lugar.", ShortcutDefaults.ForCommand("selection")));
+        _commands.Add(new CommandRow("jsonPretty", "Formatar JSON/XML",
+            "Identifica JSON ou XML e aplica indentação ao conteúdo selecionado.", ShortcutDefaults.ForCommand("jsonPretty")));
+        _commands.Add(new CommandRow("jsonCompact", "Compactar JSON/XML",
+            "Identifica JSON ou XML e remove espaços e quebras de linha.", ShortcutDefaults.ForCommand("jsonCompact")));
     }
 
     private void RegisterConfiguredShortcuts()
@@ -157,6 +163,8 @@ public partial class MainWindow : Window
         AddShortcutRow("palette", "Abrir paleta", "Exibe a lista de comandos e configurações.");
         AddShortcutRow("clipboard", "Formatar clipboard", "Transforma o texto copiado para SQL IN.");
         AddShortcutRow("selection", "Substituir seleção", "Recorta, transforma e cola a seleção atual.");
+        AddShortcutRow("jsonPretty", "Formatar JSON/XML", "Identifica o formato e aplica indentação.");
+        AddShortcutRow("jsonCompact", "Compactar JSON/XML", "Identifica o formato e deixa o conteúdo em uma linha.");
 
         var note = new TextBlock
         {
@@ -335,7 +343,7 @@ public partial class MainWindow : Window
         SettingsPanel.Children.Add(card);
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection"];
+    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact"];
 
     private string GetShortcut(string id)
     {
@@ -454,6 +462,12 @@ public partial class MainWindow : Window
                     break;
                 case "selection":
                     await TransformSelectionAsync();
+                    break;
+                case "jsonPretty":
+                    await TransformStructuredDataAsync(StructuredDataLayout.Pretty);
+                    break;
+                case "jsonCompact":
+                    await TransformStructuredDataAsync(StructuredDataLayout.Compact);
                     break;
             }
         }
@@ -711,6 +725,10 @@ public partial class MainWindow : Window
         {
             await TransformSelectionFromPaletteAsync();
         }
+        else if (id is "jsonPretty" or "jsonCompact")
+        {
+            await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
+        }
     }
 
     private void ManageButton_Click(object sender, RoutedEventArgs e)
@@ -720,6 +738,11 @@ public partial class MainWindow : Window
             ShowPalette();
             return;
         }
+        ShowShortcutSettings();
+    }
+
+    public void ShowShortcutSettings()
+    {
         _navigation.ShowShortcutSettings();
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
@@ -733,6 +756,9 @@ public partial class MainWindow : Window
         foreach (var id in ShortcutIds)
             _hotkeys?.Unregister(id);
         RefreshShortcutStatuses();
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
     }
 
     private void HistoryButton_Click(object sender, RoutedEventArgs e)
@@ -764,13 +790,15 @@ public partial class MainWindow : Window
         menu.IsOpen = true;
     }
 
-    private void KeepAwakeMenuItem_Click(object sender, RoutedEventArgs e)
+    private void KeepAwakeToggle_Changed(object sender, RoutedEventArgs e)
     {
-        if (sender is not System.Windows.Controls.MenuItem menuItem) return;
-        var enabled = menuItem.IsChecked;
+        if (_updatingKeepAwakeToggle || sender is not CheckBox toggle) return;
+        var enabled = toggle.IsChecked == true;
         if (!_displayAwake.SetEnabled(enabled))
         {
-            menuItem.IsChecked = _displayAwake.IsEnabled;
+            _updatingKeepAwakeToggle = true;
+            toggle.IsChecked = _displayAwake.IsEnabled;
+            _updatingKeepAwakeToggle = false;
             SetStatus("O Windows não aceitou a solicitação para manter a tela ativa.", false);
             return;
         }
@@ -916,6 +944,8 @@ public partial class MainWindow : Window
         if (id == "clipboard") await TransformClipboardAsync();
         if (id == "selection")
             await TransformSelectionFromPaletteAsync();
+        if (id is "jsonPretty" or "jsonCompact")
+            await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
     }
 
     private async Task TransformSelectionFromPaletteAsync()
@@ -936,6 +966,73 @@ public partial class MainWindow : Window
             return;
         }
         await TransformSelectionAsync();
+    }
+
+    private async Task TransformStructuredDataFromPaletteAsync(StructuredDataLayout layout)
+    {
+        if (_previousWindow == IntPtr.Zero)
+        {
+            Notify("JMD", "Não foi possível identificar a janela ativa para substituir o texto.", false);
+            return;
+        }
+        if (_keyboard.GetForegroundWindow() != _previousWindow)
+        {
+            SetForegroundWindow(_previousWindow);
+            await Task.Delay(80);
+        }
+        if (_keyboard.GetForegroundWindow() != _previousWindow)
+        {
+            Notify("JMD", "Não foi possível devolver o foco ao aplicativo com o texto.", false);
+            return;
+        }
+        await TransformStructuredDataAsync(layout);
+    }
+
+    private async Task TransformStructuredDataAsync(StructuredDataLayout layout)
+    {
+        if (_conversionRunning) return;
+        _conversionRunning = true;
+        StructuredDataFormat? detectedFormat = null;
+        try
+        {
+            var result = await _selectionTransformer.ExecuteAsync(input =>
+            {
+                var formatted = _structuredDataFormatter.Transform(input, layout);
+                detectedFormat = formatted.Format;
+                return formatted.Transformation;
+            });
+            if (result.Success && result.BeforeValue is not null && result.AfterValue is not null)
+            {
+                var formatName = detectedFormat == StructuredDataFormat.Json ? "JSON" : "XML";
+                var verb = layout == StructuredDataLayout.Pretty ? "Formatar" : "Compactar";
+                var commandName = $"{verb} {formatName}";
+                if (result.UsedClipboardFallback) commandName += " (clipboard)";
+                RecordSelectionHistory(commandName, result);
+                var action = layout == StructuredDataLayout.Pretty ? "formatado" : "compactado";
+                var subject = detectedFormat == StructuredDataFormat.Json ? "JSON" : "XML";
+                var target = result.UsedClipboardFallback ? "O texto do clipboard foi" : "O texto selecionado foi";
+                Notify("JMD", $"{target} {subject} {action}.", true);
+            }
+            else
+            {
+                Notify("JMD", result.Message, false);
+            }
+        }
+        catch (Exception exception) { Notify("JMD", $"Falha ao transformar JSON/XML: {exception.Message}", false); }
+        finally { _conversionRunning = false; }
+    }
+
+    private void RecordSelectionHistory(string commandName, SelectionTransformResult result)
+    {
+        if (_historyRecorder is null) return;
+        try
+        {
+            if (_historyRecorder.RecordIfSuccessful(commandName, result)) RefreshHistory();
+        }
+        catch (Exception exception)
+        {
+            SetStatus($"Transformação concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+        }
     }
 
     private void Window_Deactivated(object? sender, EventArgs e)

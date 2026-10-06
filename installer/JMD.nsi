@@ -2,7 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.5"
+  !define APP_VERSION "0.1.6"
 !endif
 !ifndef PUBLISH_DIR
   !error "PUBLISH_DIR must point to the published application directory"
@@ -30,11 +30,15 @@ ShowInstDetails show
 ShowUninstDetails show
 
 !define MUI_ABORTWARNING
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
+!define MUI_FINISHPAGE_RUN_PARAMETERS "--settings"
+!define MUI_FINISHPAGE_RUN_TEXT "Iniciar o JMD e abrir as configurações"
 !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
 !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"

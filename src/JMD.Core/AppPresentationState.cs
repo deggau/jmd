@@ -19,6 +19,14 @@ public sealed class AppNavigationState
     public void ShowAbout() => CurrentPage = AppPage.About;
 }
 
+public static class AppStartupOptions
+{
+    public const string OpenSettingsArgument = "--settings";
+
+    public static bool StartsInShortcutSettings(IEnumerable<string> arguments)
+        => arguments.Any(argument => string.Equals(argument, OpenSettingsArgument, StringComparison.OrdinalIgnoreCase));
+}
+
 public static class ShortcutDefaults
 {
     public static string ForCommand(string commandId) => commandId switch
@@ -26,6 +34,8 @@ public static class ShortcutDefaults
         "palette" => "Alt+J",
         "clipboard" => "Ctrl+Shift+I",
         "selection" => "Ctrl+Alt+I",
+        "jsonPretty" => "Ctrl+Alt+B",
+        "jsonCompact" => "Alt+Shift+B",
         _ => throw new ArgumentOutOfRangeException(nameof(commandId), commandId, "Comando desconhecido.")
     };
 

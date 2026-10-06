@@ -253,6 +253,56 @@ public sealed class UseCaseTests
         Assert.Equal(new[] { "wait", "cut" }, keyboard.CallOrder);
     }
 
+    [Theory]
+    [InlineData("{\"a\":1}", StructuredDataLayout.Pretty, StructuredDataFormat.Json)]
+    [InlineData("{ \"a\": 1 }", StructuredDataLayout.Compact, StructuredDataFormat.Json)]
+    [InlineData("<root><item>1</item></root>", StructuredDataLayout.Pretty, StructuredDataFormat.Xml)]
+    [InlineData("<root>\n <item>1</item>\n</root>", StructuredDataLayout.Compact, StructuredDataFormat.Xml)]
+    public async Task Structured_data_shortcut_uses_cut_transform_paste_pipeline(
+        string selectedText, StructuredDataLayout layout, StructuredDataFormat expectedFormat)
+    {
+        var formatter = new StructuredDataFormatter();
+        var clipboard = new FakeClipboard { Text = "previous clipboard" };
+        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCut = selectedText };
+        StructuredDataFormat? detectedFormat = null;
+
+        var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(value =>
+        {
+            var formatted = formatter.Transform(value, layout);
+            detectedFormat = formatted.Format;
+            return formatted.Transformation;
+        });
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(expectedFormat, detectedFormat);
+        Assert.Equal(selectedText, result.BeforeValue);
+        Assert.Equal(result.AfterValue, keyboard.PastedText);
+        Assert.Equal(new[] { "wait", "cut", "paste" }, keyboard.CallOrder);
+        Assert.Contains("paste", keyboard.Events);
+    }
+
+    [Theory]
+    [InlineData("{\"a\":1}", StructuredDataLayout.Pretty)]
+    [InlineData("<root><item>1</item></root>", StructuredDataLayout.Compact)]
+    public async Task Structured_data_shortcut_uses_clipboard_when_no_selection_exists(
+        string clipboardText, StructuredDataLayout layout)
+    {
+        var formatter = new StructuredDataFormatter();
+        var clipboard = new FakeClipboard { Text = clipboardText };
+        var keyboard = new FakeKeyboard(clipboard);
+
+        var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(
+            value => formatter.Transform(value, layout).Transformation);
+
+        Assert.True(result.Success, result.Message);
+        Assert.True(result.UsedClipboardFallback);
+        Assert.Equal(clipboardText, result.BeforeValue);
+        Assert.Equal(result.AfterValue, clipboard.Text);
+        Assert.Null(keyboard.PastedText);
+        Assert.Contains("cut", keyboard.Events);
+        Assert.DoesNotContain("paste", keyboard.Events);
+    }
+
     [Fact]
     public async Task Selection_use_case_keeps_clipboard_when_fallback_conversion_fails()
     {

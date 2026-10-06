@@ -25,6 +25,7 @@ public partial class App : System.Windows.Application
             Shutdown();
             return;
         }
+        var openSettingsOnStartup = AppStartupOptions.StartsInShortcutSettings(e.Args);
         _mainWindow = new MainWindow();
         MainWindow = _mainWindow;
         _mainWindow.Show();
@@ -52,6 +53,8 @@ public partial class App : System.Windows.Application
         };
         _trayIcon.BalloonTipClicked += (_, _) =>
             _mainWindow.Dispatcher.BeginInvoke(_mainWindow.ShowHistory);
+        if (openSettingsOnStartup)
+            _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowShortcutSettings));
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -81,7 +84,9 @@ internal sealed class UserSettings
     {
         ["palette"] = ShortcutDefaults.ForCommand("palette"),
         ["clipboard"] = ShortcutDefaults.ForCommand("clipboard"),
-        ["selection"] = ShortcutDefaults.ForCommand("selection")
+        ["selection"] = ShortcutDefaults.ForCommand("selection"),
+        ["jsonPretty"] = ShortcutDefaults.ForCommand("jsonPretty"),
+        ["jsonCompact"] = ShortcutDefaults.ForCommand("jsonCompact")
     };
     public HashSet<string> DisabledCommands { get; set; } = new(StringComparer.Ordinal);
 }

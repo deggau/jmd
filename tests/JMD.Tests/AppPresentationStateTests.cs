@@ -5,12 +5,31 @@ namespace JMD.Tests;
 
 public sealed class AppPresentationStateTests
 {
+    [Theory]
+    [InlineData("--settings", true)]
+    [InlineData("--SETTINGS", true)]
+    [InlineData("--other", false)]
+    public void Startup_option_opens_shortcut_settings_only_when_requested(string argument, bool expected)
+    {
+        Assert.Equal(expected, AppStartupOptions.StartsInShortcutSettings([argument]));
+    }
+
+    [Fact]
+    public void Startup_without_arguments_opens_the_palette_default()
+    {
+        Assert.False(AppStartupOptions.StartsInShortcutSettings([]));
+    }
+
     [Fact]
     public void Shortcut_defaults_assign_selection_and_clipboard_to_requested_bindings()
     {
         Assert.Equal("Ctrl+Alt+I", ShortcutDefaults.ForCommand("selection"));
         Assert.Equal("Ctrl+Shift+I", ShortcutDefaults.ForCommand("clipboard"));
         Assert.Equal("Alt+J", ShortcutDefaults.ForCommand("palette"));
+        Assert.Equal("Ctrl+Alt+B", ShortcutDefaults.ForCommand("jsonPretty"));
+        Assert.Equal("Alt+Shift+B", ShortcutDefaults.ForCommand("jsonCompact"));
+        Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("jsonPretty"), out _, out _));
+        Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("jsonCompact"), out _, out _));
     }
 
     [Fact]
