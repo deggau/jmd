@@ -244,6 +244,7 @@ public partial class MainWindow : Window
         var testButton = new Button
         {
             Content = "Testar conversão",
+            FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
             Padding = new Thickness(12, 7, 12, 7),
             HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
             Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),

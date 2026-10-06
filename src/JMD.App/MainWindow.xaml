@@ -78,9 +78,9 @@
           </CheckBox.Template>
         </CheckBox>
       </Grid>
-      <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-        <ListBox x:Name="CommandsList" Background="Transparent" BorderThickness="0"
-                 HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+      <ListBox x:Name="CommandsList" Grid.Row="2" Background="Transparent" BorderThickness="0"
+               HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+               ScrollViewer.VerticalScrollBarVisibility="Auto">
           <ListBox.ItemContainerStyle>
             <Style TargetType="ListBoxItem">
               <Setter Property="Padding" Value="0" />
@@ -94,7 +94,8 @@
             <DataTemplate>
               <Button Tag="{Binding Id}" Click="CommandButton_Click" Padding="16" Margin="0,0,0,9"
                       Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1"
-                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Cursor="Hand">
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Cursor="Hand"
+                      FocusVisualStyle="{StaticResource AccentFocusCue}">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <StackPanel>
@@ -109,8 +110,7 @@
               </Button>
             </DataTemplate>
           </ListBox.ItemTemplate>
-        </ListBox>
-      </ScrollViewer>
+      </ListBox>
       <Grid x:Name="SettingsTabs" Grid.Row="2" Visibility="Collapsed">
         <ScrollViewer x:Name="SettingsPage" VerticalScrollBarVisibility="Auto" Background="#FF17191F">
           <StackPanel x:Name="SettingsPanel" Margin="2,10,2,8" />
@@ -135,6 +135,7 @@
                        Background="#FF242730" Foreground="White" BorderBrush="#FF3A3E48" />
               <TextBlock Text="dias" Foreground="#FF969BA7" VerticalAlignment="Center" />
               <Button Content="Salvar" Click="SaveHistoryRetention_Click" Margin="10,0,0,0" Padding="12,5"
+                      FocusVisualStyle="{StaticResource DarkFocusCue}"
                       Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" />
             </DockPanel>
             <Grid Grid.Row="3">
@@ -206,6 +207,7 @@
                        TextWrapping="Wrap" FontSize="12" Margin="0,0,0,14" />
             <StackPanel Orientation="Horizontal">
               <Button x:Name="CheckUpdatesButton" Content="Verificar atualizações" Click="CheckUpdatesButton_Click"
+                      FocusVisualStyle="{StaticResource DarkFocusCue}"
                       Padding="12,8" Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" />
               <Button x:Name="InstallUpdateButton" Content="Atualizar agora" Click="InstallUpdateButton_Click"
                       Padding="12,8" Margin="8,0,0,0" Background="#FF2A2D35" Foreground="White"

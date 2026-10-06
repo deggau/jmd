@@ -8,6 +8,34 @@
     <SolidColorBrush x:Key="AccentBrush" Color="#FFB4F36A" />
     <SolidColorBrush x:Key="MutedBrush" Color="#FF969BA7" />
 
+    <Style x:Key="DarkFocusCue" TargetType="{x:Type Control}">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="{x:Type Control}">
+            <Border BorderBrush="{StaticResource SurfaceBrush}" BorderThickness="2" CornerRadius="6" Margin="-3" />
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="AccentFocusCue" TargetType="{x:Type Control}">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="{x:Type Control}">
+            <Border BorderBrush="{StaticResource AccentBrush}" BorderThickness="2" CornerRadius="6" Margin="-3" />
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusCue}" />
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusCue}" />
+    </Style>
+    <Style TargetType="CheckBox">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusCue}" />
+    </Style>
+
     <Style TargetType="ContextMenu">
       <Setter Property="Background" Value="#FF1B1E25" />
       <Setter Property="BorderBrush" Value="#FF3A3E48" />
