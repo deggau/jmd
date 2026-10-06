@@ -12,7 +12,7 @@ Aplicação desktop residente para Windows, organizada em camadas, usando C#/.NE
 4. **Automação de entrada**: envia copiar/colar à janela ativa sem trazer a própria aplicação para frente; deve encapsular a API de entrada do Windows.
 5. **Catálogo de ferramentas**: associa identificador, nome, descrição, parâmetros, atalho, modo de execução e implementação.
 6. **Motor de transformação**: recebe texto e configuração, devolve texto ou erro; não acessa UI, teclado ou clipboard.
-7. **Persistência local**: guarda preferências, atalhos e opções do usuário.
+7. **Persistência local**: guarda preferências e atalhos em arquivo e o histórico de conversões em SQLite, com retenção configurável.
 8. **Notificações e diagnóstico**: informa o resultado; logs técnicos não devem incluir o conteúdo processado.
 
 ## Fluxo principal
@@ -33,10 +33,10 @@ Em caso de erro na leitura ou transformação, o fluxo termina sem substituir o 
 
 Os nomes são indicativos; a estrutura física será escolhida ao iniciar o código.
 
-- `DevToolbox.App`: inicialização, interface, bandeja e composição.
-- `DevToolbox.Core`: modelos, configuração e contratos de transformação.
-- `DevToolbox.Windows`: atalhos globais e acesso ao clipboard nativo.
-- `DevToolbox.Tools`: transformações incorporadas.
+- `JMD.App`: inicialização, interface, bandeja e composição.
+- `JMD.Core`: modelos, configuração e contratos de transformação.
+- `JMD.Windows`: atalhos globais e acesso ao clipboard nativo.
+- `JMD.Tools`: transformações incorporadas.
 
 ## Paleta de comandos
 
@@ -44,11 +44,13 @@ A tela deve abrir e receber foco ao ser acionada pelo atalho global próprio. De
 
 O sistema operacional permite verificar se o registro do atalho foi aceito ou recusado; a interface deve comunicar indisponibilidade sem afirmar que identificou qual processo possui a combinação.
 
-Atalhos padrão iniciais: `Win+J` abre a paleta, `Ctrl+Alt+I` transforma o clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Todos devem ser configuráveis. `Win+J` pode ser reservado pelo Recall em dispositivos compatíveis com Windows 11; a paleta deve refletir o estado real do registro.
+Atalhos padrão iniciais: `Alt+J` abre a paleta, `Ctrl+Alt+I` transforma o clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Todos devem ser configuráveis; a paleta deve refletir o estado real do registro.
 
 ## Transformação SQL `IN`
 
 Implementar como ferramenta pura do núcleo: recebe texto e opção de delimitador, retorna lista validada e texto formatado ou erro. O adaptador de clipboard não deve conhecer regras SQL. Normalizar CRLF/CR, detectar delimitador dominante, rejeitar empate sem escolha, aparar itens, escapar apóstrofos internos e unir com vírgula. A tela de gerenciamento permite salvar um delimitador preferido para entradas ambíguas. A montagem usa `string.Join` sobre os valores formatados para garantir ausência de vírgula final.
+
+Conversões bem-sucedidas do clipboard e de seleções são registradas localmente com comando, data/hora e valores anterior e convertido. A aba **Histórico** pesquisa os dois valores e remove registros mais antigos que o prazo configurado (15 dias por padrão).
 
 ## Extensibilidade
 

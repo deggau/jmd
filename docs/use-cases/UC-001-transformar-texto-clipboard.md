@@ -6,7 +6,7 @@ Desenvolvedor usando qualquer aplicação Windows.
 
 ## Pré-condições
 
-- DevToolbox está em execução.
+- JMD está em execução.
 - A ferramenta está habilitada e seu atalho foi registrado.
 - O clipboard contém texto compatível.
 
@@ -14,7 +14,7 @@ Desenvolvedor usando qualquer aplicação Windows.
 
 1. O usuário copia um texto em qualquer aplicação.
 2. O usuário pressiona o atalho associado à transformação (padrão inicial para SQL `IN`: `Ctrl+Alt+I`).
-3. DevToolbox recebe o evento global sem trazer sua janela para frente.
+3. JMD recebe o evento global sem trazer sua janela para frente.
 4. A aplicação lê o texto e executa a transformação.
 5. A aplicação coloca o resultado no clipboard.
 6. A aplicação mostra uma confirmação discreta.
@@ -35,6 +35,6 @@ Desenvolvedor usando qualquer aplicação Windows.
 
 ## Critérios de aceite
 
-- A combinação funciona com DevToolbox em segundo plano.
+- A combinação funciona com JMD em segundo plano.
 - Um texto copiado é transformado e pode ser colado imediatamente.
 - Falhas não produzem substituição silenciosa por texto vazio ou parcial.

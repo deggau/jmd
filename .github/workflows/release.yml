@@ -35,7 +35,7 @@ jobs:
       - name: Create checksum
         shell: pwsh
         run: |
-          $installer = Get-Item 'artifacts/installer/DevToolbox-*-win-x64-setup.exe' | Select-Object -First 1
+          $installer = Get-Item 'artifacts/installer/JMD-*-win-x64-setup.exe' | Select-Object -First 1
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($installer.Name)" | Set-Content -Path "$($installer.FullName).sha256" -Encoding ascii
 
@@ -44,5 +44,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $installer = Get-Item 'artifacts/installer/DevToolbox-*-win-x64-setup.exe' | Select-Object -First 1
+          $installer = Get-Item 'artifacts/installer/JMD-*-win-x64-setup.exe' | Select-Object -First 1
           gh release create $env:GITHUB_REF_NAME $installer.FullName "$($installer.FullName).sha256" --generate-notes

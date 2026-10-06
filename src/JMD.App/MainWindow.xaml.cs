@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -9,9 +10,9 @@ using System.Windows.Data;
 using System.Windows.Interop;
 using System.Windows.Input;
 using System.Windows.Media;
-using DevToolbox.Core;
-using DevToolbox.Tools;
-using DevToolbox.Windows;
+using JMD.Core;
+using JMD.Tools;
+using JMD.Windows;
 using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using Button = System.Windows.Controls.Button;
@@ -22,7 +23,7 @@ using TextBox = System.Windows.Controls.TextBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 using ComboBoxItem = System.Windows.Controls.ComboBoxItem;
 
-namespace DevToolbox.App;
+namespace JMD.App;
 
 public partial class MainWindow : Window
 {
@@ -30,6 +31,8 @@ public partial class MainWindow : Window
     private const int VkRWin = 0x5C;
     private readonly SettingsStore _settingsStore = new();
     private readonly UserSettings _settings;
+    private ConversionHistoryStore? _historyStore;
+    private ConversionHistoryRecorder? _historyRecorder;
     private readonly SqlInListTransformation _transformation = new();
     private readonly WindowsClipboard _clipboard = new();
     private readonly KeyboardAutomation _keyboard = new();
@@ -44,6 +47,8 @@ public partial class MainWindow : Window
     private IntPtr _previousWindow;
     private bool _showingSettings;
     private bool _closingForExit;
+    private string? _lastClipboardConversion;
+    private bool _clipboardConversionRunning;
 
     public event Action<string, string>? TrayNotification;
 
@@ -53,12 +58,27 @@ public partial class MainWindow : Window
         _settings = _settingsStore.Load();
         if (_settings.PreferredDelimiter is not (null or "," or "|" or ";" or "\r\n" or "\n" or "\r"))
             _settings.PreferredDelimiter = null;
+        if (_settings.HistoryRetentionDays is < 1 or > 3650)
+            _settings.HistoryRetentionDays = 15;
+        try
+        {
+            var historyPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JMD", "history.db");
+            _historyStore = new ConversionHistoryStore(historyPath);
+            _historyRecorder = new ConversionHistoryRecorder(_historyStore);
+            _historyStore.DeleteOlderThan(_settings.HistoryRetentionDays);
+        }
+        catch (Exception exception)
+        {
+            SetStatus($"O histórico está indisponível: {exception.Message}", false);
+        }
         _selectionTransformer = new SelectionTransformer(_clipboard, _keyboard);
         BuildCommands();
         CommandsList.ItemsSource = _commands;
         _commandView = CollectionViewSource.GetDefaultView(_commands);
         _commandView.Filter = item => item is CommandRow command && command.Visible;
         BuildSettingsPanel();
+        HistoryRetentionBox.Text = _settings.HistoryRetentionDays.ToString(CultureInfo.InvariantCulture);
+        RefreshHistory();
         SourceInitialized += MainWindow_SourceInitialized;
         Closing += MainWindow_Closing;
     }
@@ -133,7 +153,7 @@ public partial class MainWindow : Window
 
         var note = new TextBlock
         {
-            Text = "Win+J pode ser usado pelo Recall do Windows em alguns computadores. Se aparecer como indisponível, escolha outro atalho.",
+            Text = "Alt+J pode estar em uso por outro aplicativo. Se aparecer como indisponível, escolha outro atalho.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = new SolidColorBrush(Color.FromRgb(235, 196, 119)),
             FontSize = 11,
@@ -314,7 +334,7 @@ public partial class MainWindow : Window
     {
         var defaults = id switch
         {
-            "palette" => "Win+J",
+            "palette" => "Alt+J",
             "clipboard" => "Ctrl+Alt+I",
             _ => "Ctrl+Shift+I"
         };
@@ -489,10 +509,10 @@ public partial class MainWindow : Window
     {
         _showingSettings = false;
         CommandsList.Visibility = Visibility.Visible;
-        SettingsScroll.Visibility = Visibility.Collapsed;
+        SettingsTabs.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Visible;
         ManageButton.Content = "Gerenciar atalhos";
-        PageTitle.Text = "DevToolbox";
+        PageTitle.Text = "JMD";
         PageSubtitle.Text = "Ferramentas rápidas para desenvolvimento";
         RefreshCommandStatuses();
         SearchBox.Text = string.Empty;
@@ -505,12 +525,34 @@ public partial class MainWindow : Window
 
     private async Task TransformClipboardAsync()
     {
+        if (_clipboardConversionRunning) return;
+        _clipboardConversionRunning = true;
         try
         {
-            var result = await new ClipboardTransformationService(_clipboard).ExecuteAsync(FormatText);
-            Notify("DevToolbox", result.Success ? "Lista formatada para SQL IN e pronta para colar." : result.Error ?? "Não foi possível converter a lista.", result.Success);
+            var input = await _clipboard.TryGetTextAsync();
+            if (input is null)
+            {
+                Notify("JMD", "O clipboard não contém texto Unicode.", false);
+                return;
+            }
+            if (string.Equals(input, _lastClipboardConversion, StringComparison.Ordinal))
+            {
+                Notify("JMD", "Esse valor já foi convertido para SQL IN.", true);
+                return;
+            }
+
+            var result = FormatText(input);
+            if (result.Success && !await _clipboard.TrySetTextAsync(result.Value!))
+                result = TransformationResult.Fail("Não foi possível gravar o resultado no clipboard.");
+            if (result.Success)
+            {
+                _lastClipboardConversion = result.Value;
+                RecordHistory("Montar SQL IN", input, result);
+            }
+            Notify("JMD", result.Success ? "Lista formatada para SQL IN e pronta para colar." : result.Error ?? "Não foi possível converter a lista.", result.Success);
         }
-        catch (Exception exception) { Notify("DevToolbox", $"Falha ao transformar o clipboard: {exception.Message}", false); }
+        catch (Exception exception) { Notify("JMD", $"Falha ao transformar o clipboard: {exception.Message}", false); }
+        finally { _clipboardConversionRunning = false; }
     }
 
     private async Task TransformSelectionAsync()
@@ -518,10 +560,89 @@ public partial class MainWindow : Window
         try
         {
             var result = await _selectionTransformer.ExecuteAsync(FormatText);
-            Notify("DevToolbox", result.Message, result.Success);
+            RecordSelectionHistory(result);
+            Notify("JMD", result.Message, result.Success);
         }
-        catch (Exception exception) { Notify("DevToolbox", $"Falha ao substituir a seleção: {exception.Message}", false); }
+        catch (Exception exception) { Notify("JMD", $"Falha ao substituir a seleção: {exception.Message}", false); }
     }
+
+    private void RecordHistory(string commandName, string beforeValue, TransformationResult result)
+    {
+        if (_historyRecorder is null) return;
+        try
+        {
+            if (_historyRecorder.RecordIfSuccessful(commandName, beforeValue, result)) RefreshHistory();
+        }
+        catch (Exception exception)
+        {
+            SetStatus($"Conversão concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+        }
+    }
+
+    private void RecordSelectionHistory(SelectionTransformResult result)
+    {
+        if (_historyRecorder is null) return;
+        try
+        {
+            if (_historyRecorder.RecordIfSuccessful("Substituir seleção (SQL IN)", result)) RefreshHistory();
+        }
+        catch (Exception exception)
+        {
+            SetStatus($"Conversão concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+        }
+    }
+
+    private void RefreshHistory()
+    {
+        if (_historyStore is null) return;
+        try
+        {
+            var entries = _historyStore.Search(HistorySearchBox?.Text ?? string.Empty)
+                .Select(entry => new HistoryDisplayEntry(
+                    entry.CommandName,
+                    entry.BeforeValue,
+                    entry.AfterValue,
+                    entry.OccurredAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.CurrentCulture)))
+                .ToList();
+            HistoryItemsControl.ItemsSource = entries;
+            HistoryEmptyText.Text = entries.Count == 0
+                ? string.IsNullOrWhiteSpace(HistorySearchBox?.Text) ? "Nenhuma conversão registrada." : "Nenhum resultado para essa busca."
+                : string.Empty;
+            HistoryEmptyText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch (Exception exception)
+        {
+            HistoryItemsControl.ItemsSource = null;
+            HistoryEmptyText.Text = "Não foi possível consultar o histórico.";
+            HistoryEmptyText.Visibility = Visibility.Visible;
+            SetStatus($"Falha ao consultar o histórico: {exception.Message}", false);
+        }
+    }
+
+    private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistory();
+
+    private void SaveHistoryRetention_Click(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(HistoryRetentionBox.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var days) || days is < 1 or > 3650)
+        {
+            SetStatus("Informe um prazo entre 1 e 3650 dias.", false);
+            return;
+        }
+        try
+        {
+            _settings.HistoryRetentionDays = days;
+            _settingsStore.Save(_settings);
+            _historyStore?.DeleteOlderThan(days);
+            RefreshHistory();
+            SetStatus($"Histórico configurado para manter {days} dias.", true);
+        }
+        catch (Exception exception)
+        {
+            SetStatus($"Não foi possível salvar a retenção do histórico: {exception.Message}", false);
+        }
+    }
+
+    private sealed record HistoryDisplayEntry(string CommandName, string BeforeValue, string AfterValue, string DisplayDate);
 
     private TransformationResult FormatText(string input) => _transformation.Transform(input, _settings.PreferredDelimiter);
 
@@ -531,7 +652,7 @@ public partial class MainWindow : Window
         Hide();
         if (_settings.DisabledCommands.Contains(id))
         {
-            Notify("DevToolbox", "Esse comando está desativado. Ative-o em Gerenciar atalhos.", false);
+            Notify("JMD", "Esse comando está desativado. Ative-o em Gerenciar atalhos.", false);
             return;
         }
         if (id == "clipboard") await TransformClipboardAsync();
@@ -545,11 +666,12 @@ public partial class MainWindow : Window
     {
         _showingSettings = !_showingSettings;
         CommandsList.Visibility = _showingSettings ? Visibility.Collapsed : Visibility.Visible;
-        SettingsScroll.Visibility = _showingSettings ? Visibility.Visible : Visibility.Collapsed;
+        SettingsTabs.Visibility = _showingSettings ? Visibility.Visible : Visibility.Collapsed;
         SearchBox.Visibility = _showingSettings ? Visibility.Collapsed : Visibility.Visible;
+        if (_showingSettings) SettingsTabs.SelectedIndex = 0;
         ManageButton.Content = _showingSettings ? "Voltar aos comandos" : "Gerenciar atalhos";
-        PageTitle.Text = _showingSettings ? "Atalhos" : "DevToolbox";
-        PageSubtitle.Text = _showingSettings ? "Capture uma combinação para alterar cada atalho" : "Ferramentas rápidas para desenvolvimento";
+        PageTitle.Text = _showingSettings ? "Configurações" : "JMD";
+        PageSubtitle.Text = _showingSettings ? "Atalhos e histórico de conversões" : "Ferramentas rápidas para desenvolvimento";
         RefreshShortcutStatuses();
     }
 
@@ -601,7 +723,7 @@ public partial class MainWindow : Window
         Hide();
         if (_settings.DisabledCommands.Contains(id))
         {
-            Notify("DevToolbox", "Esse comando está desativado. Ative-o em Gerenciar atalhos.", false);
+            Notify("JMD", "Esse comando está desativado. Ative-o em Gerenciar atalhos.", false);
             return;
         }
         if (id == "clipboard") await TransformClipboardAsync();
@@ -613,7 +735,7 @@ public partial class MainWindow : Window
     {
         if (_previousWindow == IntPtr.Zero)
         {
-            Notify("DevToolbox", "Não foi possível identificar o aplicativo com a seleção.", false);
+            Notify("JMD", "Não foi possível identificar o aplicativo com a seleção.", false);
             return;
         }
         if (_keyboard.GetForegroundWindow() != _previousWindow)
@@ -623,7 +745,7 @@ public partial class MainWindow : Window
         }
         if (_keyboard.GetForegroundWindow() != _previousWindow)
         {
-            Notify("DevToolbox", "Não foi possível devolver o foco ao aplicativo com a seleção.", false);
+            Notify("JMD", "Não foi possível devolver o foco ao aplicativo com a seleção.", false);
             return;
         }
         await TransformSelectionAsync();

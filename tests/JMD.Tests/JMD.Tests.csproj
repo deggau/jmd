@@ -15,7 +15,7 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/DevToolbox.Core/DevToolbox.Core.csproj" />
-    <ProjectReference Include="../../src/DevToolbox.Tools/DevToolbox.Tools.csproj" />
+    <ProjectReference Include="../../src/JMD.Core/JMD.Core.csproj" />
+    <ProjectReference Include="../../src/JMD.Tools/JMD.Tools.csproj" />
   </ItemGroup>
 </Project>

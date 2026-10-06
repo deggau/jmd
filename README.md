@@ -1,4 +1,4 @@
-# DevToolbox
+# JMD
 
 Suite local de ferramentas para acelerar tarefas comuns de desenvolvimento, acionadas principalmente por atalhos globais no Windows.
 
@@ -19,26 +19,26 @@ Permitir que o usuário transforme o conteúdo da área de transferência sem tr
 
 - C# com .NET 10.
 - WPF para a paleta e a tela de atalhos.
-- APIs Win32 isoladas no projeto `DevToolbox.Windows`.
+- APIs Win32 isoladas no projeto `JMD.Windows`.
 - NSIS para o instalador Windows por usuário.
 
 ## Estrutura
 
-- `src/DevToolbox.App`: aplicação WPF residente e interface.
-- `src/DevToolbox.Core`: contratos e tipos compartilhados.
-- `src/DevToolbox.Tools`: transformações independentes da plataforma.
-- `src/DevToolbox.Windows`: atalhos globais, clipboard e automação de teclado.
+- `src/JMD.App`: aplicação WPF residente e interface.
+- `src/JMD.Core`: contratos e tipos compartilhados.
+- `src/JMD.Tools`: transformações independentes da plataforma.
+- `src/JMD.Windows`: atalhos globais, clipboard e automação de teclado.
 
 ## Executar no Windows
 
 Requer o SDK .NET 10 instalado.
 
 ```powershell
-dotnet build .\DevToolbox.sln
-dotnet run --project .\src\DevToolbox.App\DevToolbox.App.csproj
+dotnet build .\JMD.sln
+dotnet run --project .\src\JMD.App\JMD.App.csproj
 ```
 
-A aplicação inicia minimizada na área de notificação. `Win+J` abre a paleta, `Ctrl+Alt+I` converte o texto do clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração.
+A aplicação inicia minimizada na área de notificação. `Alt+J` abre a paleta, `Ctrl+Alt+I` converte o texto do clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração. A tela de configurações também permite consultar o histórico das conversões e ajustar sua retenção, inicialmente em 15 dias.
 
 ## Criar instalador Windows
 
@@ -48,4 +48,4 @@ Quando houver uma release pública, a instalação da versão x64 mais recente p
 
 ## Status
 
-MVP inicial em implementação. O protótipo cobre conversão SQL `IN`, paleta WPF, armazenamento local, registro de atalhos globais e operações sobre o clipboard/seleção. O funcionamento real precisa ser validado no Windows nas aplicações alvo, especialmente o atalho `Win+J` e a recuperação da seleção após falhas.
+MVP inicial em implementação. O protótipo cobre conversão SQL `IN`, paleta WPF, armazenamento local, registro de atalhos globais e operações sobre o clipboard/seleção. O funcionamento real precisa ser validado no Windows nas aplicações alvo, especialmente o registro dos atalhos e a recuperação da seleção após falhas.

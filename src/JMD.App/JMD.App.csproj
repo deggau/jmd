@@ -7,10 +7,14 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>Assets\JMD.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\DevToolbox.Core\DevToolbox.Core.csproj" />
-    <ProjectReference Include="..\DevToolbox.Tools\DevToolbox.Tools.csproj" />
-    <ProjectReference Include="..\DevToolbox.Windows\DevToolbox.Windows.csproj" />
+    <ProjectReference Include="..\JMD.Core\JMD.Core.csproj" />
+    <ProjectReference Include="..\JMD.Tools\JMD.Tools.csproj" />
+    <ProjectReference Include="..\JMD.Windows\JMD.Windows.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets\JMD.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

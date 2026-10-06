@@ -6,7 +6,7 @@ Desenvolvedor usando um editor ou outro aplicativo Windows compatível.
 
 ## Pré-condições
 
-- DevToolbox está em execução e a ferramenta de substituição está habilitada.
+- JMD está em execução e a ferramenta de substituição está habilitada.
 - O usuário selecionou texto editável na aplicação de origem.
 - O atalho global foi registrado.
 
@@ -14,11 +14,11 @@ Desenvolvedor usando um editor ou outro aplicativo Windows compatível.
 
 1. O usuário seleciona um trecho de texto.
 2. O usuário pressiona o atalho da ferramenta.
-3. DevToolbox mantém a aplicação de origem em foco e envia `Ctrl+X` para recortar a seleção.
-4. DevToolbox aguarda a atualização do clipboard e lê o texto recortado.
+3. JMD mantém a aplicação de origem em foco e envia `Ctrl+X` para recortar a seleção.
+4. JMD aguarda a atualização do clipboard e lê o texto recortado.
 5. A transformação é executada sobre o texto recortado.
-6. Se a transformação for bem-sucedida, DevToolbox grava o resultado no clipboard.
-7. DevToolbox envia `Ctrl+V` à aplicação que recebeu a seleção.
+6. Se a transformação for bem-sucedida, JMD grava o resultado no clipboard.
+7. JMD envia `Ctrl+V` à aplicação que recebeu a seleção.
 8. O conteúdo colado substitui a seleção original; uma notificação discreta confirma o resultado.
 
 ## Por que copiar em vez de recortar
@@ -42,7 +42,7 @@ Atalho padrão para esse fluxo: `Ctrl+Shift+I`. O usuário confirmou a sequênci
 
 ## Critérios de aceite
 
-- O fluxo funciona sem trazer a janela do DevToolbox para frente.
+- O fluxo funciona sem trazer a janela do JMD para frente.
 - A seleção somente é substituída após uma transformação bem-sucedida.
 - Ausência de seleção, timeout e erro não levam à colagem de conteúdo antigo ou vazio.
 - O comportamento é validado em cada aplicação declarada como compatível.

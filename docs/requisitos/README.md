@@ -13,7 +13,7 @@
 - **RF-09** Fornecer a transformação de lista para SQL `IN` como primeira ferramenta do MVP.
 - **RF-10** Permitir testar uma ação pela interface usando uma entrada de exemplo.
 - **RF-11** Oferecer um modo de execução que copie a seleção da aplicação ativa, transforme o texto e cole o resultado sobre a seleção.
-- **RF-12** Enviar os comandos de teclado necessários sem ativar a janela do DevToolbox nem retirar o foco da aplicação de origem.
+- **RF-12** Enviar os comandos de teclado necessários sem ativar a janela do JMD nem retirar o foco da aplicação de origem.
 - **RF-13** Detectar quando a seleção não foi copiada ou o clipboard não mudou, e cancelar sem colar conteúdo inesperado.
 - **RF-14** Abrir a paleta/tela de gerenciamento por um atalho global configurável.
 - **RF-15** Listar e permitir buscar os comandos disponíveis na tela de gerenciamento.
@@ -21,19 +21,22 @@
 - **RF-17** Mostrar o estado de cada atalho: ativo, desativado ou indisponível por conflito/erro de registro.
 - **RF-18** Permitir tentar novamente o registro de um atalho após o conflito ser resolvido.
 - **RF-25** Permitir habilitar/desabilitar cada comando sem remover sua configuração e oferecer uma ação para tentar registrar novamente atalhos indisponíveis.
-- **RF-19** Definir como atalhos padrão `Win+J` para a paleta, `Ctrl+Alt+I` para transformar o clipboard e `Ctrl+Shift+I` para transformar e substituir a seleção; todos devem continuar configuráveis.
+- **RF-19** Definir como atalhos padrão `Alt+J` para a paleta, `Ctrl+Alt+I` para transformar o clipboard e `Ctrl+Shift+I` para transformar e substituir a seleção; todos devem continuar configuráveis.
 - **RF-20** Incluir uma transformação que converte uma lista delimitada em valores entre apóstrofos, separados por vírgulas, para uso em cláusula SQL `IN`.
 - **RF-21** Detectar delimitadores vírgula, pipe, ponto e vírgula e quebras de linha CRLF, LF ou CR.
 - **RF-22** Nunca incluir vírgula depois do último valor produzido.
 - **RF-23** Remover espaços externos dos itens e escapar apóstrofos internos duplicando-os antes de cercar cada item com apóstrofos.
 - **RF-24** Permitir escolher detecção automática ou um delimitador preferido para listas ambíguas, salvando a preferência localmente.
+- **RF-26** Registrar conversões bem-sucedidas com data/hora, comando e valores anterior e convertido em banco SQLite local.
+- **RF-27** Exibir o histórico em ordem cronológica e permitir buscar por trechos dos valores anterior e convertido.
+- **RF-28** Permitir configurar por quantos dias manter o histórico, usando 15 dias como padrão e removendo registros vencidos.
 
 ## Requisitos não funcionais
 
 - **RNF-01** Windows é a plataforma prioritária da primeira versão.
 - **RNF-02** A operação comum deve ter baixa latência e não bloquear a interface.
 - **RNF-03** A lógica de transformação deve ser separada das APIs de Windows para facilitar testes e evolução.
-- **RNF-04** A aplicação não deve registrar conteúdo do clipboard em logs por padrão.
+- **RNF-04** A aplicação não deve registrar conteúdo do clipboard em logs técnicos; o histórico funcional de conversões fica no banco local e segue o prazo de retenção configurado.
 - **RNF-05** Preferências devem persistir localmente e permitir recuperação após reinício.
 - **RNF-06** O sistema deve lidar com clipboard temporariamente ocupado, dados ausentes e formatos não suportados.
 - **RNF-07** Atalhos não podem assumir disponibilidade universal: outras aplicações ou o Windows podem reservar a combinação.
@@ -63,7 +66,6 @@ O modo seleção usa `Ctrl+X` conforme solicitado, portanto remove o texto antes
 
 - `RegisterHotKey` dá suporte a atalhos globais, mas o registro pode falhar se a combinação estiver em uso. O aplicativo precisa apresentar esse conflito.
 - O Windows informa se o registro de uma combinação falhou, mas a aplicação não deve presumir que consegue identificar com confiabilidade qual outro aplicativo a reservou. A interface deve indicar que a combinação está indisponível e permitir escolher outra.
-- `Win+J` está definido como atalho padrão solicitado, mas a documentação atual da Microsoft lista essa combinação para abrir o Recall em dispositivos compatíveis. O registro poderá conflitar ou competir com o recurso do Windows; a aplicação deve sinalizar falha e deixar o usuário escolher outra combinação.
 - Aplicativos podem publicar vários formatos de clipboard ou renderizar dados sob demanda. A primeira versão deve declarar que suporta texto Unicode e tratar outros tipos com uma mensagem clara.
 - Clipboard pode ficar temporariamente bloqueado por outro processo. Leitura e escrita devem ter tentativas curtas e limitadas, sem travar a interface.
 - Áreas de trabalho remotas, sessões elevadas e políticas corporativas podem alterar o comportamento de atalhos e clipboard; deverão entrar na validação de compatibilidade.

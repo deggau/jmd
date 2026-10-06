@@ -2,7 +2,7 @@
 
 ## Resumo
 
-DevToolbox será uma aplicação local com ferramentas pequenas para tarefas repetitivas de desenvolvimento. O primeiro fluxo permite ler o clipboard, transformar seu conteúdo por um atalho global e substituir o clipboard pelo resultado, sem exigir que a aplicação em primeiro plano mude.
+JMD será uma aplicação local com ferramentas pequenas para tarefas repetitivas de desenvolvimento. O primeiro fluxo permite ler o clipboard, transformar seu conteúdo por um atalho global e substituir o clipboard pelo resultado, sem exigir que a aplicação em primeiro plano mude.
 
 ## Problema
 
@@ -44,7 +44,7 @@ Transformações pequenas de texto frequentemente exigem abrir outra ferramenta,
 ## Critérios de sucesso
 
 - Usuário configura um atalho e uma transformação sem editar arquivos manualmente.
-- O atalho funciona em aplicações Windows comuns sem exigir que DevToolbox esteja em primeiro plano.
+- O atalho funciona em aplicações Windows comuns sem exigir que JMD esteja em primeiro plano.
 - Uma transformação bem-sucedida substitui o texto copiado e permite colá-lo imediatamente.
 - Uma transformação acionada sobre uma seleção substitui essa seleção nas aplicações compatíveis.
 - Erros, conflito de atalhos e clipboard bloqueado são comunicados sem corromper o dado anterior.

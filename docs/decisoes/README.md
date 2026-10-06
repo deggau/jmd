@@ -48,11 +48,11 @@ Abrir uma paleta pesquisável por um atalho global configurável. Ela lista coma
 
 **Estado:** aceitos como padrões configuráveis.
 
-- Abrir paleta/configuração: `Win+J`.
+- Abrir paleta/configuração: `Alt+J`.
 - Transformar clipboard: `Ctrl+Alt+I`.
 - Transformar e substituir seleção: `Ctrl+Shift+I`.
 
-`Win+J` pode conflitar com o Recall do Windows em dispositivos compatíveis: a lista atual de atalhos da Microsoft o associa a abrir Recall ([Keyboard shortcuts in Windows](https://support.microsoft.com/en-us/windows/keyboard-shortcuts-in-windows-dcc61a57-8ff0-cffe-9796-cb9706c75eec)). Portanto, esse é um padrão desejado, não uma garantia de registro; detectar indisponibilidade e permitir reconfiguração é requisito.
+`Alt+J` foi escolhido como atalho padrão da paleta. Como qualquer combinação global, pode estar em uso; a aplicação deve sinalizar falha no registro e permitir reconfiguração.
 
 ### D-009 — Conversão de lista para literais SQL `IN`
 

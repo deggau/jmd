@@ -3,17 +3,17 @@ $ProgressPreference = 'SilentlyContinue'
 
 $repository = 'deggau/jmd'
 $apiUrl = "https://api.github.com/repos/$repository/releases/latest"
-$release = Invoke-RestMethod -Uri $apiUrl -Headers @{ 'User-Agent' = 'DevToolbox-Installer' }
-$installerAsset = $release.assets | Where-Object { $_.name -match '^DevToolbox-.+-win-x64-setup\.exe$' } | Select-Object -First 1
+$release = Invoke-RestMethod -Uri $apiUrl -Headers @{ 'User-Agent' = 'JMD-Installer' }
+$installerAsset = $release.assets | Where-Object { $_.name -match '^JMD-.+-win-x64-setup\.exe$' } | Select-Object -First 1
 if (-not $installerAsset) {
-    throw "A release mais recente não contém um instalador DevToolbox x64."
+    throw "A release mais recente não contém um instalador JMD x64."
 }
 $checksumAsset = $release.assets | Where-Object { $_.name -eq "$($installerAsset.name).sha256" } | Select-Object -First 1
 if (-not $checksumAsset) {
     throw "A release mais recente não contém o checksum SHA-256 do instalador."
 }
 
-$tempDir = Join-Path ([IO.Path]::GetTempPath()) ("DevToolbox-" + [guid]::NewGuid().ToString('N'))
+$tempDir = Join-Path ([IO.Path]::GetTempPath()) ("JMD-" + [guid]::NewGuid().ToString('N'))
 New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
 $installerPath = Join-Path $tempDir $installerAsset.name
 $checksumPath = "$installerPath.sha256"
@@ -28,12 +28,12 @@ try {
         throw 'O checksum SHA-256 do instalador não confere; a instalação foi cancelada.'
     }
 
-    Write-Host "Instalando DevToolbox $($release.tag_name)..."
+    Write-Host "Instalando JMD $($release.tag_name)..."
     $process = Start-Process -FilePath $installerPath -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         throw "O instalador terminou com código $($process.ExitCode)."
     }
-    Write-Host 'DevToolbox instalado. Procure-o no menu Iniciar.'
+    Write-Host 'JMD instalado. Procure-o no menu Iniciar.'
 }
 finally {
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue

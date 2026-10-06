@@ -1,4 +1,4 @@
-namespace DevToolbox.Core;
+namespace JMD.Core;
 
 public sealed record TransformationResult(bool Success, string? Value, string? Error)
 {
@@ -52,7 +52,7 @@ public sealed class ClipboardTransformationService(IClipboardText clipboard)
     }
 }
 
-public sealed record SelectionTransformResult(bool Success, string Message);
+public sealed record SelectionTransformResult(bool Success, string Message, string? BeforeValue = null, string? AfterValue = null);
 
 public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAutomation keyboard, IAsyncDelay? delay = null)
 {
@@ -110,7 +110,7 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
             await clipboard.TrySetTextAsync(selectedText, cancellationToken);
             return new(false, "Não foi possível colar o resultado. O texto recortado foi restaurado no clipboard.");
         }
-        return new(true, "Texto selecionado substituído.");
+        return new(true, "Texto selecionado substituído.", selectedText, result.Value);
     }
 
     private async Task<bool> RestoreSelectionAsync(IntPtr sourceWindow, string selectedText, CancellationToken cancellationToken)

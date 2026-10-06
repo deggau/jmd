@@ -11,7 +11,7 @@
 | Comportamento diferente em sessão remota/elevada | Atalho ou clipboard falha em alguns ambientes | Testar ambientes alvo e documentar suporte |
 | Aplicação não aceita os comandos de teclado sintetizados | Seleção não é copiada ou resultado não é colado | Detectar ausência de atualização do clipboard, cancelar com segurança e documentar aplicações compatíveis |
 | Recorte remove a seleção antes da transformação | Perda de texto caso a operação falhe | Manter a seleção recortada em memória e restaurá-la no clipboard/editor se leitura ou transformação falhar; avaliar modo alternativo com `Ctrl+C` |
-| Win+J já está associado ao Recall | A paleta pode não abrir pelo atalho padrão | Detectar falha do registro e instruir o usuário a escolher outra combinação |
+| Alt+J já está em uso | A paleta pode não abrir pelo atalho padrão | Detectar falha do registro e instruir o usuário a escolher outra combinação |
 | Delimitador da lista é ambíguo | SQL gerado pode separar valores incorretamente | Escolher apenas delimitador dominante único; pedir configuração se houver empate |
 | Clipboard contém dado anterior útil | Conteúdo do clipboard é substituído durante o fluxo | Guardar o valor anterior quando possível; definir e documentar comportamento de sucesso e recuperação |
 | Foco muda durante a operação | O texto pode ser colado na janela errada | Manter operação curta, não ativar a UI própria e cancelar se a janela de origem deixar de ser válida |

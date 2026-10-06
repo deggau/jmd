@@ -1,6 +1,6 @@
 # Estratégia de testes
 
-Os testes unitários ficam em `tests/DevToolbox.Tests` e cobrem lógica independente de Windows. As fronteiras de clipboard, teclado e temporização são substituídas por fakes nos testes de orquestração.
+Os testes unitários ficam em `tests/JMD.Tests` e cobrem lógica independente de Windows. As fronteiras de clipboard, teclado e temporização são substituídas por fakes nos testes de orquestração.
 
 ## Cobertura por caso de uso
 
@@ -11,4 +11,4 @@ Os testes unitários ficam em `tests/DevToolbox.Tests` e cobrem lógica independ
 - **UC-005 — Gerenciar comandos:** valores de atalho exibidos usam o mesmo parser coberto em UC-002. A interação visual WPF e os atalhos globais exigem validação manual numa sessão Windows.
 - **UC-006 — Formatar SQL IN:** cada delimitador (CRLF/LF/CR, vírgula, pipe, ponto e vírgula), espaços, separadores nas extremidades, apóstrofos, valor único, entradas vazias, vazios internos, ambiguidade e delimitador preferido.
 
-Executar a suíte com `dotnet test DevToolbox.sln`. Os testes não substituem a validação de integração em Windows real, particularmente para `RegisterHotKey`, `SendInput`, clipboard WPF e compatibilidade por aplicativo.
+Executar a suíte com `dotnet test JMD.sln`. Os testes não substituem a validação de integração em Windows real, particularmente para `RegisterHotKey`, `SendInput`, clipboard WPF e compatibilidade por aplicativo.

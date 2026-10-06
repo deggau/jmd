@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Windows;
-using DevToolbox.Core;
+using JMD.Core;
 
-namespace DevToolbox.Windows;
+namespace JMD.Windows;
 
 public sealed class WindowsClipboard : IClipboardText
 {

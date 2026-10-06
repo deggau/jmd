@@ -2,12 +2,12 @@
 
 ## Ator
 
-Usuário de DevToolbox.
+Usuário de JMD.
 
 ## Fluxo
 
 1. O usuário aciona uma ferramenta.
-2. DevToolbox tenta ler o clipboard.
+2. JMD tenta ler o clipboard.
 3. Se a leitura não for possível, a aplicação faz tentativas limitadas e não bloqueantes.
 4. Se não houver texto ou a leitura continuar falhando, a aplicação encerra a operação sem gravar um resultado.
 5. A aplicação informa a causa de maneira curta e permite tentar novamente.

@@ -3,17 +3,17 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DevToolbox.Core", "src\DevToolbox.Core\DevToolbox.Core.csproj", "{4E4EEAA8-42E5-4CA1-B8CD-39DFF149C4E2}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JMD.Core", "src\JMD.Core\JMD.Core.csproj", "{4E4EEAA8-42E5-4CA1-B8CD-39DFF149C4E2}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DevToolbox.Tools", "src\DevToolbox.Tools\DevToolbox.Tools.csproj", "{D4B82FF4-C023-466F-9576-F57D9A5E107C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JMD.Tools", "src\JMD.Tools\JMD.Tools.csproj", "{D4B82FF4-C023-466F-9576-F57D9A5E107C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DevToolbox.Windows", "src\DevToolbox.Windows\DevToolbox.Windows.csproj", "{A6D135A3-9612-4FDB-8C12-95DF06E53D52}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JMD.Windows", "src\JMD.Windows\JMD.Windows.csproj", "{A6D135A3-9612-4FDB-8C12-95DF06E53D52}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DevToolbox.App", "src\DevToolbox.App\DevToolbox.App.csproj", "{08E2393D-4D5F-4693-B5D6-1D2B75178150}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JMD.App", "src\JMD.App\JMD.App.csproj", "{08E2393D-4D5F-4693-B5D6-1D2B75178150}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DevToolbox.Tests", "tests\DevToolbox.Tests\DevToolbox.Tests.csproj", "{9F641948-1F28-463C-ADD6-3BEF33F0CCAE}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JMD.Tests", "tests\JMD.Tests\JMD.Tests.csproj", "{9F641948-1F28-463C-ADD6-3BEF33F0CCAE}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
 EndProject

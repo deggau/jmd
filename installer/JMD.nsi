@@ -14,14 +14,14 @@ Unicode true
   !define APP_RUNTIME "win-x64"
 !endif
 
-!define APP_NAME "DevToolbox"
-!define APP_PUBLISHER "DevToolbox"
-!define APP_EXE "DevToolbox.App.exe"
-!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\DevToolbox"
+!define APP_NAME "JMD"
+!define APP_PUBLISHER "JMD"
+!define APP_EXE "JMD.App.exe"
+!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\JMD"
 
 Name "${APP_NAME} ${APP_VERSION}"
 Caption "${APP_NAME} ${APP_VERSION} Setup"
-OutFile "${OUTPUT_DIR}\DevToolbox-${APP_VERSION}-${APP_RUNTIME}-setup.exe"
+OutFile "${OUTPUT_DIR}\JMD-${APP_VERSION}-${APP_RUNTIME}-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
 InstallDirRegKey HKCU "Software\${APP_NAME}" "InstallDir"
 RequestExecutionLevel user

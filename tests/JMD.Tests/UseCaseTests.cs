@@ -1,8 +1,8 @@
-using DevToolbox.Core;
-using DevToolbox.Tools;
+using JMD.Core;
+using JMD.Tools;
 using Xunit;
 
-namespace DevToolbox.Tests;
+namespace JMD.Tests;
 
 public sealed class UseCaseTests
 {
@@ -77,6 +77,7 @@ public sealed class UseCaseTests
 
     // UC-002 / UC-005: shortcut editor values, including supported aliases and invalid combinations.
     [Theory]
+    [InlineData("Alt+J", ShortcutModifiers.Alt, 0x4A)]
     [InlineData("Win+J", ShortcutModifiers.Windows, 0x4A)]
     [InlineData("Ctrl+Alt+I", ShortcutModifiers.Control | ShortcutModifiers.Alt, 0x49)]
     [InlineData("Ctrl+Shift+I", ShortcutModifiers.Control | ShortcutModifiers.Shift, 0x49)]
@@ -106,7 +107,9 @@ public sealed class UseCaseTests
         var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCut = "abc,def" };
         var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
         Assert.True(result.Success, result.Message);
+        Assert.Equal("abc,def", result.BeforeValue);
         Assert.Equal("'abc','def'", keyboard.PastedText);
+        Assert.Equal("'abc','def'", result.AfterValue);
         Assert.Equal(new[] { "cut", "paste" }, keyboard.Events);
     }
 

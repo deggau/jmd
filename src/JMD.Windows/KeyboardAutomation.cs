@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
-using DevToolbox.Core;
+using JMD.Core;
 
-namespace DevToolbox.Windows;
+namespace JMD.Windows;
 
 public sealed class KeyboardAutomation : IKeyboardAutomation
 {

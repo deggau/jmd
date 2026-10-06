@@ -1,6 +1,6 @@
-using DevToolbox.Core;
+using JMD.Core;
 
-namespace DevToolbox.Tools;
+namespace JMD.Tools;
 
 public sealed class SqlInListTransformation : ITextTransformation
 {
