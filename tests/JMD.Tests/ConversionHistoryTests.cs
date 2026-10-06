@@ -56,6 +56,7 @@ public sealed class ConversionHistoryTests : IDisposable
 
         Assert.Equal(new[] { "Mais recente", "Mais antigo" }, entries.Select(entry => entry.CommandName));
         Assert.Equal(instant, entries[0].OccurredAt);
+        Assert.Equal(entries[0], reopenedStore.GetLatest());
     }
 
     [Fact]

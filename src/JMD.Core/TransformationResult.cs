@@ -6,6 +6,39 @@ public sealed record TransformationResult(bool Success, string? Value, string? E
     public static TransformationResult Fail(string error) => new(false, null, error);
 }
 
+public sealed class SqlInConversionGuard
+{
+    private string? _originalValue;
+    private string? _convertedValue;
+
+    public void Remember(string originalValue, string convertedValue)
+    {
+        _originalValue = originalValue;
+        _convertedValue = convertedValue;
+    }
+
+    public bool TryGetOriginalForConvertedValue(string value, out string? originalValue)
+    {
+        if (_originalValue is not null && _convertedValue is not null &&
+            !string.Equals(_originalValue, _convertedValue, StringComparison.Ordinal) &&
+            string.Equals(value, _convertedValue, StringComparison.Ordinal))
+        {
+            originalValue = _originalValue;
+            return true;
+        }
+
+        originalValue = null;
+        return false;
+    }
+
+    public TransformationResult TransformUnlessAlreadyConverted(string value, Func<string, TransformationResult> transform)
+    {
+        if (TryGetOriginalForConvertedValue(value, out var originalValue))
+            return TransformationResult.Fail($"Esse valor já foi convertido para SQL IN. Valor original: {originalValue}");
+        return transform(value);
+    }
+}
+
 public interface ITextTransformation
 {
     string Id { get; }
@@ -48,6 +81,8 @@ public sealed class ClipboardTransformationService(IClipboardText clipboard)
         if (!result.Success) return result;
         if (!await clipboard.TrySetTextAsync(result.Value!, cancellationToken))
             return TransformationResult.Fail("Não foi possível gravar o resultado no clipboard.");
+        if (!string.Equals(await clipboard.TryGetTextAsync(cancellationToken), result.Value, StringComparison.Ordinal))
+            return TransformationResult.Fail("O Windows não confirmou a atualização do clipboard. O resultado não foi aplicado.");
         return result;
     }
 }

@@ -73,6 +73,11 @@ public sealed class UseCaseTests
         var blocked = new FakeClipboard { Text = "a,b", FailWrites = true };
         Assert.False((await new ClipboardTransformationService(blocked).ExecuteAsync(_sql.Transform)).Success);
         Assert.Equal("a,b", blocked.Text);
+
+        var ignored = new FakeClipboard { Text = "a,b", IgnoreWrites = true };
+        var ignoredResult = await new ClipboardTransformationService(ignored).ExecuteAsync(_sql.Transform);
+        Assert.False(ignoredResult.Success);
+        Assert.Equal("a,b", ignored.Text);
     }
 
     // UC-002 / UC-005: shortcut editor values, including supported aliases and invalid combinations.
@@ -114,6 +119,23 @@ public sealed class UseCaseTests
     }
 
     [Fact]
+    public async Task Selection_use_case_restores_text_instead_of_converting_the_previous_output_again()
+    {
+        var clipboard = new FakeClipboard { Text = "prior clipboard" };
+        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCut = "'alpha','beta'" };
+        var guard = new SqlInConversionGuard();
+        guard.Remember("alpha,beta", "'alpha','beta'");
+
+        var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay())
+            .ExecuteAsync(value => guard.TransformUnlessAlreadyConverted(value, _sql.Transform));
+
+        Assert.False(result.Success);
+        Assert.Contains("alpha,beta", result.Message);
+        Assert.Equal("'alpha','beta'", keyboard.PastedText);
+        Assert.Equal(new[] { "cut", "paste" }, keyboard.Events);
+    }
+
+    [Fact]
     public async Task Selection_use_case_restores_original_selection_when_transformation_fails()
     {
         var clipboard = new FakeClipboard { Text = "prior" };
@@ -142,11 +164,13 @@ public sealed class UseCaseTests
     {
         public string? Text { get; set; }
         public bool FailWrites { get; set; }
+        public bool IgnoreWrites { get; set; }
         public uint SequenceNumber { get; set; }
         public Task<string?> TryGetTextAsync(CancellationToken cancellationToken = default) => Task.FromResult(Text);
         public Task<bool> TrySetTextAsync(string value, CancellationToken cancellationToken = default)
         {
             if (FailWrites) return Task.FromResult(false);
+            if (IgnoreWrites) return Task.FromResult(true);
             Text = value; SequenceNumber++;
             return Task.FromResult(true);
         }

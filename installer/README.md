@@ -17,10 +17,10 @@ Na raiz do repositório:
 ./installer/Build-Installer.ps1
 ```
 
-O script publica a aplicação como self-contained para `win-x64` e gera `artifacts/installer/JMD-0.1.1-win-x64-setup.exe`. Para ARM64 ou outra versão:
+O script publica a aplicação como self-contained para `win-x64` e gera `artifacts/installer/JMD-0.1.2-win-x64-setup.exe`. Para ARM64 ou outra versão:
 
 ```powershell
-./installer/Build-Installer.ps1 -Runtime win-arm64 -Version 0.1.1
+./installer/Build-Installer.ps1 -Runtime win-arm64 -Version 0.1.2
 ```
 
 ## Instalar a partir de uma release pública
@@ -31,7 +31,7 @@ Com o repositório público e uma release disponível, abra o PowerShell e execu
 irm https://raw.githubusercontent.com/deggau/jmd/main/installer/install.ps1 | iex
 ```
 
-O comando baixa `installer/install.ps1` da branch principal. Esse script baixa o instalador da release mais recente, confere o checksum SHA-256 e inicia o assistente. Para publicar uma versão, envie uma tag como `v0.1.1`; a GitHub Action compila o instalador no Windows e publica o instalador e o checksum na release. O repositório precisa estar público para o comando remoto funcionar sem autenticação.
+O comando baixa `installer/install.ps1` da branch principal. Esse script baixa o instalador da release mais recente, confere o checksum SHA-256 e inicia o assistente. Para publicar uma versão, envie uma tag como `v0.1.2`; a GitHub Action compila o instalador no Windows e publica o instalador e o checksum na release. O repositório precisa estar público para o comando remoto funcionar sem autenticação.
 
 A publicação inclui o runtime .NET, então o usuário final não precisa instalar o .NET separadamente. A compilação do instalador e a instalação/desinstalação devem ser verificadas em Windows; o script do NSIS não pode ser executado neste ambiente Linux.
 

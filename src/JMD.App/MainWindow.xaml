@@ -1,7 +1,7 @@
 <Window x:Class="JMD.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="JMD" Icon="Assets/JMD.ico" Width="760" Height="570" MinWidth="650" MinHeight="480"
+        Title="JMD" Icon="Assets/JMD.png" Width="760" Height="570" MinWidth="650" MinHeight="480"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         WindowStartupLocation="CenterScreen" ShowInTaskbar="False" Topmost="True"
         PreviewKeyDown="Window_PreviewKeyDown" Deactivated="Window_Deactivated">

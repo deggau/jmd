@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private ConversionHistoryStore? _historyStore;
     private ConversionHistoryRecorder? _historyRecorder;
     private readonly SqlInListTransformation _transformation = new();
+    private readonly SqlInConversionGuard _conversionGuard = new();
     private readonly WindowsClipboard _clipboard = new();
     private readonly KeyboardAutomation _keyboard = new();
     private readonly SelectionTransformer _selectionTransformer;
@@ -47,8 +48,7 @@ public partial class MainWindow : Window
     private IntPtr _previousWindow;
     private bool _showingSettings;
     private bool _closingForExit;
-    private string? _lastClipboardConversion;
-    private bool _clipboardConversionRunning;
+    private bool _conversionRunning;
 
     public event Action<string, string>? TrayNotification;
 
@@ -66,6 +66,8 @@ public partial class MainWindow : Window
             _historyStore = new ConversionHistoryStore(historyPath);
             _historyRecorder = new ConversionHistoryRecorder(_historyStore);
             _historyStore.DeleteOlderThan(_settings.HistoryRetentionDays);
+            if (_historyStore.GetLatest() is { } lastConversion)
+                _conversionGuard.Remember(lastConversion.BeforeValue, lastConversion.AfterValue);
         }
         catch (Exception exception)
         {
@@ -525,8 +527,8 @@ public partial class MainWindow : Window
 
     private async Task TransformClipboardAsync()
     {
-        if (_clipboardConversionRunning) return;
-        _clipboardConversionRunning = true;
+        if (_conversionRunning) return;
+        _conversionRunning = true;
         try
         {
             var input = await _clipboard.TryGetTextAsync();
@@ -535,35 +537,42 @@ public partial class MainWindow : Window
                 Notify("JMD", "O clipboard não contém texto Unicode.", false);
                 return;
             }
-            if (string.Equals(input, _lastClipboardConversion, StringComparison.Ordinal))
+            if (_conversionGuard.TryGetOriginalForConvertedValue(input, out var originalValue))
             {
-                Notify("JMD", "Esse valor já foi convertido para SQL IN.", true);
+                Notify("JMD", $"Esse valor já foi convertido para SQL IN. Valor original: {originalValue}", true);
                 return;
             }
 
             var result = FormatText(input);
             if (result.Success && !await _clipboard.TrySetTextAsync(result.Value!))
                 result = TransformationResult.Fail("Não foi possível gravar o resultado no clipboard.");
+            if (result.Success && !string.Equals(await _clipboard.TryGetTextAsync(), result.Value, StringComparison.Ordinal))
+                result = TransformationResult.Fail("O Windows não confirmou a atualização do clipboard. O resultado não foi aplicado.");
             if (result.Success)
             {
-                _lastClipboardConversion = result.Value;
+                _conversionGuard.Remember(input, result.Value!);
                 RecordHistory("Montar SQL IN", input, result);
             }
             Notify("JMD", result.Success ? "Lista formatada para SQL IN e pronta para colar." : result.Error ?? "Não foi possível converter a lista.", result.Success);
         }
         catch (Exception exception) { Notify("JMD", $"Falha ao transformar o clipboard: {exception.Message}", false); }
-        finally { _clipboardConversionRunning = false; }
+        finally { _conversionRunning = false; }
     }
 
     private async Task TransformSelectionAsync()
     {
+        if (_conversionRunning) return;
+        _conversionRunning = true;
         try
         {
-            var result = await _selectionTransformer.ExecuteAsync(FormatText);
+            var result = await _selectionTransformer.ExecuteAsync(FormatTextForExecution);
+            if (result.Success && result.BeforeValue is not null && result.AfterValue is not null)
+                _conversionGuard.Remember(result.BeforeValue, result.AfterValue);
             RecordSelectionHistory(result);
             Notify("JMD", result.Message, result.Success);
         }
         catch (Exception exception) { Notify("JMD", $"Falha ao substituir a seleção: {exception.Message}", false); }
+        finally { _conversionRunning = false; }
     }
 
     private void RecordHistory(string commandName, string beforeValue, TransformationResult result)
@@ -645,6 +654,9 @@ public partial class MainWindow : Window
     private sealed record HistoryDisplayEntry(string CommandName, string BeforeValue, string AfterValue, string DisplayDate);
 
     private TransformationResult FormatText(string input) => _transformation.Transform(input, _settings.PreferredDelimiter);
+
+    private TransformationResult FormatTextForExecution(string input)
+        => _conversionGuard.TransformUnlessAlreadyConverted(input, FormatText);
 
     private async void CommandButton_Click(object sender, RoutedEventArgs e)
     {

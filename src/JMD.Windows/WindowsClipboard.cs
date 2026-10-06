@@ -34,7 +34,10 @@ public sealed class WindowsClipboard : IClipboardText
             try
             {
                 Clipboard.SetText(value, TextDataFormat.UnicodeText);
-                return true;
+                var writtenText = Clipboard.ContainsText(TextDataFormat.UnicodeText)
+                    ? Clipboard.GetText(TextDataFormat.UnicodeText)
+                    : null;
+                return string.Equals(writtenText, value, StringComparison.Ordinal);
             }
             catch (Exception exception) when (exception is ExternalException or ArgumentException)
             {

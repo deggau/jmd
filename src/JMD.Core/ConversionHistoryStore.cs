@@ -70,16 +70,30 @@ public sealed class ConversionHistoryStore
         var entries = new List<ConversionHistoryEntry>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
-        {
-            entries.Add(new ConversionHistoryEntry(
-                reader.GetInt64(0),
-                DateTimeOffset.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture),
-                reader.GetString(2),
-                reader.GetString(3),
-                reader.GetString(4)));
-        }
+            entries.Add(ReadEntry(reader));
         return entries;
     }
+
+    public ConversionHistoryEntry? GetLatest()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue
+            FROM ConversionHistory
+            ORDER BY OccurredAtUtc DESC, Id DESC
+            LIMIT 1;
+            """;
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadEntry(reader) : null;
+    }
+
+    private static ConversionHistoryEntry ReadEntry(SqliteDataReader reader) => new(
+        reader.GetInt64(0),
+        DateTimeOffset.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture),
+        reader.GetString(2),
+        reader.GetString(3),
+        reader.GetString(4));
 
     public void DeleteOlderThan(int retentionDays)
     {
