@@ -2,6 +2,10 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Diagnostics;
+using System.Net.Http;
+using System.Reflection;
+using System.Text.Json;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -39,6 +43,7 @@ public partial class MainWindow : Window
     private readonly KeyboardAutomation _keyboard = new();
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
+    private readonly AppNavigationState _navigation = new();
     private ICollectionView? _commandView;
     private readonly List<ShortcutRow> _shortcutRows = [];
     private readonly Dictionary<string, TextBlock> _shortcutStatusLabels = new(StringComparer.Ordinal);
@@ -46,7 +51,6 @@ public partial class MainWindow : Window
     private TextBlock? _testOutput;
     private GlobalHotkeyService? _hotkeys;
     private IntPtr _previousWindow;
-    private bool _showingSettings;
     private bool _closingForExit;
     private bool _conversionRunning;
 
@@ -98,9 +102,9 @@ public partial class MainWindow : Window
     private void BuildCommands()
     {
         _commands.Add(new CommandRow("clipboard", "Formatar clipboard para SQL IN",
-            "Converte os valores copiados em uma lista SQL entre apóstrofos.", "Ctrl+Alt+I"));
+            "Converte os valores copiados em uma lista SQL entre apóstrofos.", ShortcutDefaults.ForCommand("clipboard")));
         _commands.Add(new CommandRow("selection", "Substituir seleção formatada",
-            "Recorta o texto selecionado, formata e cola o resultado no lugar.", "Ctrl+Shift+I"));
+            "Recorta o texto selecionado, formata e cola o resultado no lugar.", ShortcutDefaults.ForCommand("selection")));
     }
 
     private void RegisterConfiguredShortcuts()
@@ -334,12 +338,7 @@ public partial class MainWindow : Window
 
     private string GetShortcut(string id)
     {
-        var defaults = id switch
-        {
-            "palette" => "Alt+J",
-            "clipboard" => "Ctrl+Alt+I",
-            _ => "Ctrl+Shift+I"
-        };
+        var defaults = ShortcutDefaults.ForCommand(id);
         return _settings.Shortcuts.TryGetValue(id, out var value) ? value : defaults;
     }
 
@@ -409,7 +408,7 @@ public partial class MainWindow : Window
         }
 
         string? error = null;
-        if (row.Enabled && (_hotkeys is null || !_hotkeys.TryRegister(row.Id, binding, out error)))
+        if (row.Enabled && !_navigation.IsEditingShortcuts && (_hotkeys is null || !_hotkeys.TryRegister(row.Id, binding, out error)))
         {
             row.Status = error ?? "Atalho indisponível.";
             row.StatusBrush = new SolidColorBrush(Color.FromRgb(255, 145, 135));
@@ -427,7 +426,9 @@ public partial class MainWindow : Window
             SetStatus($"Atalho ativo, mas não foi possível salvar: {exception.Message}", false);
         }
         row.Shortcut = shortcut;
-        row.Status = row.Enabled ? "Ativo" : "Desativado";
+        row.Status = row.Enabled
+            ? _navigation.IsEditingShortcuts ? "Ativado ao sair das configurações" : "Ativo"
+            : "Desativado";
         row.StatusBrush = row.Enabled
             ? new SolidColorBrush(Color.FromRgb(180, 243, 106))
             : new SolidColorBrush(Color.FromRgb(150, 155, 167));
@@ -470,7 +471,12 @@ public partial class MainWindow : Window
         {
             _settings.DisabledCommands.Remove(row.Id);
             string? activationError;
-            if (!ShortcutParser.TryParse(GetShortcut(row.Id), out var binding, out activationError))
+            if (_navigation.IsEditingShortcuts)
+            {
+                row.Status = "Ativado ao sair das configurações";
+                row.StatusBrush = new SolidColorBrush(Color.FromRgb(180, 243, 106));
+            }
+            else if (!ShortcutParser.TryParse(GetShortcut(row.Id), out var binding, out activationError))
             {
                 row.Status = activationError ?? "Atalho inválido.";
                 row.StatusBrush = new SolidColorBrush(Color.FromRgb(255, 145, 135));
@@ -509,11 +515,15 @@ public partial class MainWindow : Window
 
     public void ShowPalette()
     {
-        _showingSettings = false;
+        _navigation.ShowPalette();
         CommandsList.Visibility = Visibility.Visible;
         SettingsTabs.Visibility = Visibility.Collapsed;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        HistoryPage.Visibility = Visibility.Collapsed;
+        AboutPage.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Visible;
         ManageButton.Content = "Gerenciar atalhos";
+        HistoryButton.Content = "Histórico";
         PageTitle.Text = "JMD";
         PageSubtitle.Text = "Ferramentas rápidas para desenvolvimento";
         RefreshCommandStatuses();
@@ -521,6 +531,8 @@ public partial class MainWindow : Window
         Show();
         WindowState = WindowState.Normal;
         Activate();
+        RegisterConfiguredShortcuts();
+        RefreshCommandStatuses();
         SearchBox.Focus();
         Keyboard.Focus(SearchBox);
     }
@@ -676,15 +688,135 @@ public partial class MainWindow : Window
 
     private void ManageButton_Click(object sender, RoutedEventArgs e)
     {
-        _showingSettings = !_showingSettings;
-        CommandsList.Visibility = _showingSettings ? Visibility.Collapsed : Visibility.Visible;
-        SettingsTabs.Visibility = _showingSettings ? Visibility.Visible : Visibility.Collapsed;
-        SearchBox.Visibility = _showingSettings ? Visibility.Collapsed : Visibility.Visible;
-        if (_showingSettings) SettingsTabs.SelectedIndex = 0;
-        ManageButton.Content = _showingSettings ? "Voltar aos comandos" : "Gerenciar atalhos";
-        PageTitle.Text = _showingSettings ? "Configurações" : "JMD";
-        PageSubtitle.Text = _showingSettings ? "Atalhos e histórico de conversões" : "Ferramentas rápidas para desenvolvimento";
+        if (_navigation.CurrentPage != AppPage.Palette)
+        {
+            ShowPalette();
+            return;
+        }
+        _navigation.ShowShortcutSettings();
+        CommandsList.Visibility = Visibility.Collapsed;
+        SettingsTabs.Visibility = Visibility.Visible;
+        SettingsPage.Visibility = Visibility.Visible;
+        HistoryPage.Visibility = Visibility.Collapsed;
+        AboutPage.Visibility = Visibility.Collapsed;
+        SearchBox.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos comandos";
+        PageTitle.Text = "Gerenciar atalhos";
+        PageSubtitle.Text = "Configure os comandos e combinações globais";
+        foreach (var id in ShortcutIds)
+            _hotkeys?.Unregister(id);
         RefreshShortcutStatuses();
+    }
+
+    private void HistoryButton_Click(object sender, RoutedEventArgs e)
+        => ShowHistory();
+
+    public void ShowHistory()
+    {
+        _navigation.ShowHistory();
+        CommandsList.Visibility = Visibility.Collapsed;
+        SettingsTabs.Visibility = Visibility.Visible;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        HistoryPage.Visibility = Visibility.Visible;
+        AboutPage.Visibility = Visibility.Collapsed;
+        SearchBox.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos comandos";
+        PageTitle.Text = "Histórico";
+        PageSubtitle.Text = "Consulte as conversões recentes";
+        RefreshHistory();
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private void ExtraButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ExtraButton.ContextMenu is not { } menu) return;
+        menu.PlacementTarget = ExtraButton;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        _navigation.ShowAbout();
+        CommandsList.Visibility = Visibility.Collapsed;
+        SettingsTabs.Visibility = Visibility.Collapsed;
+        AboutPage.Visibility = Visibility.Visible;
+        SearchBox.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos comandos";
+        PageTitle.Text = "Sobre";
+        PageSubtitle.Text = "Informações e atualizações do JMD";
+        var version = Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                      ?? Assembly.GetEntryAssembly()?.GetName().Version?.ToString()
+                      ?? "desconhecida";
+        AboutVersionText.Text = $"Versão instalada: {version}";
+        UpdateStatusText.Text = "Verifique se há uma versão mais recente no GitHub.";
+        InstallUpdateButton.Visibility = Visibility.Collapsed;
+        CheckUpdatesButton.IsEnabled = true;
+    }
+
+    private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        CheckUpdatesButton.IsEnabled = false;
+        InstallUpdateButton.Visibility = Visibility.Collapsed;
+        UpdateStatusText.Text = "Consultando a versão mais recente no GitHub…";
+        try
+        {
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("JMD-App");
+            using var response = await client.GetAsync("https://api.github.com/repos/deggau/jmd/releases/latest");
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var latestTag = json.RootElement.GetProperty("tag_name").GetString()?.TrimStart('v', 'V');
+            var installed = Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                            ?? Assembly.GetEntryAssembly()?.GetName().Version?.ToString();
+            installed = installed?.Split('+')[0];
+            if (installed is null || latestTag is null || !Version.TryParse(installed, out var currentVersion) || !Version.TryParse(latestTag, out var latestVersion))
+                throw new InvalidDataException("O GitHub retornou uma versão inválida.");
+
+            if (ReleaseVersionComparison.IsUpdateAvailable(installed, latestTag))
+            {
+                UpdateStatusText.Text = $"Nova versão disponível: {latestVersion} (instalada: {currentVersion}).";
+                InstallUpdateButton.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                UpdateStatusText.Text = $"Você já está usando a versão mais recente ({currentVersion}).";
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or InvalidDataException or KeyNotFoundException)
+        {
+            UpdateStatusText.Text = $"Não foi possível verificar atualizações: {exception.Message}";
+        }
+        finally
+        {
+            CheckUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    private void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                UseShellExecute = true
+            };
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-ExecutionPolicy");
+            startInfo.ArgumentList.Add("Bypass");
+            startInfo.ArgumentList.Add("-Command");
+            startInfo.ArgumentList.Add("Start-Sleep -Seconds 2; irm https://raw.githubusercontent.com/deggau/jmd/main/installer/install.ps1 | iex");
+            Process.Start(startInfo);
+            PrepareForExit();
+            System.Windows.Application.Current.Shutdown();
+        }
+        catch (Exception exception)
+        {
+            UpdateStatusText.Text = $"Não foi possível iniciar a atualização: {exception.Message}";
+        }
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -713,7 +845,7 @@ public partial class MainWindow : Window
             Hide();
             e.Handled = true;
         }
-        else if (e.Key == Key.Enter && !_showingSettings && CommandsList.SelectedItem is CommandRow selected)
+        else if (e.Key == Key.Enter && !_navigation.IsEditingShortcuts && CommandsList.SelectedItem is CommandRow selected)
         {
             _ = ExecuteCommandAsync(selected.Id);
             e.Handled = true;

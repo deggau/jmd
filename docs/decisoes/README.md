@@ -49,8 +49,8 @@ Abrir uma paleta pesquisável por um atalho global configurável. Ela lista coma
 **Estado:** aceitos como padrões configuráveis.
 
 - Abrir paleta/configuração: `Alt+J`.
-- Transformar clipboard: `Ctrl+Alt+I`.
-- Transformar e substituir seleção: `Ctrl+Shift+I`.
+- Transformar clipboard: `Ctrl+Shift+I`.
+- Transformar e substituir seleção: `Ctrl+Alt+I`.
 
 `Alt+J` foi escolhido como atalho padrão da paleta. Como qualquer combinação global, pode estar em uso; a aplicação deve sinalizar falha no registro e permitir reconfiguração.
 

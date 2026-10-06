@@ -23,7 +23,7 @@ Desenvolvedor usando um editor ou outro aplicativo Windows compatível.
 
 ## Por que copiar em vez de recortar
 
-Atalho padrão para esse fluxo: `Ctrl+Shift+I`. O usuário confirmou a sequência `Ctrl+X; transformação; Ctrl+V`. Recortar remove a seleção antes de a transformação terminar, portanto a implementação precisa preservar a entrada recortada e recolocá-la na aplicação se qualquer passo anterior à colagem falhar. `Ctrl+C` seria mais seguro por manter a seleção até o resultado estar pronto, mas o fluxo inicial seguirá o recorte solicitado.
+Atalho padrão para esse fluxo: `Ctrl+Alt+I`. O usuário confirmou a sequência `Ctrl+X; transformação; Ctrl+V`. Recortar remove a seleção antes de a transformação terminar, portanto a implementação precisa preservar a entrada recortada e recolocá-la na aplicação se qualquer passo anterior à colagem falhar. `Ctrl+C` seria mais seguro por manter a seleção até o resultado estar pronto, mas o fluxo inicial seguirá o recorte solicitado.
 
 ## Alternativas e falhas
 

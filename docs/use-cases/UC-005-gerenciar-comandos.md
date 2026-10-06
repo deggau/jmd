@@ -19,7 +19,7 @@ Usuário de JMD.
 
 ## Fluxo alternativo: configurar um atalho
 
-1. O usuário abre a área de gerenciamento de atalhos na paleta/configurações (paleta: `Alt+J`; conversão do clipboard: `Ctrl+Alt+I`; substituir seleção: `Ctrl+Shift+I`, padrões iniciais).
+1. O usuário abre a área de gerenciamento de atalhos na paleta/configurações (paleta: `Alt+J`; conversão do clipboard: `Ctrl+Shift+I`; substituir seleção: `Ctrl+Alt+I`, padrões iniciais).
 2. Seleciona o comando e inicia a captura de uma combinação.
 3. O sistema tenta registrar a nova combinação global.
 4. Se aceita, mostra o estado ativo e persiste a configuração.

@@ -13,7 +13,7 @@ Desenvolvedor usando qualquer aplicação Windows.
 ## Fluxo principal
 
 1. O usuário copia um texto em qualquer aplicação.
-2. O usuário pressiona o atalho associado à transformação (padrão inicial para SQL `IN`: `Ctrl+Alt+I`).
+2. O usuário pressiona o atalho associado à transformação (padrão inicial para SQL `IN`: `Ctrl+Shift+I`).
 3. JMD recebe o evento global sem trazer sua janela para frente.
 4. A aplicação lê o texto e executa a transformação.
 5. A aplicação coloca o resultado no clipboard.

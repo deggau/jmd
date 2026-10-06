@@ -2,6 +2,7 @@ using System.Drawing;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using JMD.Core;
 using Forms = System.Windows.Forms;
 
 namespace JMD.App;
@@ -49,6 +50,8 @@ public partial class App : System.Windows.Application
             _trayIcon.BalloonTipText = message;
             _trayIcon.ShowBalloonTip(2200);
         };
+        _trayIcon.BalloonTipClicked += (_, _) =>
+            _mainWindow.Dispatcher.BeginInvoke(_mainWindow.ShowHistory);
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -76,9 +79,9 @@ internal sealed class UserSettings
 
     public Dictionary<string, string> Shortcuts { get; set; } = new(StringComparer.Ordinal)
     {
-        ["palette"] = "Alt+J",
-        ["clipboard"] = "Ctrl+Alt+I",
-        ["selection"] = "Ctrl+Shift+I"
+        ["palette"] = ShortcutDefaults.ForCommand("palette"),
+        ["clipboard"] = ShortcutDefaults.ForCommand("clipboard"),
+        ["selection"] = ShortcutDefaults.ForCommand("selection")
     };
     public HashSet<string> DisabledCommands { get; set; } = new(StringComparer.Ordinal);
 }
@@ -99,9 +102,7 @@ internal sealed class SettingsStore
                 {
                     loaded.Shortcuts ??= new Dictionary<string, string>(StringComparer.Ordinal);
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
-                    if (loaded.Shortcuts.TryGetValue("palette", out var paletteShortcut) &&
-                        string.Equals(paletteShortcut, "Win+J", StringComparison.Ordinal))
-                        loaded.Shortcuts["palette"] = "Alt+J";
+                    ShortcutDefaults.MigratePreviousDefaults(loaded.Shortcuts);
                     return loaded;
                 }
             }

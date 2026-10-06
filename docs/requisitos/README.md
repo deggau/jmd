@@ -21,7 +21,7 @@
 - **RF-17** Mostrar o estado de cada atalho: ativo, desativado ou indisponível por conflito/erro de registro.
 - **RF-18** Permitir tentar novamente o registro de um atalho após o conflito ser resolvido.
 - **RF-25** Permitir habilitar/desabilitar cada comando sem remover sua configuração e oferecer uma ação para tentar registrar novamente atalhos indisponíveis.
-- **RF-19** Definir como atalhos padrão `Alt+J` para a paleta, `Ctrl+Alt+I` para transformar o clipboard e `Ctrl+Shift+I` para transformar e substituir a seleção; todos devem continuar configuráveis.
+- **RF-19** Definir como atalhos padrão `Alt+J` para a paleta, `Ctrl+Shift+I` para transformar o clipboard e `Ctrl+Alt+I` para transformar e substituir a seleção; todos devem continuar configuráveis.
 - **RF-20** Incluir uma transformação que converte uma lista delimitada em valores entre apóstrofos, separados por vírgulas, para uso em cláusula SQL `IN`.
 - **RF-21** Detectar delimitadores vírgula, pipe, ponto e vírgula e quebras de linha CRLF, LF ou CR.
 - **RF-22** Nunca incluir vírgula depois do último valor produzido.

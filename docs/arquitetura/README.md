@@ -44,7 +44,7 @@ A tela deve abrir e receber foco ao ser acionada pelo atalho global próprio. De
 
 O sistema operacional permite verificar se o registro do atalho foi aceito ou recusado; a interface deve comunicar indisponibilidade sem afirmar que identificou qual processo possui a combinação.
 
-Atalhos padrão iniciais: `Alt+J` abre a paleta, `Ctrl+Alt+I` transforma o clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Todos devem ser configuráveis; a paleta deve refletir o estado real do registro.
+Atalhos padrão iniciais: `Alt+J` abre a paleta, `Ctrl+Shift+I` transforma o clipboard e `Ctrl+Alt+I` transforma e substitui a seleção. Todos devem ser configuráveis; a paleta deve refletir o estado real do registro.
 
 ## Transformação SQL `IN`
 

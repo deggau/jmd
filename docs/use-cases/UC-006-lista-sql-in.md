@@ -7,8 +7,8 @@ Desenvolvedor preparando uma lista de valores para uma consulta SQL.
 ## Entrada e saída
 
 - Entrada: texto no clipboard ou texto selecionado numa aplicação.
-- Atalho padrão do modo clipboard: `Ctrl+Alt+I`.
-- Atalho padrão do modo substituir seleção: `Ctrl+Shift+I`.
+- Atalho padrão do modo clipboard: `Ctrl+Shift+I`.
+- Atalho padrão do modo substituir seleção: `Ctrl+Alt+I`.
 - Saída: cada valor envolvido em apóstrofos simples e separado dos demais por vírgula, sem vírgula final.
 
 Exemplos:

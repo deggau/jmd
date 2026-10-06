@@ -4,7 +4,7 @@ Suite local de ferramentas para acelerar tarefas comuns de desenvolvimento, acio
 
 ## Objetivo inicial
 
-Permitir que o usuário transforme o conteúdo da área de transferência sem trocar de janela. Exemplo: após copiar um texto, pressionar `Ctrl+Alt+I` executa a transformação SQL `IN` e coloca o resultado de volta no clipboard, pronto para colar.
+Permitir que o usuário transforme o conteúdo da área de transferência sem trocar de janela. Exemplo: após copiar um texto, pressionar `Ctrl+Shift+I` executa a transformação SQL `IN` e coloca o resultado de volta no clipboard, pronto para colar.
 
 ## Documentação
 
@@ -38,7 +38,7 @@ dotnet build .\JMD.sln
 dotnet run --project .\src\JMD.App\JMD.App.csproj
 ```
 
-A aplicação inicia minimizada na área de notificação. `Alt+J` abre a paleta, `Ctrl+Alt+I` converte o texto do clipboard e `Ctrl+Shift+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração. A tela de configurações também permite consultar o histórico das conversões e ajustar sua retenção, inicialmente em 15 dias.
+A aplicação inicia minimizada na área de notificação. `Alt+J` abre a paleta, `Ctrl+Shift+I` converte o texto do clipboard e `Ctrl+Alt+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração. A tela de configurações também permite consultar o histórico das conversões e ajustar sua retenção, inicialmente em 15 dias.
 
 ## Criar instalador Windows
 

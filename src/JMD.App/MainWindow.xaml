@@ -26,6 +26,16 @@
           </StackPanel>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <Button x:Name="ExtraButton" Content="..." Click="ExtraButton_Click" Padding="11,8" Margin="0,0,8,0" Background="#FF2A2D35"
+                  Foreground="White" BorderThickness="0" ToolTip="Mais opções">
+            <Button.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Sobre" Click="AboutMenuItem_Click" />
+              </ContextMenu>
+            </Button.ContextMenu>
+          </Button>
+          <Button x:Name="HistoryButton" Content="Histórico" Click="HistoryButton_Click"
+                  Padding="14,8" Margin="0,0,8,0" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
           <Button x:Name="ManageButton" Content="Gerenciar atalhos" Click="ManageButton_Click"
                   Padding="14,8" Margin="0,0,8,0" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
           <Button Content="×" Click="CloseButton_Click" Width="34" Height="34" FontSize="18"
@@ -68,14 +78,11 @@
           </ListBox.ItemTemplate>
         </ListBox>
       </ScrollViewer>
-      <TabControl x:Name="SettingsTabs" Grid.Row="2" Visibility="Collapsed"
-                  Background="#FF17191F" Foreground="White" BorderBrush="#FF3A3E48">
-        <TabItem Header="Atalhos" Foreground="#FF17191F">
-          <ScrollViewer VerticalScrollBarVisibility="Auto" Background="#FF17191F">
-            <StackPanel x:Name="SettingsPanel" Margin="2,10,2,8" />
-          </ScrollViewer>
-        </TabItem>
-        <TabItem Header="Histórico" Foreground="#FF17191F">
+      <Grid x:Name="SettingsTabs" Grid.Row="2" Visibility="Collapsed">
+        <ScrollViewer x:Name="SettingsPage" VerticalScrollBarVisibility="Auto" Background="#FF17191F">
+          <StackPanel x:Name="SettingsPanel" Margin="2,10,2,8" />
+        </ScrollViewer>
+        <Grid x:Name="HistoryPage" Visibility="Collapsed" Background="#FF17191F">
           <Grid Margin="12">
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto" />
@@ -112,12 +119,24 @@
                             <TextBlock Text="{Binding DisplayDate}" Foreground="#FF969BA7"
                                        HorizontalAlignment="Right" DockPanel.Dock="Right" />
                           </DockPanel>
-                          <TextBlock Text="Anterior" Foreground="#FF969BA7" FontSize="11" />
-                          <TextBlock Text="{Binding BeforeValue}" Foreground="White" TextWrapping="Wrap"
-                                     FontFamily="Consolas" Margin="0,2,0,8" />
-                          <TextBlock Text="Convertido" Foreground="#FF969BA7" FontSize="11" />
-                          <TextBlock Text="{Binding AfterValue}" Foreground="White" TextWrapping="Wrap"
-                                     FontFamily="Consolas" Margin="0,2,0,0" />
+                          <Grid>
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="12" />
+                              <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                              <TextBlock Text="Original" Foreground="#FF969BA7" FontSize="11" />
+                              <TextBlock Text="{Binding BeforeValue}" Foreground="White" TextWrapping="Wrap"
+                                         FontFamily="Consolas" Margin="0,3,0,0" />
+                            </StackPanel>
+                            <Border Grid.Column="1" BorderBrush="#FF3A3E48" BorderThickness="1,0,0,0" HorizontalAlignment="Center" />
+                            <StackPanel Grid.Column="2">
+                              <TextBlock Text="Resultado" Foreground="#FF969BA7" FontSize="11" />
+                              <TextBlock Text="{Binding AfterValue}" Foreground="White" TextWrapping="Wrap"
+                                         FontFamily="Consolas" Margin="0,3,0,0" />
+                            </StackPanel>
+                          </Grid>
                         </StackPanel>
                       </Border>
                     </DataTemplate>
@@ -126,8 +145,28 @@
               </ScrollViewer>
             </Grid>
           </Grid>
-        </TabItem>
-      </TabControl>
+        </Grid>
+      </Grid>
+      <Grid x:Name="AboutPage" Grid.Row="2" Visibility="Collapsed" Background="#FF17191F">
+        <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="12"
+                Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center" Width="430">
+          <StackPanel>
+            <TextBlock Text="JMD" Foreground="White" FontSize="24" FontWeight="Bold" />
+            <TextBlock Text="Ferramentas rápidas para desenvolvimento" Foreground="#FF969BA7" FontSize="13" Margin="0,4,0,18" />
+            <TextBlock x:Name="AboutVersionText" Foreground="White" FontSize="12" />
+            <TextBlock Text="Projeto open source" Foreground="#FF969BA7" FontSize="12" Margin="0,5,0,16" />
+            <TextBlock x:Name="UpdateStatusText" Text="Verifique se há uma versão mais recente no GitHub." Foreground="#FFB4F36A"
+                       TextWrapping="Wrap" FontSize="12" Margin="0,0,0,14" />
+            <StackPanel Orientation="Horizontal">
+              <Button x:Name="CheckUpdatesButton" Content="Verificar atualizações" Click="CheckUpdatesButton_Click"
+                      Padding="12,8" Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" />
+              <Button x:Name="InstallUpdateButton" Content="Atualizar agora" Click="InstallUpdateButton_Click"
+                      Padding="12,8" Margin="8,0,0,0" Background="#FF2A2D35" Foreground="White"
+                      BorderThickness="0" Visibility="Collapsed" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+      </Grid>
       <Grid Grid.Row="3" Margin="0,14,0,0">
         <TextBlock x:Name="StatusText" Text="Atalhos prontos" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
         <TextBlock Text="↑ ↓ navegar   Enter executar   Esc fechar" Foreground="#FF777D89" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" />
