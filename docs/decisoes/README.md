@@ -58,7 +58,7 @@ Abrir uma paleta pesquisável por um atalho global configurável. Ela lista coma
 
 **Estado:** adotada para o MVP.
 
-Reconhecer vírgula, pipe, ponto e vírgula ou quebras de linha (CRLF/LF/CR), separar os valores, remover espaços externos, escapar apóstrofos duplicando-os (`O'Brien` → `O''Brien`) e envolver cada valor em apóstrofos simples. Juntar os valores por vírgula sem delimitador final. Se não houver delimitador, tratar o texto não vazio como um único item. Se a detecção for ambígua, retornar erro e permitir que o usuário escolha um delimitador, em vez de produzir SQL possivelmente incorreto.
+Reconhecer vírgula, pipe, ponto e vírgula ou quebras de linha (CRLF/LF/CR), separar os valores, remover espaços externos, eliminar duplicatas exatas preservando a ordem original, escapar apóstrofos duplicando-os (`O'Brien` → `O''Brien`) e envolver cada valor em apóstrofos simples. Distribuir os valores em linhas conforme a contagem original, sem vírgula final. A deduplicação usa comparação ordinal e é aplicada também em listas grandes; em C#, o custo esperado é linear e não depende da concatenação iterativa de strings do SQL Server. Se não houver delimitador, tratar o texto não vazio como um único item. Se a detecção for ambígua, retornar erro e permitir que o usuário escolha um delimitador, em vez de produzir SQL possivelmente incorreto.
 
 Regra adotada para itens vazios: ignorar separadores sobrando nas extremidades e rejeitar itens vazios entre separadores consecutivos, para evitar alterar silenciosamente a intenção. O usuário pode definir um delimitador preferido na tela de gerenciamento quando a detecção automática empatar.
 

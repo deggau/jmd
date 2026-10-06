@@ -9,6 +9,6 @@ Os testes unitários ficam em `tests/JMD.Tests` e cobrem lógica independente de
 - **UC-003 — Tratar falhas:** rejeição de entradas vazias/ambíguas e preservação do conteúdo em erro. Repetições reais do clipboard ocupado pertencem ao adaptador Windows e exigem validação Windows.
 - **UC-004 — Substituir seleção:** recortar-transformar-colar, restauração após erro de conversão, corte recusado e ausência de alteração confirmada no clipboard.
 - **UC-005 — Gerenciar comandos:** valores de atalho exibidos usam o mesmo parser coberto em UC-002. A interação visual WPF e os atalhos globais exigem validação manual numa sessão Windows.
-- **UC-006 — Formatar SQL IN:** cada delimitador (CRLF/LF/CR, vírgula, pipe, ponto e vírgula), espaços, separadores nas extremidades, apóstrofos, valor único, entradas vazias, vazios internos, ambiguidade e delimitador preferido.
+- **UC-006 — Formatar SQL IN:** delimitadores, espaços, apóstrofos, duplicatas, ordem original, deduplicação em listas grandes, limites de itens por linha, contagens exibidas, entradas vazias, ambiguidade e delimitador preferido.
 
 Executar a suíte com `dotnet test JMD.sln`. Os testes não substituem a validação de integração em Windows real, particularmente para `RegisterHotKey`, `SendInput`, clipboard WPF e compatibilidade por aplicativo.

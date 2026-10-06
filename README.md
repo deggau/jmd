@@ -40,6 +40,8 @@ dotnet run --project .\src\JMD.App\JMD.App.csproj
 
 A aplicação inicia minimizada na área de notificação. `Alt+J` abre a paleta, `Ctrl+Shift+I` converte o texto do clipboard e `Ctrl+Alt+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração. A tela de configurações também permite consultar o histórico das conversões e ajustar sua retenção, inicialmente em 15 dias.
 
+No menu `...`, a opção **Manter tela ativa** solicita ao Windows que mantenha o monitor e o sistema ativos enquanto estiver ligada. O JMD não simula atividade do teclado ou do mouse; políticas de segurança da organização ainda podem bloquear a tela.
+
 ## Criar instalador Windows
 
 Com o .NET 10 SDK e o NSIS instalados e `makensis.exe` no `PATH`, execute `./installer/Build-Installer.ps1`. O procedimento e os parâmetros estão descritos em [installer/README.md](installer/README.md).

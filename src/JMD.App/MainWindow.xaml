@@ -26,18 +26,21 @@
           </StackPanel>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <Button x:Name="ExtraButton" Content="..." Click="ExtraButton_Click" Padding="11,8" Margin="0,0,8,0" Background="#FF2A2D35"
-                  Foreground="White" BorderThickness="0" ToolTip="Mais opções">
-            <Button.ContextMenu>
-              <ContextMenu>
-                <MenuItem Header="Sobre" Click="AboutMenuItem_Click" />
-              </ContextMenu>
-            </Button.ContextMenu>
-          </Button>
           <Button x:Name="HistoryButton" Content="Histórico" Click="HistoryButton_Click"
                   Padding="14,8" Margin="0,0,8,0" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
           <Button x:Name="ManageButton" Content="Gerenciar atalhos" Click="ManageButton_Click"
                   Padding="14,8" Margin="0,0,8,0" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
+          <Button x:Name="ExtraButton" Content="..." Click="ExtraButton_Click" Padding="11,8" Margin="0,0,8,0" Background="#FF2A2D35"
+                  Foreground="White" BorderThickness="0" ToolTip="Mais opções">
+            <Button.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Manter tela ativa" IsCheckable="True"
+                          Click="KeepAwakeMenuItem_Click"
+                          ToolTip="Solicita ao Windows manter a tela e o sistema ativos enquanto o JMD estiver aberto. Políticas de segurança ainda podem bloquear a tela." />
+                <MenuItem Header="Sobre" Click="AboutMenuItem_Click" />
+              </ContextMenu>
+            </Button.ContextMenu>
+          </Button>
           <Button Content="×" Click="CloseButton_Click" Width="34" Height="34" FontSize="18"
                   Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
         </StackPanel>

@@ -48,7 +48,7 @@ Atalhos padrão iniciais: `Alt+J` abre a paleta, `Ctrl+Shift+I` transforma o cli
 
 ## Transformação SQL `IN`
 
-Implementar como ferramenta pura do núcleo: recebe texto e opção de delimitador, retorna lista validada e texto formatado ou erro. O adaptador de clipboard não deve conhecer regras SQL. Normalizar CRLF/CR, detectar delimitador dominante, rejeitar empate sem escolha, aparar itens, escapar apóstrofos internos e unir com vírgula. A tela de gerenciamento permite salvar um delimitador preferido para entradas ambíguas. A montagem usa `string.Join` sobre os valores formatados para garantir ausência de vírgula final.
+Implementar como ferramenta pura do núcleo: recebe texto e opção de delimitador, retorna lista validada e texto formatado ou erro. O adaptador de clipboard não deve conhecer regras SQL. Normalizar CRLF/CR, detectar delimitador dominante, rejeitar empate sem escolha, aparar itens, remover duplicatas exatas preservando a ordem, escapar apóstrofos internos e agrupar valores em linhas conforme os limites definidos no caso de uso. A tela de gerenciamento permite salvar um delimitador preferido para entradas ambíguas. A montagem usa operações de coleção e junção em lote, sem concatenação iterativa.
 
 Conversões bem-sucedidas do clipboard e de seleções são registradas localmente com comando, data/hora e valores anterior e convertido. A aba **Histórico** pesquisa os dois valores e remove registros mais antigos que o prazo configurado (15 dias por padrão).
 

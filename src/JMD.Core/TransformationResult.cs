@@ -1,8 +1,14 @@
 namespace JMD.Core;
 
-public sealed record TransformationResult(bool Success, string? Value, string? Error)
+public sealed record TransformationResult(
+    bool Success,
+    string? Value,
+    string? Error,
+    int? InputItemCount = null,
+    int? OutputItemCount = null)
 {
-    public static TransformationResult Ok(string value) => new(true, value, null);
+    public static TransformationResult Ok(string value, int? inputItemCount = null, int? outputItemCount = null)
+        => new(true, value, null, inputItemCount, outputItemCount);
     public static TransformationResult Fail(string error) => new(false, null, error);
 }
 
@@ -93,7 +99,9 @@ public sealed record SelectionTransformResult(
     string Message,
     string? BeforeValue = null,
     string? AfterValue = null,
-    bool UsedClipboardFallback = false);
+    bool UsedClipboardFallback = false,
+    int? InputItemCount = null,
+    int? OutputItemCount = null);
 
 public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAutomation keyboard, IAsyncDelay? delay = null)
 {
@@ -148,7 +156,8 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
                 }
 
                 return new(true, "Nenhuma seleção detectada; o texto do clipboard foi formatado para SQL IN.",
-                    originalClipboard, clipboardResult.Value, UsedClipboardFallback: true);
+                    originalClipboard, clipboardResult.Value, UsedClipboardFallback: true,
+                    InputItemCount: clipboardResult.InputItemCount, OutputItemCount: clipboardResult.OutputItemCount);
             }
             return new(false, "Não foi possível confirmar uma seleção de texto; nenhuma colagem foi enviada.");
         }
@@ -175,7 +184,8 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
             await clipboard.TrySetTextAsync(selectedText, cancellationToken);
             return new(false, "Não foi possível colar o resultado. O texto recortado foi restaurado no clipboard.");
         }
-        return new(true, "Texto selecionado substituído.", selectedText, result.Value);
+        return new(true, "Texto selecionado substituído.", selectedText, result.Value,
+            InputItemCount: result.InputItemCount, OutputItemCount: result.OutputItemCount);
     }
 
     private async Task<bool> RestoreSelectionAsync(IntPtr sourceWindow, string selectedText, CancellationToken cancellationToken)

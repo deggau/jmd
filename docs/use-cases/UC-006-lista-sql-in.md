@@ -9,16 +9,20 @@ Desenvolvedor preparando uma lista de valores para uma consulta SQL.
 - Entrada: texto no clipboard ou texto selecionado numa aplicação.
 - Atalho padrão do modo clipboard: `Ctrl+Shift+I`.
 - Atalho padrão do modo substituir seleção: `Ctrl+Alt+I`.
-- Saída: cada valor envolvido em apóstrofos simples e separado dos demais por vírgula, sem vírgula final.
+- Saída: valores distintos envolvidos em apóstrofos simples, separados por vírgula e distribuídos em linhas, sem vírgula final.
 
 Exemplos:
 
 ```text
-Entrada:  abc,def,jeg
-Saída:    'abc','def','jeg'
+Entrada:  abc,def,jeg,abc
+Saída:    'abc',
+          'def',
+          'jeg'
 
 Entrada:  1233456;asdasdas;asdsadas
-Saída:    '1233456','asdasdas','asdsadas'
+Saída:    '1233456',
+          'asdasdas',
+          'asdsadas'
 ```
 
 Mesmo valores numéricos são envolvidos em apóstrofos, conforme o formato solicitado.
@@ -44,9 +48,14 @@ Contrato interno sugerido: uma função pura recebe o texto de entrada e um deli
 6. Se houver empate entre delimitadores presentes, não adivinhar: informar ambiguidade e permitir selecionar um delimitador para esta execução ou configurar a preferência.
 7. Remover espaços/tabulações no início e fim de cada item.
 8. Ignorar separadores excedentes no início/fim; se houver item vazio entre separadores consecutivos, informar entrada inválida em vez de descartar conteúdo silenciosamente.
-9. Escapar cada apóstrofo interno duplicando-o, como `O'Brien` → `O''Brien`.
-10. Envolver cada item com `'` e juntar itens com `,`, sem adicionar vírgula no final.
-11. Só substituir o clipboard (e, no modo seleção, colar) quando toda a conversão for bem-sucedida.
+9. Remover valores exatamente repetidos (comparação ordinal, sensível a maiúsculas/minúsculas), preservando a ordem da primeira ocorrência.
+10. Escapar cada apóstrofo interno duplicando-o, como `O'Brien` → `O''Brien`.
+11. Envolver cada item com `'` e distribuir os itens em linhas, sem vírgula final.
+12. Só substituir o clipboard (e, no modo seleção, colar) quando toda a conversão for bem-sucedida.
+
+Itens por linha, conforme a quantidade original de entradas: até 5 → 1; 6–10 → 3; 11–30 → 4; 31–60 → 6; 61–100 → 10; 101–200 → 12; 201–500 → 25; 501–1.000 → 50; 1.001–2.000 → 100; 2.001–5.000 → 250; 5.001–10.000 → 500; 10.001–15.000 → 800; 15.001–20.000 → 1.000; acima de 20.000 → 2.000. A deduplicação é aplicada a qualquer quantidade de entrada.
+
+Na notificação de sucesso, informar a quantidade original de itens identificados e quantos foram removidos por duplicidade.
 
 ## Fora do primeiro escopo
 

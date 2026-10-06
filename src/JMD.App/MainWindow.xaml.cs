@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     private readonly SqlInConversionGuard _conversionGuard = new();
     private readonly WindowsClipboard _clipboard = new();
     private readonly KeyboardAutomation _keyboard = new();
+    private readonly WindowsDisplayAwakeService _displayAwake = new();
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
     private readonly AppNavigationState _navigation = new();
@@ -565,7 +566,10 @@ public partial class MainWindow : Window
                 _conversionGuard.Remember(input, result.Value!);
                 RecordHistory("Montar SQL IN", input, result);
             }
-            Notify("JMD", result.Success ? "Lista formatada para SQL IN e pronta para colar." : result.Error ?? "Não foi possível converter a lista.", result.Success);
+            var message = result.Success
+                ? WithConversionCounts("Lista formatada para SQL IN e pronta para colar.", result.InputItemCount, result.OutputItemCount)
+                : result.Error ?? "Não foi possível converter a lista.";
+            Notify("JMD", message, result.Success);
         }
         catch (Exception exception) { Notify("JMD", $"Falha ao transformar o clipboard: {exception.Message}", false); }
         finally { _conversionRunning = false; }
@@ -581,7 +585,10 @@ public partial class MainWindow : Window
             if (result.Success && result.BeforeValue is not null && result.AfterValue is not null)
                 _conversionGuard.Remember(result.BeforeValue, result.AfterValue);
             RecordSelectionHistory(result);
-            Notify("JMD", result.Message, result.Success);
+            var message = result.Success
+                ? WithConversionCounts(result.Message, result.InputItemCount, result.OutputItemCount)
+                : result.Message;
+            Notify("JMD", message, result.Success);
         }
         catch (Exception exception) { Notify("JMD", $"Falha ao substituir a seleção: {exception.Message}", false); }
         finally { _conversionRunning = false; }
@@ -755,6 +762,22 @@ public partial class MainWindow : Window
         menu.PlacementTarget = ExtraButton;
         menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         menu.IsOpen = true;
+    }
+
+    private void KeepAwakeMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.MenuItem menuItem) return;
+        var enabled = menuItem.IsChecked;
+        if (!_displayAwake.SetEnabled(enabled))
+        {
+            menuItem.IsChecked = _displayAwake.IsEnabled;
+            SetStatus("O Windows não aceitou a solicitação para manter a tela ativa.", false);
+            return;
+        }
+
+        SetStatus(enabled
+            ? "Solicitado ao Windows que mantenha a tela e o sistema ativos enquanto o JMD estiver aberto."
+            : "A solicitação para manter a tela ativa foi removida.", true);
     }
 
     private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
@@ -935,6 +958,9 @@ public partial class MainWindow : Window
         TrayNotification?.Invoke(title, message);
     }
 
+    private static string WithConversionCounts(string message, int? identified, int? output)
+        => ConversionCountSummary.Append(message, identified, output);
+
     private void SetStatus(string message, bool success)
     {
         StatusText.Text = message;
@@ -945,7 +971,11 @@ public partial class MainWindow : Window
 
     public void PrepareForExit() => _closingForExit = true;
 
-    public void DisposeServices() => _hotkeys?.Dispose();
+    public void DisposeServices()
+    {
+        _hotkeys?.Dispose();
+        _displayAwake.Dispose();
+    }
 
     private static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 

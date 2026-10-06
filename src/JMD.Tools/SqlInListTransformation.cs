@@ -36,8 +36,34 @@ public sealed class SqlInListTransformation : ITextTransformation
         if (items.Any(item => item.Length == 0))
             return TransformationResult.Fail("A lista contém um valor vazio entre separadores.");
 
-        var quotedItems = items.Select(item => $"'{item.Replace("'", "''", StringComparison.Ordinal)}'");
-        return TransformationResult.Ok(string.Join(",", quotedItems));
+        var repetitions = items.Count;
+        items = items.Distinct(StringComparer.Ordinal).ToList();
+
+        var itemsPerLine = GetItemsPerLine(repetitions);
+        var lines = items
+            .Select(item => $"'{item.Replace("'", "''", StringComparison.Ordinal)}'")
+            .Chunk(itemsPerLine)
+            .Select(line => string.Join(",", line));
+        return TransformationResult.Ok(string.Join(",\r\n", lines), repetitions, items.Count);
+    }
+
+    public static int GetItemsPerLine(int repetitions)
+    {
+        if (repetitions < 0) throw new ArgumentOutOfRangeException(nameof(repetitions));
+        if (repetitions > 20_000) return 2_000;
+        if (repetitions > 15_000) return 1_000;
+        if (repetitions > 10_000) return 800;
+        if (repetitions > 5_000) return 500;
+        if (repetitions > 2_000) return 250;
+        if (repetitions > 1_000) return 100;
+        if (repetitions > 500) return 50;
+        if (repetitions > 200) return 25;
+        if (repetitions > 100) return 12;
+        if (repetitions > 60) return 10;
+        if (repetitions > 30) return 6;
+        if (repetitions > 10) return 4;
+        if (repetitions > 5) return 3;
+        return 1;
     }
 
     private static (bool Success, string? Delimiter, string? Error) FindDelimiter(string input, string? preferredDelimiter)

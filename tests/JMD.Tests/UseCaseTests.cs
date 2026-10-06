@@ -10,15 +10,15 @@ public sealed class UseCaseTests
 
     // UC-006: delimiters, escaping, whitespace, edge separators and ambiguous input.
     [Theory]
-    [InlineData("abc,def,jeg", "'abc','def','jeg'")]
-    [InlineData("1233456;asdasdas;asdsadas", "'1233456','asdasdas','asdsadas'")]
-    [InlineData("abc|def", "'abc','def'")]
-    [InlineData("abc\r\ndef", "'abc','def'")]
-    [InlineData("abc\ndef", "'abc','def'")]
-    [InlineData("abc\rdef", "'abc','def'")]
-    [InlineData("  abc , def  ", "'abc','def'")]
-    [InlineData(",abc,def,", "'abc','def'")]
-    [InlineData("O'Brien, x", "'O''Brien','x'")]
+    [InlineData("abc,def,jeg", "'abc',\r\n'def',\r\n'jeg'")]
+    [InlineData("1233456;asdasdas;asdsadas", "'1233456',\r\n'asdasdas',\r\n'asdsadas'")]
+    [InlineData("abc|def", "'abc',\r\n'def'")]
+    [InlineData("abc\r\ndef", "'abc',\r\n'def'")]
+    [InlineData("abc\ndef", "'abc',\r\n'def'")]
+    [InlineData("abc\rdef", "'abc',\r\n'def'")]
+    [InlineData("  abc , def  ", "'abc',\r\n'def'")]
+    [InlineData(",abc,def,", "'abc',\r\n'def'")]
+    [InlineData("O'Brien, x", "'O''Brien',\r\n'x'")]
     [InlineData("one", "'one'")]
     public void SqlTransformation_formats_supported_cases(string input, string expected)
     {
@@ -42,9 +42,76 @@ public sealed class UseCaseTests
     [Fact]
     public void SqlTransformation_honors_preferred_delimiter_and_rejects_unknown_one()
     {
-        Assert.Equal("'a,b','c'", _sql.Transform("a,b;c", ";").Value);
+        Assert.Equal("'a,b',\r\n'c'", _sql.Transform("a,b;c", ";").Value);
         Assert.False(_sql.Transform("a,b", "~").Success);
     }
+
+    [Fact]
+    public void SqlTransformation_removes_exact_duplicates_and_keeps_first_occurrence_order()
+    {
+        var result = _sql.Transform("beta,alpha,beta,ALPHA,alpha");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("'beta',\r\n'alpha',\r\n'ALPHA'", result.Value);
+        Assert.Equal(5, result.InputItemCount);
+        Assert.Equal(3, result.OutputItemCount);
+    }
+
+    [Fact]
+    public void SqlTransformation_applies_distinct_to_large_lists_too()
+    {
+        var tenThousand = string.Join(',', Enumerable.Repeat("x", 10_000));
+        var tenThousandAndOne = string.Join(',', Enumerable.Repeat("x", 10_001));
+
+        Assert.Equal("'x'", _sql.Transform(tenThousand).Value);
+        var aboveLimit = _sql.Transform(tenThousandAndOne);
+        Assert.True(aboveLimit.Success, aboveLimit.Error);
+        Assert.Equal("'x'", aboveLimit.Value);
+    }
+
+    [Fact]
+    public void SqlTransformation_breaks_values_into_lines_using_repetition_thresholds()
+    {
+        var input = string.Join(',', Enumerable.Range(1, 31));
+
+        var result = _sql.Transform(input);
+
+        Assert.True(result.Success, result.Error);
+        var lineSizes = result.Value!.Split("\r\n").Select(line => line.Split("','", StringSplitOptions.None).Length);
+        Assert.Equal(new[] { 6, 6, 6, 6, 6, 1 }, lineSizes);
+        Assert.False(result.Value.EndsWith(",", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(5, 1)]
+    [InlineData(6, 3)]
+    [InlineData(10, 3)]
+    [InlineData(11, 4)]
+    [InlineData(30, 4)]
+    [InlineData(31, 6)]
+    [InlineData(60, 6)]
+    [InlineData(61, 10)]
+    [InlineData(100, 10)]
+    [InlineData(101, 12)]
+    [InlineData(200, 12)]
+    [InlineData(201, 25)]
+    [InlineData(500, 25)]
+    [InlineData(501, 50)]
+    [InlineData(1_000, 50)]
+    [InlineData(1_001, 100)]
+    [InlineData(2_000, 100)]
+    [InlineData(2_001, 250)]
+    [InlineData(5_000, 250)]
+    [InlineData(5_001, 500)]
+    [InlineData(10_000, 500)]
+    [InlineData(10_001, 800)]
+    [InlineData(15_000, 800)]
+    [InlineData(15_001, 1_000)]
+    [InlineData(20_000, 1_000)]
+    [InlineData(20_001, 2_000)]
+    public void SqlTransformation_uses_the_configured_items_per_line_threshold(int repetitions, int expected)
+        => Assert.Equal(expected, SqlInListTransformation.GetItemsPerLine(repetitions));
 
     // UC-001 and UC-003: clipboard orchestration preserves source on transform/write failure.
     [Fact]
@@ -53,7 +120,7 @@ public sealed class UseCaseTests
         var clipboard = new FakeClipboard { Text = "alpha,beta" };
         var result = await new ClipboardTransformationService(clipboard).ExecuteAsync(_sql.Transform);
         Assert.True(result.Success, result.Error);
-        Assert.Equal("'alpha','beta'", clipboard.Text);
+        Assert.Equal("'alpha',\r\n'beta'", clipboard.Text);
     }
 
     [Fact]
@@ -113,8 +180,10 @@ public sealed class UseCaseTests
         var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
         Assert.True(result.Success, result.Message);
         Assert.Equal("abc,def", result.BeforeValue);
-        Assert.Equal("'abc','def'", keyboard.PastedText);
-        Assert.Equal("'abc','def'", result.AfterValue);
+        Assert.Equal("'abc',\r\n'def'", keyboard.PastedText);
+        Assert.Equal("'abc',\r\n'def'", result.AfterValue);
+        Assert.Equal(2, result.InputItemCount);
+        Assert.Equal(2, result.OutputItemCount);
         Assert.Equal(new[] { "cut", "paste" }, keyboard.Events);
         Assert.Equal(new[] { "wait", "cut", "paste" }, keyboard.CallOrder);
     }
@@ -177,8 +246,8 @@ public sealed class UseCaseTests
         Assert.True(result.Success, result.Message);
         Assert.True(result.UsedClipboardFallback);
         Assert.Equal("alpha,beta", result.BeforeValue);
-        Assert.Equal("'alpha','beta'", result.AfterValue);
-        Assert.Equal("'alpha','beta'", clipboard.Text);
+        Assert.Equal("'alpha',\r\n'beta'", result.AfterValue);
+        Assert.Equal("'alpha',\r\n'beta'", clipboard.Text);
         Assert.Null(keyboard.PastedText);
         Assert.Equal(new[] { "cut" }, keyboard.Events);
         Assert.Equal(new[] { "wait", "cut" }, keyboard.CallOrder);
