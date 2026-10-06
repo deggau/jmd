@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$')]
-    [string] $Version = '0.1.6',
+    [string] $Version = '0.1.7',
     [ValidateSet('win-x64', 'win-arm64')]
     [string] $Runtime = 'win-x64',
     [string] $Configuration = 'Release',
@@ -30,7 +30,7 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish falhou com código $LASTEXITCOD
 $appExe = Join-Path $publishDir 'JMD.App.exe'
 if (-not (Test-Path $appExe)) { throw "Executável publicado não encontrado: $appExe" }
 
-& $Makensis "/DAPP_VERSION=$Version" "/DAPP_RUNTIME=$Runtime" "/DPUBLISH_DIR=$publishDir" "/DOUTPUT_DIR=$outputDir" $installerScript
+& $Makensis '/INPUTCHARSET' 'UTF8' "/DAPP_VERSION=$Version" "/DAPP_RUNTIME=$Runtime" "/DPUBLISH_DIR=$publishDir" "/DOUTPUT_DIR=$outputDir" $installerScript
 if ($LASTEXITCODE -ne 0) { throw "makensis falhou com código $LASTEXITCODE" }
 
 $installer = Join-Path $outputDir "JMD-$Version-$Runtime-setup.exe"

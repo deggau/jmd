@@ -451,10 +451,10 @@ public partial class MainWindow : Window
     {
         try
         {
+            _previousWindow = _keyboard.GetForegroundWindow();
             switch (id)
             {
                 case "palette":
-                    _previousWindow = _keyboard.GetForegroundWindow();
                     ShowPalette();
                     break;
                 case "clipboard":
@@ -613,7 +613,7 @@ public partial class MainWindow : Window
         if (_historyRecorder is null) return;
         try
         {
-            if (_historyRecorder.RecordIfSuccessful(commandName, beforeValue, result)) RefreshHistory();
+            if (_historyRecorder.RecordIfSuccessful(commandName, beforeValue, result, GetConversionSource())) RefreshHistory();
         }
         catch (Exception exception)
         {
@@ -629,7 +629,7 @@ public partial class MainWindow : Window
             var commandName = result.UsedClipboardFallback
                 ? "Formatar clipboard (atalho de seleção)"
                 : "Substituir seleção (SQL IN)";
-            if (_historyRecorder.RecordIfSuccessful(commandName, result)) RefreshHistory();
+            if (_historyRecorder.RecordIfSuccessful(commandName, result, GetConversionSource())) RefreshHistory();
         }
         catch (Exception exception)
         {
@@ -647,7 +647,8 @@ public partial class MainWindow : Window
                     entry.CommandName,
                     entry.BeforeValue,
                     entry.AfterValue,
-                    entry.OccurredAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.CurrentCulture)))
+                    entry.OccurredAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.CurrentCulture),
+                    FormatSourceDisplay(entry.ApplicationName, entry.WindowTitle)))
                 .ToList();
             HistoryItemsControl.ItemsSource = entries;
             HistoryEmptyText.Text = entries.Count == 0
@@ -704,7 +705,22 @@ public partial class MainWindow : Window
         }
     }
 
-    private sealed record HistoryDisplayEntry(string CommandName, string BeforeValue, string AfterValue, string DisplayDate);
+    private sealed record HistoryDisplayEntry(
+        string CommandName,
+        string BeforeValue,
+        string AfterValue,
+        string DisplayDate,
+        string SourceDisplay);
+
+    private static string FormatSourceDisplay(string? applicationName, string? windowTitle)
+    {
+        var parts = new[] { applicationName, windowTitle }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        return string.Join(" · ", parts);
+    }
+
+    private ConversionSource? GetConversionSource() => ForegroundWindowDetails.Read(_previousWindow);
 
     private TransformationResult FormatText(string input) => _transformation.Transform(input, _settings.PreferredDelimiter);
 
@@ -1027,7 +1043,7 @@ public partial class MainWindow : Window
         if (_historyRecorder is null) return;
         try
         {
-            if (_historyRecorder.RecordIfSuccessful(commandName, result)) RefreshHistory();
+            if (_historyRecorder.RecordIfSuccessful(commandName, result, GetConversionSource())) RefreshHistory();
         }
         catch (Exception exception)
         {

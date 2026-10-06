@@ -1,4 +1,5 @@
 using JMD.Core;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace JMD.Tests;
@@ -83,6 +84,54 @@ public sealed class ConversionHistoryTests : IDisposable
         var entries = store.Search("100%");
 
         Assert.Equal("valor 100%", Assert.Single(entries).BeforeValue);
+    }
+
+    [Fact]
+    public void History_persists_and_searches_the_source_application_and_window_title()
+    {
+        var store = new ConversionHistoryStore(DatabasePath);
+        var source = new ConversionSource("ssms", "Consulta.sql - SQL Server Management Studio");
+        store.Add("Formatar JSON", "{}", "{\r\n}", DateTimeOffset.UtcNow, source);
+
+        var byApplication = Assert.Single(store.Search("ssms"));
+        var byWindowTitle = Assert.Single(store.Search("Consulta.sql"));
+        var latest = store.GetLatest();
+
+        Assert.Equal("ssms", byApplication.ApplicationName);
+        Assert.Equal(source.WindowTitle, byWindowTitle.WindowTitle);
+        Assert.Equal(byApplication, latest);
+    }
+
+    [Fact]
+    public void Opening_existing_history_database_adds_source_columns_without_losing_entries()
+    {
+        Directory.CreateDirectory(_directory);
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DatabasePath }.ToString()))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE ConversionHistory (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    OccurredAtUtc TEXT NOT NULL,
+                    CommandName TEXT NOT NULL,
+                    BeforeValue TEXT NOT NULL,
+                    AfterValue TEXT NOT NULL
+                );
+                INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue)
+                VALUES ('2026-10-06T12:00:00.0000000+00:00', 'Antigo', 'antes', 'depois');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var store = new ConversionHistoryStore(DatabasePath);
+        var entry = Assert.Single(store.Search(string.Empty));
+
+        Assert.Equal("Antigo", entry.CommandName);
+        Assert.Equal("antes", entry.BeforeValue);
+        Assert.Equal("depois", entry.AfterValue);
+        Assert.Null(entry.ApplicationName);
+        Assert.Null(entry.WindowTitle);
     }
 
     public void Dispose()

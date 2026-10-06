@@ -7,7 +7,11 @@ public sealed record ConversionHistoryEntry(
     DateTimeOffset OccurredAt,
     string CommandName,
     string BeforeValue,
-    string AfterValue);
+    string AfterValue,
+    string? ApplicationName = null,
+    string? WindowTitle = null);
+
+public sealed record ConversionSource(string? ApplicationName, string? WindowTitle);
 
 public sealed class ConversionHistoryStore
 {
@@ -27,26 +31,37 @@ public sealed class ConversionHistoryStore
                 OccurredAtUtc TEXT NOT NULL,
                 CommandName TEXT NOT NULL,
                 BeforeValue TEXT NOT NULL,
-                AfterValue TEXT NOT NULL
+                AfterValue TEXT NOT NULL,
+                ApplicationName TEXT NULL,
+                WindowTitle TEXT NULL
             );
             CREATE INDEX IF NOT EXISTS IX_ConversionHistory_OccurredAtUtc
                 ON ConversionHistory (OccurredAtUtc DESC, Id DESC);
             """;
         command.ExecuteNonQuery();
+        EnsureColumn(connection, "ApplicationName");
+        EnsureColumn(connection, "WindowTitle");
     }
 
-    public void Add(string commandName, string beforeValue, string afterValue, DateTimeOffset? occurredAtUtc = null)
+    public void Add(
+        string commandName,
+        string beforeValue,
+        string afterValue,
+        DateTimeOffset? occurredAtUtc = null,
+        ConversionSource? source = null)
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue)
-            VALUES ($occurredAt, $commandName, $beforeValue, $afterValue);
+            INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle)
+            VALUES ($occurredAt, $commandName, $beforeValue, $afterValue, $applicationName, $windowTitle);
             """;
         command.Parameters.AddWithValue("$occurredAt", (occurredAtUtc ?? _utcNow()).ToUniversalTime().ToString("O"));
         command.Parameters.AddWithValue("$commandName", commandName);
         command.Parameters.AddWithValue("$beforeValue", beforeValue);
         command.Parameters.AddWithValue("$afterValue", afterValue);
+        command.Parameters.AddWithValue("$applicationName", (object?)source?.ApplicationName ?? DBNull.Value);
+        command.Parameters.AddWithValue("$windowTitle", (object?)source?.WindowTitle ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -55,10 +70,11 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle
             FROM ConversionHistory
             WHERE $query = '' OR CommandName LIKE $pattern ESCAPE '\'
                 OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
+                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\'
             ORDER BY OccurredAtUtc DESC, Id DESC;
             """;
         command.Parameters.AddWithValue("$query", query);
@@ -79,7 +95,7 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle
             FROM ConversionHistory
             ORDER BY OccurredAtUtc DESC, Id DESC
             LIMIT 1;
@@ -93,7 +109,30 @@ public sealed class ConversionHistoryStore
         DateTimeOffset.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture),
         reader.GetString(2),
         reader.GetString(3),
-        reader.GetString(4));
+        reader.GetString(4),
+        reader.IsDBNull(5) ? null : reader.GetString(5),
+        reader.IsDBNull(6) ? null : reader.GetString(6));
+
+    private static void EnsureColumn(SqliteConnection connection, string columnName)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(ConversionHistory);";
+        var exists = false;
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+                if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                    break;
+                }
+        }
+        if (exists) return;
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE ConversionHistory ADD COLUMN {columnName} TEXT NULL;";
+        alter.ExecuteNonQuery();
+    }
 
     public void DeleteOlderThan(int retentionDays)
     {
@@ -114,17 +153,17 @@ public sealed class ConversionHistoryStore
 
 public sealed class ConversionHistoryRecorder(ConversionHistoryStore historyStore)
 {
-    public bool RecordIfSuccessful(string commandName, string beforeValue, TransformationResult result)
+    public bool RecordIfSuccessful(string commandName, string beforeValue, TransformationResult result, ConversionSource? source = null)
     {
         if (!result.Success || result.Value is null) return false;
-        historyStore.Add(commandName, beforeValue, result.Value);
+        historyStore.Add(commandName, beforeValue, result.Value, source: source);
         return true;
     }
 
-    public bool RecordIfSuccessful(string commandName, SelectionTransformResult result)
+    public bool RecordIfSuccessful(string commandName, SelectionTransformResult result, ConversionSource? source = null)
     {
         if (!result.Success || result.BeforeValue is null || result.AfterValue is null) return false;
-        historyStore.Add(commandName, result.BeforeValue, result.AfterValue);
+        historyStore.Add(commandName, result.BeforeValue, result.AfterValue, source: source);
         return true;
     }
 }

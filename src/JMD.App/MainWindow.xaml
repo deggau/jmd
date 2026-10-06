@@ -152,6 +152,8 @@
                             <TextBlock Text="{Binding DisplayDate}" Foreground="#FF969BA7"
                                        HorizontalAlignment="Right" DockPanel.Dock="Right" />
                           </DockPanel>
+                          <TextBlock Text="{Binding SourceDisplay}" Foreground="#FF747985" FontSize="10"
+                                     TextWrapping="Wrap" Margin="0,-5,0,8" />
                           <Grid>
                             <Grid.ColumnDefinitions>
                               <ColumnDefinition Width="*" />
