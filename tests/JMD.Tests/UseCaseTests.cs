@@ -116,6 +116,37 @@ public sealed class UseCaseTests
         Assert.Equal("'abc','def'", keyboard.PastedText);
         Assert.Equal("'abc','def'", result.AfterValue);
         Assert.Equal(new[] { "cut", "paste" }, keyboard.Events);
+        Assert.Equal(new[] { "wait", "cut", "paste" }, keyboard.CallOrder);
+    }
+
+    [Fact]
+    public async Task Selection_use_case_waits_until_hotkey_modifiers_are_released_before_cutting()
+    {
+        var clipboard = new FakeClipboard { Text = "alpha,beta" };
+        var keyboard = new FakeKeyboard(clipboard) { ModifiersReleased = false };
+
+        var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
+
+        Assert.False(result.Success);
+        Assert.Contains("Solte Ctrl, Alt", result.Message);
+        Assert.Empty(keyboard.Events);
+        Assert.Equal(new[] { "wait" }, keyboard.CallOrder);
+        Assert.Equal("alpha,beta", clipboard.Text);
+    }
+
+    [Fact]
+    public async Task Selection_use_case_does_not_cut_if_foreground_window_changes_while_waiting()
+    {
+        var clipboard = new FakeClipboard { Text = "alpha,beta" };
+        var keyboard = new FakeKeyboard(clipboard) { WindowAfterWait = 2 };
+
+        var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
+
+        Assert.False(result.Success);
+        Assert.Contains("janela ativa mudou", result.Message);
+        Assert.Equal(new[] { "wait" }, keyboard.CallOrder);
+        Assert.Empty(keyboard.Events);
+        Assert.Equal("alpha,beta", clipboard.Text);
     }
 
     [Fact]
@@ -133,6 +164,38 @@ public sealed class UseCaseTests
         Assert.Contains("alpha,beta", result.Message);
         Assert.Equal("'alpha','beta'", keyboard.PastedText);
         Assert.Equal(new[] { "cut", "paste" }, keyboard.Events);
+    }
+
+    [Fact]
+    public async Task Selection_use_case_formats_existing_clipboard_when_no_selection_is_detected()
+    {
+        var clipboard = new FakeClipboard { Text = "alpha,beta" };
+        var keyboard = new FakeKeyboard(clipboard);
+
+        var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
+
+        Assert.True(result.Success, result.Message);
+        Assert.True(result.UsedClipboardFallback);
+        Assert.Equal("alpha,beta", result.BeforeValue);
+        Assert.Equal("'alpha','beta'", result.AfterValue);
+        Assert.Equal("'alpha','beta'", clipboard.Text);
+        Assert.Null(keyboard.PastedText);
+        Assert.Equal(new[] { "cut" }, keyboard.Events);
+        Assert.Equal(new[] { "wait", "cut" }, keyboard.CallOrder);
+    }
+
+    [Fact]
+    public async Task Selection_use_case_keeps_clipboard_when_fallback_conversion_fails()
+    {
+        var clipboard = new FakeClipboard { Text = "a,,b" };
+        var keyboard = new FakeKeyboard(clipboard);
+
+        var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
+
+        Assert.False(result.Success);
+        Assert.False(result.UsedClipboardFallback);
+        Assert.Equal("a,,b", clipboard.Text);
+        Assert.Null(keyboard.PastedText);
     }
 
     [Fact]
@@ -156,8 +219,15 @@ public sealed class UseCaseTests
 
         var noChangeClipboard = new FakeClipboard { Text = "prior" };
         var noChange = new FakeKeyboard(noChangeClipboard);
-        Assert.False((await new SelectionTransformer(noChangeClipboard, noChange, new ImmediateDelay()).ExecuteAsync(_sql.Transform)).Success);
+        var fallback = await new SelectionTransformer(noChangeClipboard, noChange, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
+        Assert.True(fallback.Success, fallback.Message);
+        Assert.True(fallback.UsedClipboardFallback);
         Assert.Empty(noChange.Events.Where(item => item == "paste"));
+
+        var emptyClipboard = new FakeClipboard { Text = null };
+        var noText = new FakeKeyboard(emptyClipboard);
+        Assert.False((await new SelectionTransformer(emptyClipboard, noText, new ImmediateDelay()).ExecuteAsync(_sql.Transform)).Success);
+        Assert.Empty(noText.Events.Where(item => item == "paste"));
     }
 
     private sealed class FakeClipboard : IClipboardText
@@ -181,12 +251,22 @@ public sealed class UseCaseTests
         public int Window { get; set; } = 1;
         public bool CutSucceeds { get; set; } = true;
         public bool PasteSucceeds { get; set; } = true;
+        public bool ModifiersReleased { get; set; } = true;
+        public int? WindowAfterWait { get; set; }
         public string? SelectedTextOnCut { get; set; }
         public string? PastedText { get; private set; }
         public List<string> Events { get; } = [];
+        public List<string> CallOrder { get; } = [];
         public IntPtr GetForegroundWindow() => new(Window);
+        public Task<bool> WaitForModifiersReleasedAsync(CancellationToken cancellationToken = default)
+        {
+            CallOrder.Add("wait");
+            if (WindowAfterWait is { } window) Window = window;
+            return Task.FromResult(ModifiersReleased);
+        }
         public bool SendCut()
         {
+            CallOrder.Add("cut");
             if (!CutSucceeds) return false;
             Events.Add("cut");
             if (SelectedTextOnCut is not null) { clipboard.Text = SelectedTextOnCut; clipboard.SequenceNumber++; }
@@ -194,6 +274,7 @@ public sealed class UseCaseTests
         }
         public bool SendPaste()
         {
+            CallOrder.Add("paste");
             if (!PasteSucceeds) return false;
             Events.Add("paste"); PastedText = clipboard.Text; return true;
         }

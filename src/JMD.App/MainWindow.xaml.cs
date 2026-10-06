@@ -605,7 +605,10 @@ public partial class MainWindow : Window
         if (_historyRecorder is null) return;
         try
         {
-            if (_historyRecorder.RecordIfSuccessful("Substituir seleção (SQL IN)", result)) RefreshHistory();
+            var commandName = result.UsedClipboardFallback
+                ? "Formatar clipboard (atalho de seleção)"
+                : "Substituir seleção (SQL IN)";
+            if (_historyRecorder.RecordIfSuccessful(commandName, result)) RefreshHistory();
         }
         catch (Exception exception)
         {
@@ -641,6 +644,23 @@ public partial class MainWindow : Window
     }
 
     private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistory();
+
+    private async void CopyHistoryValue_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string value }) return;
+        try
+        {
+            if (await _clipboard.TrySetTextAsync(value) &&
+                string.Equals(await _clipboard.TryGetTextAsync(), value, StringComparison.Ordinal))
+                SetStatus("Valor copiado para a área de transferência.", true);
+            else
+                SetStatus("Não foi possível copiar o valor para a área de transferência.", false);
+        }
+        catch (Exception exception)
+        {
+            SetStatus($"Falha ao copiar o valor: {exception.Message}", false);
+        }
+    }
 
     private void SaveHistoryRetention_Click(object sender, RoutedEventArgs e)
     {

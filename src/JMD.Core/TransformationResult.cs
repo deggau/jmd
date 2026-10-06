@@ -57,6 +57,7 @@ public interface IClipboardText
 public interface IKeyboardAutomation
 {
     IntPtr GetForegroundWindow();
+    Task<bool> WaitForModifiersReleasedAsync(CancellationToken cancellationToken = default);
     bool SendCut();
     bool SendPaste();
 }
@@ -87,7 +88,12 @@ public sealed class ClipboardTransformationService(IClipboardText clipboard)
     }
 }
 
-public sealed record SelectionTransformResult(bool Success, string Message, string? BeforeValue = null, string? AfterValue = null);
+public sealed record SelectionTransformResult(
+    bool Success,
+    string Message,
+    string? BeforeValue = null,
+    string? AfterValue = null,
+    bool UsedClipboardFallback = false);
 
 public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAutomation keyboard, IAsyncDelay? delay = null)
 {
@@ -98,6 +104,10 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
         var sourceWindow = keyboard.GetForegroundWindow();
         if (sourceWindow == IntPtr.Zero) return new(false, "Não foi possível identificar a janela ativa.");
         var originalClipboard = await clipboard.TryGetTextAsync(cancellationToken);
+        if (!await keyboard.WaitForModifiersReleasedAsync(cancellationToken))
+            return new(false, "Solte Ctrl, Alt, Shift e Win para executar a substituição.");
+        if (keyboard.GetForegroundWindow() != sourceWindow)
+            return new(false, "A janela ativa mudou antes do recorte; nenhuma tecla foi enviada.");
         var sequenceBeforeCut = clipboard.SequenceNumber;
         if (!keyboard.SendCut()) return new(false, "O Windows não permitiu enviar Ctrl+X à janela ativa.");
 
@@ -119,6 +129,26 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
                 var restored = keyboard.SendPaste();
                 if (restored && originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
                 return new(false, restored ? "A seleção não é texto Unicode; ela foi restaurada sem transformação." : "A seleção não é texto Unicode. O conteúdo recortado continua no clipboard para recuperação manual.");
+            }
+            if (!clipboardChanged)
+            {
+                if (keyboard.GetForegroundWindow() != sourceWindow)
+                    return new(false, "A janela ativa mudou. O clipboard original foi mantido sem transformação.");
+                if (originalClipboard is null)
+                    return new(false, "Nenhuma seleção de texto foi detectada e o clipboard não contém texto Unicode.");
+
+                var clipboardResult = transform(originalClipboard);
+                if (!clipboardResult.Success)
+                    return new(false, clipboardResult.Error ?? "Não foi possível converter o texto do clipboard.");
+                if (!await clipboard.TrySetTextAsync(clipboardResult.Value!, cancellationToken) ||
+                    !string.Equals(await clipboard.TryGetTextAsync(cancellationToken), clipboardResult.Value, StringComparison.Ordinal))
+                {
+                    await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
+                    return new(false, "Nenhuma seleção foi detectada e não foi possível atualizar o clipboard.");
+                }
+
+                return new(true, "Nenhuma seleção detectada; o texto do clipboard foi formatado para SQL IN.",
+                    originalClipboard, clipboardResult.Value, UsedClipboardFallback: true);
             }
             return new(false, "Não foi possível confirmar uma seleção de texto; nenhuma colagem foi enviada.");
         }

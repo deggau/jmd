@@ -10,8 +10,21 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
     private const ushort VkControl = 0x11;
     private const ushort VkX = 0x58;
     private const ushort VkV = 0x56;
+    private static readonly int[] ModifierKeys = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C];
 
     public IntPtr GetForegroundWindow() => GetForegroundWindowNative();
+
+    public async Task<bool> WaitForModifiersReleasedAsync(CancellationToken cancellationToken = default)
+    {
+        var timeout = DateTime.UtcNow.AddSeconds(2);
+        while (ModifierKeys.Any(IsKeyDown))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (DateTime.UtcNow >= timeout) return false;
+            await Task.Delay(10, cancellationToken);
+        }
+        return true;
+    }
 
     public bool SendCut() => SendChord(VkX);
     public bool SendPaste() => SendChord(VkV);
@@ -71,4 +84,9 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
 
     [DllImport("user32.dll", EntryPoint = "GetForegroundWindow")]
     private static extern IntPtr GetForegroundWindowNative();
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
+
+    private static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 }
