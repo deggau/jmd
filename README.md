@@ -44,7 +44,15 @@ A aplicação inicia minimizada na área de notificação. `Alt+J` abre a paleta
 
 Com o .NET 10 SDK e o NSIS instalados e `makensis.exe` no `PATH`, execute `./installer/Build-Installer.ps1`. O procedimento e os parâmetros estão descritos em [installer/README.md](installer/README.md).
 
-Quando houver uma release pública, a instalação da versão x64 mais recente poderá ser iniciada com `irm https://raw.githubusercontent.com/deggau/jmd/main/installer/install.ps1 | iex`.
+### Instalar pelo PowerShell
+
+Com o repositório público, abra o PowerShell e execute:
+
+```powershell
+irm https://raw.githubusercontent.com/deggau/jmd/main/installer/install.ps1 | iex
+```
+
+O comando baixa o instalador x64 da release mais recente, confere o checksum SHA-256 e abre o assistente de instalação. O JMD inclui o runtime do .NET e não exige uma instalação separada do .NET.
 
 ## Status
 
