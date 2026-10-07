@@ -9,6 +9,7 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
     private const uint KeyUp = 0x0002;
     private const ushort VkControl = 0x11;
     private const ushort VkX = 0x58;
+    private const ushort VkC = 0x43;
     private const ushort VkV = 0x56;
     private static readonly int[] ModifierKeys = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C];
 
@@ -27,6 +28,7 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
     }
 
     public bool SendCut() => SendChord(VkX);
+    public bool SendCopy() => SendChord(VkC);
     public bool SendPaste() => SendChord(VkV);
 
     private static bool SendChord(ushort key)

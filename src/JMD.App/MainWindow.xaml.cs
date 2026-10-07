@@ -26,6 +26,8 @@ using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using TextBox = System.Windows.Controls.TextBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 using ComboBoxItem = System.Windows.Controls.ComboBoxItem;
+using Orientation = System.Windows.Controls.Orientation;
+using MessageBox = System.Windows.MessageBox;
 
 namespace JMD.App;
 
@@ -56,6 +58,7 @@ public partial class MainWindow : Window
     private bool _closingForExit;
     private bool _conversionRunning;
     private bool _updatingKeepAwakeToggle;
+    private bool _showingDialog;
 
     public event Action<string, string>? TrayNotification;
 
@@ -112,6 +115,10 @@ public partial class MainWindow : Window
             "Identifica JSON ou XML e aplica indentação ao conteúdo selecionado.", ShortcutDefaults.ForCommand("jsonPretty")));
         _commands.Add(new CommandRow("jsonCompact", "Compactar JSON/XML",
             "Identifica JSON ou XML e remove espaços e quebras de linha.", ShortcutDefaults.ForCommand("jsonCompact")));
+        _commands.Add(new CommandRow("snippets", "Inserir texto salvo",
+            "Busca pelo título e cola o texto escolhido no aplicativo anterior.", ShortcutDefaults.ForCommand("snippets")));
+        _commands.Add(new CommandRow("saveSnippet", "Salvar seleção como texto",
+            "Copia a seleção e pede um título para salvá-la.", ShortcutDefaults.ForCommand("saveSnippet")));
     }
 
     private void RegisterConfiguredShortcuts()
@@ -142,7 +149,10 @@ public partial class MainWindow : Window
 
     private void BuildSettingsPanel()
     {
+        var existingStatuses = _shortcutRows.ToDictionary(row => row.Id, row => (row.Status, row.StatusBrush), StringComparer.Ordinal);
         SettingsPanel.Children.Clear();
+        _shortcutRows.Clear();
+        _shortcutStatusLabels.Clear();
         SettingsPanel.Children.Add(new TextBlock
         {
             Text = "Combinações globais",
@@ -165,6 +175,8 @@ public partial class MainWindow : Window
         AddShortcutRow("selection", "Substituir seleção", "Recorta, transforma e cola a seleção atual.");
         AddShortcutRow("jsonPretty", "Formatar JSON/XML", "Identifica o formato e aplica indentação.");
         AddShortcutRow("jsonCompact", "Compactar JSON/XML", "Identifica o formato e deixa o conteúdo em uma linha.");
+        AddShortcutRow("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior.");
+        AddShortcutRow("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título.");
 
         var note = new TextBlock
         {
@@ -216,6 +228,28 @@ public partial class MainWindow : Window
             }
         };
         SettingsPanel.Children.Add(delimiterPicker);
+
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Textos salvos",
+            Foreground = Brushes.White,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(2, 18, 0, 8)
+        });
+        var addSnippetButton = new Button
+        {
+            Content = "Adicionar texto",
+            FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
+            Padding = new Thickness(12, 7, 12, 7),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
+            BorderThickness = new Thickness(0)
+        };
+        addSnippetButton.Click += (_, _) => EditSnippet(null, null);
+        SettingsPanel.Children.Add(addSnippetButton);
+        RenderSnippetSettings();
 
         var testCard = new Border
         {
@@ -283,6 +317,13 @@ public partial class MainWindow : Window
             SetStatus("Estado dos atalhos atualizado.", true);
         };
         SettingsPanel.Children.Add(retryButton);
+        foreach (var row in _shortcutRows)
+        {
+            if (!existingStatuses.TryGetValue(row.Id, out var status)) continue;
+            row.Status = status.Status;
+            row.StatusBrush = status.StatusBrush;
+        }
+        RefreshShortcutStatuses();
     }
 
     private void AddShortcutRow(string id, string name, string description)
@@ -344,7 +385,188 @@ public partial class MainWindow : Window
         SettingsPanel.Children.Add(card);
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact"];
+    private void RenderSnippetSettings()
+    {
+        if (_settings.Snippets.Count == 0)
+        {
+            SettingsPanel.Children.Add(new TextBlock
+            {
+                Text = "Nenhum texto salvo ainda. Você também pode selecionar um texto e usar o atalho de cadastro rápido.",
+                Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12,
+                Margin = new Thickness(2, 8, 2, 4)
+            });
+            return;
+        }
+
+        foreach (var snippet in _settings.Snippets.OrderBy(item => item.Title, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 8, 0, 0), LastChildFill = true };
+            var actions = new StackPanel { Orientation = Orientation.Horizontal };
+            DockPanel.SetDock(actions, Dock.Right);
+            var edit = new Button { Content = "Editar", Padding = new Thickness(9, 5, 9, 5), Margin = new Thickness(6, 0, 0, 0), Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+            edit.Click += (_, _) => EditSnippet(snippet, null);
+            var delete = new Button { Content = "Excluir", Padding = new Thickness(9, 5, 9, 5), Margin = new Thickness(6, 0, 0, 0), Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+            delete.Click += (_, _) => DeleteSnippet(snippet);
+            actions.Children.Add(edit);
+            actions.Children.Add(delete);
+            row.Children.Add(actions);
+            row.Children.Add(new TextBlock { Text = snippet.Title, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+            SettingsPanel.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10),
+                Child = row
+            });
+        }
+    }
+
+    private void EditSnippet(SnippetEntry? existing, RichClipboardContent? captured)
+    {
+        var dialog = new SnippetEditorWindow(existing, captured);
+        if (IsVisible) dialog.Owner = this;
+        _showingDialog = true;
+        bool accepted;
+        try { accepted = dialog.ShowDialog() == true; }
+        finally { _showingDialog = false; }
+        if (!accepted || dialog.Result is not { } edited) return;
+        var index = _settings.Snippets.FindIndex(item => item.Id == edited.Id);
+        var original = index >= 0 ? _settings.Snippets[index] : null;
+        if (index < 0) _settings.Snippets.Add(edited);
+        else _settings.Snippets[index] = edited;
+        if (!SaveSnippetsAndRefresh())
+        {
+            if (index < 0) _settings.Snippets.RemoveAll(item => item.Id == edited.Id);
+            else _settings.Snippets[index] = original!;
+        }
+    }
+
+    private void DeleteSnippet(SnippetEntry snippet)
+    {
+        _showingDialog = true;
+        MessageBoxResult result;
+        try { result = MessageBox.Show(this, $"Excluir o texto ‘{snippet.Title}’?", "Excluir texto salvo", MessageBoxButton.YesNo, MessageBoxImage.Question); }
+        finally { _showingDialog = false; }
+        if (result != MessageBoxResult.Yes)
+            return;
+        var index = _settings.Snippets.FindIndex(item => item.Id == snippet.Id);
+        _settings.Snippets.RemoveAt(index);
+        if (!SaveSnippetsAndRefresh()) _settings.Snippets.Insert(index, snippet);
+    }
+
+    private bool SaveSnippetsAndRefresh()
+    {
+        try
+        {
+            _settingsStore.Save(_settings);
+            BuildSettingsPanel();
+            SetStatus("Textos salvos atualizados.", true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"Não foi possível salvar os textos: {exception.Message}", false);
+            return false;
+        }
+    }
+
+    private async Task CaptureSnippetAsync()
+    {
+        var sourceWindow = _previousWindow;
+        if (sourceWindow == IntPtr.Zero || !await _keyboard.WaitForModifiersReleasedAsync())
+        {
+            Notify("JMD", "Solte Ctrl, Alt, Shift e Win para copiar a seleção.", false);
+            return;
+        }
+        if (_keyboard.GetForegroundWindow() != sourceWindow)
+        {
+            Notify("JMD", "A janela ativa mudou antes de copiar. Tente novamente.", false);
+            return;
+        }
+        var before = _clipboard.SequenceNumber;
+        if (!_keyboard.SendCopy())
+        {
+            Notify("JMD", "O Windows não permitiu copiar a seleção.", false);
+            return;
+        }
+        for (var attempt = 0; attempt < 24 && _clipboard.SequenceNumber == before; attempt++)
+            await Task.Delay(25);
+        if (_clipboard.SequenceNumber == before)
+        {
+            Notify("JMD", "Nenhum texto selecionado foi copiado.", false);
+            return;
+        }
+        var content = _clipboard.TryGetRichContent();
+        if (content is null || (string.IsNullOrWhiteSpace(content.Text) && string.IsNullOrWhiteSpace(content.Rtf) && string.IsNullOrWhiteSpace(content.Html)))
+        {
+            Notify("JMD", "A seleção copiada não contém texto compatível.", false);
+            return;
+        }
+
+        var dialog = new SnippetTitleWindow();
+        if (dialog.ShowDialog() != true || dialog.SnippetTitle is not { } title) return;
+        var snippet = new SnippetEntry
+        {
+            Title = title,
+            Text = content.Text,
+            Rtf = content.Rtf,
+            Html = content.Html
+        };
+        _settings.Snippets.Add(snippet);
+        try
+        {
+            _settingsStore.Save(_settings);
+            Notify("JMD", $"Texto salvo: {snippet.Title}", true);
+            if (_navigation.CurrentPage == AppPage.ShortcutSettings) BuildSettingsPanel();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _settings.Snippets.RemoveAll(item => item.Id == snippet.Id);
+            Notify("JMD", $"Não foi possível salvar o texto: {exception.Message}", false);
+        }
+    }
+
+    private async Task InsertSavedSnippetAsync()
+    {
+        if (_settings.Snippets.Count == 0)
+        {
+            Notify("JMD", "Ainda não há textos salvos. Cadastre um nas configurações ou use o atalho de captura.", false);
+            return;
+        }
+        var sourceWindow = _previousWindow;
+        var picker = new SnippetPickerWindow(_settings.Snippets);
+        if (picker.ShowDialog() != true || picker.SelectedSnippet is not { } snippet) return;
+        if (!await _keyboard.WaitForModifiersReleasedAsync())
+        {
+            Notify("JMD", "Solte as teclas modificadoras e tente novamente.", false);
+            return;
+        }
+        var content = new RichClipboardContent(snippet.Text, snippet.Rtf, snippet.Html);
+        if (!_clipboard.TrySetRichContent(content))
+        {
+            Notify("JMD", "Não foi possível preparar o texto no clipboard.", false);
+            return;
+        }
+        await Task.Delay(80);
+        if (sourceWindow == IntPtr.Zero || !SetForegroundWindow(sourceWindow))
+        {
+            Notify("JMD", "Não foi possível voltar ao aplicativo anterior; o texto está no clipboard.", false);
+            return;
+        }
+        await Task.Delay(80);
+        if (_keyboard.GetForegroundWindow() != sourceWindow || !_keyboard.SendPaste())
+        {
+            Notify("JMD", "Não foi possível colar. O texto está disponível no clipboard.", false);
+            return;
+        }
+        Notify("JMD", $"Texto inserido: {snippet.Title}", true);
+    }
+
+    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet"];
 
     private string GetShortcut(string id)
     {
@@ -469,6 +691,12 @@ public partial class MainWindow : Window
                     break;
                 case "jsonCompact":
                     await TransformStructuredDataAsync(StructuredDataLayout.Compact);
+                    break;
+                case "snippets":
+                    await InsertSavedSnippetAsync();
+                    break;
+                case "saveSnippet":
+                    await CaptureSnippetAsync();
                     break;
             }
         }
@@ -746,6 +974,8 @@ public partial class MainWindow : Window
         {
             await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
         }
+        else if (id == "snippets") await InsertSavedSnippetAsync();
+        else if (id == "saveSnippet") await CaptureSnippetAsync();
     }
 
     private void ManageButton_Click(object sender, RoutedEventArgs e)
@@ -1054,7 +1284,7 @@ public partial class MainWindow : Window
 
     private void Window_Deactivated(object? sender, EventArgs e)
     {
-        if (IsVisible) Hide();
+        if (IsVisible && !_showingDialog) Hide();
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();

@@ -79,6 +79,7 @@ internal sealed class UserSettings
 
     public string? PreferredDelimiter { get; set; }
     public int HistoryRetentionDays { get; set; } = 15;
+    public List<SnippetEntry> Snippets { get; set; } = [];
 
     public Dictionary<string, string> Shortcuts { get; set; } = new(StringComparer.Ordinal)
     {
@@ -86,9 +87,20 @@ internal sealed class UserSettings
         ["clipboard"] = ShortcutDefaults.ForCommand("clipboard"),
         ["selection"] = ShortcutDefaults.ForCommand("selection"),
         ["jsonPretty"] = ShortcutDefaults.ForCommand("jsonPretty"),
-        ["jsonCompact"] = ShortcutDefaults.ForCommand("jsonCompact")
+        ["jsonCompact"] = ShortcutDefaults.ForCommand("jsonCompact"),
+        ["snippets"] = ShortcutDefaults.ForCommand("snippets"),
+        ["saveSnippet"] = ShortcutDefaults.ForCommand("saveSnippet")
     };
     public HashSet<string> DisabledCommands { get; set; } = new(StringComparer.Ordinal);
+}
+
+internal sealed class SnippetEntry
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Title { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public string? Rtf { get; set; }
+    public string? Html { get; set; }
 }
 
 internal sealed class SettingsStore
@@ -107,6 +119,7 @@ internal sealed class SettingsStore
                 {
                     loaded.Shortcuts ??= new Dictionary<string, string>(StringComparer.Ordinal);
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
+                    loaded.Snippets ??= [];
                     ShortcutDefaults.MigratePreviousDefaults(loaded.Shortcuts);
                     return loaded;
                 }

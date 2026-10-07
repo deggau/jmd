@@ -36,6 +36,8 @@ public static class ShortcutDefaults
         "selection" => "Ctrl+Alt+I",
         "jsonPretty" => "Ctrl+Alt+B",
         "jsonCompact" => "Alt+Shift+B",
+        "snippets" => "Ctrl+Shift+Y",
+        "saveSnippet" => "Ctrl+Alt+Shift+Y",
         _ => throw new ArgumentOutOfRangeException(nameof(commandId), commandId, "Comando desconhecido.")
     };
 

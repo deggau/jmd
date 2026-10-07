@@ -38,7 +38,7 @@ dotnet build .\JMD.sln
 dotnet run --project .\src\JMD.App\JMD.App.csproj
 ```
 
-A aplicação inicia minimizada na área de notificação. `Alt+J` abre a paleta, `Ctrl+Shift+I` converte o texto do clipboard e `Ctrl+Alt+I` transforma e substitui a seleção. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração. A tela de configurações também permite consultar o histórico das conversões e ajustar sua retenção, inicialmente em 15 dias.
+A aplicação inicia minimizada na área de notificação. `Alt+J` abre a paleta, `Ctrl+Shift+I` converte o texto do clipboard, `Ctrl+Alt+I` transforma e substitui a seleção, `Ctrl+Shift+Y` busca textos salvos pelo título e `Ctrl+Alt+Shift+Y` copia uma seleção para salvá-la com um título. A busca insere o texto no aplicativo que estava ativo e preserva HTML/RTF quando disponíveis; os textos também podem ser adicionados, editados e excluídos nas configurações. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração. A tela de configurações também permite consultar o histórico das conversões e ajustar sua retenção, inicialmente em 15 dias.
 
 No menu `...`, a opção **Manter tela ativa** solicita ao Windows que mantenha o monitor e o sistema ativos enquanto estiver ligada. O JMD não simula atividade do teclado ou do mouse; políticas de segurança da organização ainda podem bloquear a tela.
 

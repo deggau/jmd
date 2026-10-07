@@ -12,7 +12,10 @@
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="{x:Type Control}">
-            <Border BorderBrush="{StaticResource SurfaceBrush}" BorderThickness="2" CornerRadius="6" Margin="-3" />
+            <Grid Margin="-5">
+              <Border BorderBrush="#FFE4E7EC" BorderThickness="2" CornerRadius="8" />
+              <Border BorderBrush="{StaticResource SurfaceBrush}" BorderThickness="3" CornerRadius="6" Margin="2" />
+            </Grid>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
@@ -34,6 +37,36 @@
     </Style>
     <Style TargetType="CheckBox">
       <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusCue}" />
+    </Style>
+    <Style x:Key="KeyboardListItemStyle" TargetType="ListBoxItem">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ListBoxItem">
+            <Border x:Name="ItemBorder" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="8">
+              <ContentPresenter ContentSource="Content" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                <Setter TargetName="ItemBorder" Property="Background" Value="#FF293224" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ItemBorder" Property="Background" Value="#FF2A2D35" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
 
     <Style TargetType="ContextMenu">
