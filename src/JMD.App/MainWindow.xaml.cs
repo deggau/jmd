@@ -1193,6 +1193,8 @@ public partial class MainWindow : Window
             await TransformSelectionFromPaletteAsync();
         if (id is "jsonPretty" or "jsonCompact")
             await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
+        if (id == "snippets") await InsertSavedSnippetAsync();
+        if (id == "saveSnippet") await CaptureSnippetAsync();
     }
 
     private async Task TransformSelectionFromPaletteAsync()
@@ -1325,10 +1327,10 @@ public partial class MainWindow : Window
 
     private static bool SetForegroundWindow(IntPtr window) => SetForegroundWindowNative(window);
 
-    [DllImport("user32.dll", EntryPoint = "SetForegroundWindow")]
+    [DllImport("user32.dll", EntryPoint = "GetAsyncKeyState")]
     private static extern short GetAsyncKeyState(int key);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", EntryPoint = "SetForegroundWindow")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindowNative(IntPtr window);
 }

@@ -43,9 +43,8 @@ internal sealed class SnippetPickerWindow : Window
         };
 
         _search.TextChanged += (_, _) => RefreshResults();
-        _search.PreviewKeyDown += Search_PreviewKeyDown;
-        _results.PreviewKeyDown += Search_PreviewKeyDown;
         _results.MouseDoubleClick += (_, _) => AcceptSelection();
+        PreviewKeyDown += Picker_PreviewKeyDown;
         Loaded += (_, _) => { _search.Focus(); Keyboard.Focus(_search); };
         RefreshResults();
     }
@@ -109,11 +108,26 @@ internal sealed class SnippetPickerWindow : Window
         if (_results.Items.Count > 0) _results.SelectedIndex = 0;
     }
 
-    private void Search_PreviewKeyDown(object sender, KeyEventArgs e)
+    private void Picker_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter) { AcceptSelection(); e.Handled = true; }
-        else if (e.Key == Key.Escape) { DialogResult = false; Close(); e.Handled = true; }
-        else if (e.Key == Key.Down && _results.Items.Count > 0) { _results.Focus(); _results.SelectedIndex = 0; e.Handled = true; }
+        if (e.Key == Key.Enter && (_search.IsKeyboardFocusWithin || _results.IsKeyboardFocusWithin))
+        {
+            AcceptSelection();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            DialogResult = false;
+            Close();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Down && _search.IsKeyboardFocusWithin && _results.Items.Count > 0)
+        {
+            if (_results.SelectedIndex < 0) _results.SelectedIndex = 0;
+            _results.Focus();
+            Keyboard.Focus(_results);
+            e.Handled = true;
+        }
     }
 
     private void AcceptSelection()
