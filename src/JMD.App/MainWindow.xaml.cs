@@ -59,6 +59,7 @@ public partial class MainWindow : Window
     private bool _conversionRunning;
     private bool _updatingKeepAwakeToggle;
     private bool _showingDialog;
+    private bool _checkingUpdates;
 
     public event Action<string, string>? TrayNotification;
 
@@ -1071,12 +1072,12 @@ public partial class MainWindow : Window
         AboutVersionText.Text = $"Versão instalada: {version}";
         UpdateStatusText.Text = "Verifique se há uma versão mais recente no GitHub.";
         InstallUpdateButton.Visibility = Visibility.Collapsed;
-        CheckUpdatesButton.IsEnabled = true;
     }
 
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
-        CheckUpdatesButton.IsEnabled = false;
+        if (_checkingUpdates) return;
+        _checkingUpdates = true;
         InstallUpdateButton.Visibility = Visibility.Collapsed;
         UpdateStatusText.Text = "Consultando a versão mais recente no GitHub…";
         try
@@ -1109,7 +1110,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            CheckUpdatesButton.IsEnabled = true;
+            _checkingUpdates = false;
         }
     }
 
