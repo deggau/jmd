@@ -77,7 +77,9 @@ public partial class MainWindow : Window
             _historyStore = new ConversionHistoryStore(historyPath);
             _historyRecorder = new ConversionHistoryRecorder(_historyStore);
             _historyStore.DeleteOlderThan(_settings.HistoryRetentionDays);
-            if (_historyStore.GetLatest() is { } lastConversion)
+            if (_historyStore.GetLatest() is { } lastConversion &&
+                (lastConversion.CommandName == "Montar SQL IN" ||
+                 lastConversion.CommandName.StartsWith("Substituir seleção", StringComparison.Ordinal)))
                 _conversionGuard.Remember(lastConversion.BeforeValue, lastConversion.AfterValue);
         }
         catch (Exception exception)
@@ -179,6 +181,28 @@ public partial class MainWindow : Window
         AddShortcutRow("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior.");
         AddShortcutRow("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título.");
 
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = $"Textos salvos ({_settings.Snippets.Count})",
+            Foreground = Brushes.White,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(2, 18, 0, 8)
+        });
+        var addSnippetButton = new Button
+        {
+            Content = "Adicionar texto",
+            FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
+            Padding = new Thickness(12, 7, 12, 7),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
+            BorderThickness = new Thickness(0)
+        };
+        addSnippetButton.Click += (_, _) => EditSnippet(null, null);
+        SettingsPanel.Children.Add(addSnippetButton);
+        RenderSnippetSettings();
+
         var note = new TextBlock
         {
             Text = "Alt+J pode estar em uso por outro aplicativo. Se aparecer como indisponível, escolha outro atalho.",
@@ -229,28 +253,6 @@ public partial class MainWindow : Window
             }
         };
         SettingsPanel.Children.Add(delimiterPicker);
-
-        SettingsPanel.Children.Add(new TextBlock
-        {
-            Text = "Textos salvos",
-            Foreground = Brushes.White,
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(2, 18, 0, 8)
-        });
-        var addSnippetButton = new Button
-        {
-            Content = "Adicionar texto",
-            FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
-            Padding = new Thickness(12, 7, 12, 7),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
-            BorderThickness = new Thickness(0)
-        };
-        addSnippetButton.Click += (_, _) => EditSnippet(null, null);
-        SettingsPanel.Children.Add(addSnippetButton);
-        RenderSnippetSettings();
 
         var testCard = new Border
         {
@@ -413,7 +415,17 @@ public partial class MainWindow : Window
             actions.Children.Add(edit);
             actions.Children.Add(delete);
             row.Children.Add(actions);
-            row.Children.Add(new TextBlock { Text = snippet.Title, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+            var description = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            description.Children.Add(new TextBlock { Text = snippet.Title, Foreground = Brushes.White, TextTrimming = TextTrimming.CharacterEllipsis });
+            description.Children.Add(new TextBlock
+            {
+                Text = snippet.Text,
+                Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+                FontSize = 11,
+                Margin = new Thickness(0, 3, 8, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            row.Children.Add(description);
             SettingsPanel.Children.Add(new Border
             {
                 Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
@@ -521,6 +533,7 @@ public partial class MainWindow : Window
         try
         {
             _settingsStore.Save(_settings);
+            RecordActionHistory($"Salvar texto: {snippet.Title}", string.Empty, snippet.Text);
             Notify("JMD", $"Texto salvo: {snippet.Title}", true);
             if (_navigation.CurrentPage == AppPage.ShortcutSettings) BuildSettingsPanel();
         }
@@ -564,7 +577,22 @@ public partial class MainWindow : Window
             Notify("JMD", "Não foi possível colar. O texto está disponível no clipboard.", false);
             return;
         }
+        RecordActionHistory($"Inserir texto salvo: {snippet.Title}", snippet.Title, snippet.Text);
         Notify("JMD", $"Texto inserido: {snippet.Title}", true);
+    }
+
+    private void RecordActionHistory(string commandName, string beforeValue, string afterValue)
+    {
+        if (_historyStore is null) return;
+        try
+        {
+            _historyStore.Add(commandName, beforeValue, afterValue, source: GetConversionSource());
+            RefreshHistory();
+        }
+        catch (Exception exception)
+        {
+            SetStatus($"Ação concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+        }
     }
 
     private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet"];
@@ -1287,7 +1315,14 @@ public partial class MainWindow : Window
 
     private void Window_Deactivated(object? sender, EventArgs e)
     {
-        if (IsVisible && !_showingDialog) Hide();
+        if (!IsVisible || _showingDialog) return;
+        Hide();
+        if (_navigation.IsEditingShortcuts)
+        {
+            RegisterConfiguredShortcuts();
+            RefreshCommandStatuses();
+            RefreshShortcutStatuses();
+        }
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();

@@ -1,13 +1,14 @@
 using System.Text;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Navigation;
+using System.Xml.Linq;
 using JMD.Windows;
 using Button = System.Windows.Controls.Button;
 using Panel = System.Windows.Controls.Panel;
 using TextBox = System.Windows.Controls.TextBox;
-using WebBrowser = System.Windows.Controls.WebBrowser;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using Orientation = System.Windows.Controls.Orientation;
@@ -19,10 +20,10 @@ namespace JMD.App;
 internal sealed class SnippetEditorWindow : Window
 {
     private readonly TextBox _titleBox = new();
-    private readonly WebBrowser _editor = new();
+    private readonly RichTextBox _editor = new();
     private readonly RichClipboardContent? _original;
     private readonly string? _existingId;
-    private bool _editorReady;
+    private bool _contentChanged;
 
     public SnippetEntry? Result { get; private set; }
 
@@ -97,9 +98,29 @@ internal sealed class SnippetEditorWindow : Window
         AddFormatButton(toolbar, "• Lista", "insertUnorderedList");
         AddFormatButton(toolbar, "1. Lista", "insertOrderedList");
 
-        _editor.LoadCompleted += Editor_LoadCompleted;
+        _editor.Document = new System.Windows.Documents.FlowDocument
+        {
+            PagePadding = new Thickness(10),
+            FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+            FontSize = 14,
+            Foreground = Brushes.White,
+            Background = new SolidColorBrush(Color.FromRgb(32, 35, 42))
+        };
+        _editor.AcceptsTab = true;
+        _editor.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _editor.Padding = new Thickness(2);
+        _editor.Background = new SolidColorBrush(Color.FromRgb(32, 35, 42));
+        _editor.Foreground = Brushes.White;
+        _editor.BorderBrush = new SolidColorBrush(Color.FromRgb(58, 62, 72));
+        _editor.Margin = new Thickness(0, 0, 0, 4);
+        _editor.TextChanged += (_, _) => _contentChanged = true;
         body.Children.Add(_editor);
-        Loaded += (_, _) => { _titleBox.Focus(); _editor.NavigateToString(EditorDocument); };
+        Loaded += (_, _) =>
+        {
+            LoadContent();
+            _contentChanged = false;
+            _titleBox.Focus();
+        };
     }
 
     private void AddFormatButton(Panel toolbar, string label, string command, bool emphasized = false)
@@ -116,25 +137,163 @@ internal sealed class SnippetEditorWindow : Window
         };
         button.Click += (_, _) =>
         {
-            if (_editorReady)
+            _editor.Focus();
+            switch (command)
             {
-                _editor.InvokeScript("format", command);
-                _editor.Focus();
+                case "bold": System.Windows.Documents.EditingCommands.ToggleBold.Execute(null, _editor); break;
+                case "italic": System.Windows.Documents.EditingCommands.ToggleItalic.Execute(null, _editor); break;
+                case "underline": System.Windows.Documents.EditingCommands.ToggleUnderline.Execute(null, _editor); break;
+                case "insertUnorderedList": System.Windows.Documents.EditingCommands.ToggleBullets.Execute(null, _editor); break;
+                case "insertOrderedList": System.Windows.Documents.EditingCommands.ToggleNumbering.Execute(null, _editor); break;
             }
         };
         toolbar.Children.Add(button);
     }
 
-    private void Editor_LoadCompleted(object? sender, NavigationEventArgs e)
+    private void LoadContent()
     {
-        if (_editorReady) return;
-        _editorReady = true;
-        var html = _original?.Html is { Length: > 0 } sourceHtml
-            ? ExtractHtmlFragment(sourceHtml)
-            : _original?.Rtf is { Length: > 0 } sourceRtf
-                ? ExtractRtfHtml(sourceRtf)
-                : EscapeHtml(_original?.Text ?? string.Empty).Replace("\r\n", "<br>", StringComparison.Ordinal).Replace("\n", "<br>", StringComparison.Ordinal);
-        _editor.InvokeScript("setContent", html);
+        try
+        {
+            if (_original?.Rtf is { Length: > 0 } sourceRtf)
+            {
+                using var stream = new System.IO.MemoryStream(Encoding.UTF8.GetBytes(sourceRtf));
+                new System.Windows.Documents.TextRange(_editor.Document.ContentStart, _editor.Document.ContentEnd)
+                    .Load(stream, System.Windows.DataFormats.Rtf);
+                return;
+            }
+        }
+        catch (Exception exception) when (exception is ArgumentException or System.IO.IOException or System.Windows.Markup.XamlParseException) { }
+
+        if (_original?.Html is { Length: > 0 } sourceHtml && TryLoadHtml(sourceHtml)) return;
+
+        var initialText = _original?.Text ?? string.Empty;
+        if (initialText.Length > 0)
+            new System.Windows.Documents.TextRange(_editor.Document.ContentStart, _editor.Document.ContentEnd).Text = initialText;
+    }
+
+    private bool TryLoadHtml(string html)
+    {
+        try
+        {
+            var fragment = ExtractHtmlFragment(html);
+            fragment = Regex.Replace(fragment, @"<(br|hr)(\s[^>]*)?>", "<$1/>", RegexOptions.IgnoreCase);
+            fragment = Regex.Replace(fragment, @"&nbsp;", "&#160;", RegexOptions.IgnoreCase);
+            fragment = Regex.Replace(fragment, @"&(?!#\d+;|#x[0-9a-f]+;|amp;|lt;|gt;|quot;|apos;)", "&amp;", RegexOptions.IgnoreCase);
+            var root = XElement.Parse($"<root>{fragment}</root>", LoadOptions.PreserveWhitespace);
+            var document = _editor.Document;
+            document.Blocks.Clear();
+            foreach (var node in root.Nodes())
+            {
+                if (node is XElement element && element.Name.LocalName.Equals("ul", StringComparison.OrdinalIgnoreCase))
+                    document.Blocks.Add(CreateHtmlList(element, System.Windows.TextMarkerStyle.Disc));
+                else if (node is XElement ordered && ordered.Name.LocalName.Equals("ol", StringComparison.OrdinalIgnoreCase))
+                    document.Blocks.Add(CreateHtmlList(ordered, System.Windows.TextMarkerStyle.Decimal));
+                else if (node is XElement block && IsHtmlBlock(block.Name.LocalName))
+                    document.Blocks.Add(CreateHtmlParagraph(block));
+                else
+                {
+                    var paragraph = new System.Windows.Documents.Paragraph();
+                    AddHtmlInline(node, paragraph.Inlines);
+                    document.Blocks.Add(paragraph);
+                }
+            }
+            if (document.Blocks.Count == 0) document.Blocks.Add(new System.Windows.Documents.Paragraph());
+            return true;
+        }
+        catch (Exception exception) when (exception is System.Xml.XmlException or ArgumentException or InvalidOperationException)
+        {
+            _editor.Document.Blocks.Clear();
+            return false;
+        }
+    }
+
+    private static bool IsHtmlBlock(string name) => name.Equals("p", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals("div", StringComparison.OrdinalIgnoreCase) || name.Equals("blockquote", StringComparison.OrdinalIgnoreCase);
+
+    private static System.Windows.Documents.Paragraph CreateHtmlParagraph(XElement element)
+    {
+        var paragraph = new System.Windows.Documents.Paragraph();
+        AddHtmlInline(element, paragraph.Inlines);
+        return paragraph;
+    }
+
+    private static System.Windows.Documents.List CreateHtmlList(XElement element, System.Windows.TextMarkerStyle markerStyle)
+    {
+        var list = new System.Windows.Documents.List { MarkerStyle = markerStyle };
+        foreach (var item in element.Elements().Where(child => child.Name.LocalName.Equals("li", StringComparison.OrdinalIgnoreCase)))
+        {
+            var listItem = new System.Windows.Documents.ListItem();
+            var paragraph = new System.Windows.Documents.Paragraph();
+            AddHtmlInline(item, paragraph.Inlines);
+            listItem.Blocks.Add(paragraph);
+            list.ListItems.Add(listItem);
+        }
+        return list;
+    }
+
+    private static void AddHtmlInline(XNode node, System.Windows.Documents.InlineCollection target)
+    {
+        if (node is XText text)
+        {
+            if (text.Value.Length > 0) target.Add(new System.Windows.Documents.Run(text.Value));
+            return;
+        }
+        if (node is not XElement element) return;
+        var name = element.Name.LocalName.ToLowerInvariant();
+        if (name is "br" or "hr") { target.Add(new System.Windows.Documents.LineBreak()); return; }
+        System.Windows.Documents.Span? wrapper = name switch
+        {
+            "b" or "strong" => new System.Windows.Documents.Bold(),
+            "i" or "em" => new System.Windows.Documents.Italic(),
+            "u" => new System.Windows.Documents.Underline(),
+            "span" => new System.Windows.Documents.Span(),
+            _ => null
+        };
+        if (wrapper is not null)
+        {
+            if (name == "span" && element.Attribute("style") is { } style)
+                ApplyHtmlStyles(wrapper, style.Value);
+            foreach (var child in element.Nodes()) AddHtmlInline(child, wrapper.Inlines);
+            target.Add(wrapper);
+            return;
+        }
+        foreach (var child in element.Nodes()) AddHtmlInline(child, target);
+    }
+
+    private static void ApplyHtmlStyles(System.Windows.Documents.Span span, string style)
+    {
+        foreach (var declaration in style.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = declaration.IndexOf(':');
+            if (separator < 0) continue;
+            var name = declaration[..separator].Trim().ToLowerInvariant();
+            var value = declaration[(separator + 1)..].Trim();
+            switch (name)
+            {
+                case "font-weight" when value.Equals("bold", StringComparison.OrdinalIgnoreCase) || value == "600" || value == "700":
+                    span.FontWeight = FontWeights.Bold;
+                    break;
+                case "font-style" when value.Equals("italic", StringComparison.OrdinalIgnoreCase):
+                    span.FontStyle = FontStyles.Italic;
+                    break;
+                case "text-decoration" when value.Contains("underline", StringComparison.OrdinalIgnoreCase):
+                    span.TextDecorations = TextDecorations.Underline;
+                    break;
+                case "font-size":
+                    var unit = value.EndsWith("pt", StringComparison.OrdinalIgnoreCase) ? "pt" : "px";
+                    if (double.TryParse(value[..^unit.Length], NumberStyles.Float, CultureInfo.InvariantCulture, out var size))
+                        span.FontSize = unit == "pt" ? size * 96 / 72 : size;
+                    break;
+                case "color":
+                    try { span.Foreground = new SolidColorBrush((Color)System.Windows.Media.ColorConverter.ConvertFromString(value)); }
+                    catch (FormatException) { }
+                    break;
+                case "background-color":
+                    try { span.Background = new SolidColorBrush((Color)System.Windows.Media.ColorConverter.ConvertFromString(value)); }
+                    catch (FormatException) { }
+                    break;
+            }
+        }
     }
 
     private void Save_Click(object sender, RoutedEventArgs e)
@@ -146,18 +305,31 @@ internal sealed class SnippetEditorWindow : Window
             _titleBox.Focus();
             return;
         }
-        if (!_editorReady) return;
-
-        var html = _editor.InvokeScript("getHtml") as string ?? string.Empty;
-        var text = _editor.InvokeScript("getText") as string ?? string.Empty;
-        var changed = Equals(_editor.InvokeScript("isChanged"), true);
+        var range = new System.Windows.Documents.TextRange(_editor.Document.ContentStart, _editor.Document.ContentEnd);
+        var text = range.Text.TrimEnd('\r', '\n');
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            MessageBox.Show(this, "Digite o texto que será inserido.", "Texto obrigatório", MessageBoxButton.OK, MessageBoxImage.Information);
+            _editor.Focus();
+            return;
+        }
+        var changed = _contentChanged;
+        string? rtf = _original?.Rtf;
+        string? html = _original?.Html;
+        if (changed || rtf is null && html is null)
+        {
+            using var stream = new System.IO.MemoryStream();
+            range.Save(stream, System.Windows.DataFormats.Rtf);
+            rtf = Encoding.UTF8.GetString(stream.ToArray());
+            html = BuildClipboardHtml(SerializeBlocks(_editor.Document.Blocks));
+        }
         Result = new SnippetEntry
         {
             Id = _existingId ?? Guid.NewGuid().ToString("N"),
             Title = title,
             Text = text,
-            Html = BuildClipboardHtml(html),
-            Rtf = changed ? null : _original?.Rtf
+            Html = html,
+            Rtf = rtf
         };
         DialogResult = true;
         Close();
@@ -269,7 +441,15 @@ internal sealed class SnippetEditorWindow : Window
                         .Append(SerializeInlines(link.Inlines)).Append("</a>");
                     break;
                 case System.Windows.Documents.Span span:
-                    output.Append(SerializeInlines(span.Inlines));
+                    var styles = new List<string>();
+                    if (span.FontWeight == FontWeights.Bold) styles.Add("font-weight:bold");
+                    if (span.FontStyle == FontStyles.Italic) styles.Add("font-style:italic");
+                    if (span.TextDecorations?.Contains(TextDecorations.Underline[0]) == true) styles.Add("text-decoration:underline");
+                    if (!double.IsNaN(span.FontSize) && Math.Abs(span.FontSize - 14) > 0.1) styles.Add($"font-size:{span.FontSize.ToString("0.##", CultureInfo.InvariantCulture)}px");
+                    if (span.Foreground is SolidColorBrush foreground) styles.Add($"color:{foreground.Color}");
+                    if (span.Background is SolidColorBrush background) styles.Add($"background-color:{background.Color}");
+                    output.Append(styles.Count == 0 ? "<span>" : $"<span style=\"{string.Join(';', styles)}\">")
+                        .Append(SerializeInlines(span.Inlines)).Append("</span>");
                     break;
             }
         }
@@ -278,18 +458,4 @@ internal sealed class SnippetEditorWindow : Window
 
     private static string EscapeHtml(string value) => System.Net.WebUtility.HtmlEncode(value);
 
-    private const string EditorDocument = """
-        <!doctype html><html><head><meta http-equiv='X-UA-Compatible' content='IE=edge'><meta charset='utf-8'>
-        <style>html,body{height:100%;margin:0;background:#17191f;color:#f0f1f4;font:14px Segoe UI,Arial}#editor{box-sizing:border-box;height:100%;min-height:260px;overflow:auto;padding:12px;background:#20232a;border:1px solid #3a3e48;border-radius:8px;outline:none}a{color:#b4f36a}</style>
-        <script>
-        function clean(node){var bad=node.querySelectorAll('script,iframe,object,embed');for(var i=bad.length-1;i>=0;i--)bad[i].parentNode.removeChild(bad[i]);var all=node.querySelectorAll('*');for(var j=0;j<all.length;j++){var attrs=[];for(var k=0;k<all[j].attributes.length;k++)attrs.push(all[j].attributes[k].name);for(var n=0;n<attrs.length;n++){var name=attrs[n],value=all[j].getAttribute(name)||'';if(name.toLowerCase().indexOf('on')===0||(name.toLowerCase()==='href'&&value.toLowerCase().indexOf('javascript:')===0))all[j].removeAttribute(name);}}}
-        function setContent(value){var e=document.getElementById('editor');e.innerHTML=value;clean(e);window.changed=false;}
-        function setRtfFallback(value){if(!document.getElementById('editor').innerText)document.getElementById('editor').innerHTML=value;}
-        function format(command){document.execCommand(command,false,null);document.getElementById('editor').focus();}
-        function getHtml(){return document.getElementById('editor').innerHTML;}
-        function getText(){return document.getElementById('editor').innerText;}
-        function isChanged(){return window.changed;}
-        window.onload=function(){document.getElementById('editor').oninput=function(){window.changed=true;};};
-        </script></head><body><div id='editor' contenteditable='true'></div></body></html>
-        """;
 }
