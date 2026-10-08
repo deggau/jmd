@@ -7,10 +7,14 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
 {
     private const uint InputKeyboard = 1;
     private const uint KeyUp = 0x0002;
+    private const uint Unicode = 0x0004;
     private const ushort VkControl = 0x11;
     private const ushort VkX = 0x58;
     private const ushort VkC = 0x43;
     private const ushort VkV = 0x56;
+    private const ushort VkA = 0x41;
+    private const ushort VkUp = 0x26;
+    private const ushort VkBackspace = 0x08;
     private static readonly int[] ModifierKeys = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C];
 
     public IntPtr GetForegroundWindow() => GetForegroundWindowNative();
@@ -31,6 +35,26 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
     public bool SendCopy() => SendChord(VkC);
     public bool SendPaste() => SendChord(VkV);
 
+    public bool SendSelectAll() => SendChord(VkA);
+    public bool SendBackspace() => SendKey(VkBackspace);
+
+    public bool SendUnicodeText(string text)
+    {
+        var inputs = new List<Input>(text.Length * 2);
+        foreach (var character in text)
+        {
+            inputs.Add(UnicodeKey(character, false));
+            inputs.Add(UnicodeKey(character, true));
+        }
+        return inputs.Count == 0 || SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<Input>()) == inputs.Count;
+    }
+
+    public bool SendShiftUp()
+    {
+        var inputs = new[] { Key(0x10, false), Key(VkUp, false), Key(VkUp, true), Key(0x10, true) };
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) == inputs.Length;
+    }
+
     private static bool SendChord(ushort key)
     {
         var inputs = new[]
@@ -39,6 +63,26 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
         };
         return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) == inputs.Length;
     }
+
+    private static bool SendKey(ushort key)
+    {
+        var inputs = new[] { Key(key, false), Key(key, true) };
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) == inputs.Length;
+    }
+
+    private static Input UnicodeKey(char character, bool keyUp) => new()
+    {
+        Type = InputKeyboard,
+        Union = new InputUnion
+        {
+            Keyboard = new KeyboardInput
+            {
+                VirtualKey = 0,
+                ScanCode = character,
+                Flags = Unicode | (keyUp ? KeyUp : 0)
+            }
+        }
+    };
 
     private static Input Key(ushort key, bool keyUp) => new()
     {

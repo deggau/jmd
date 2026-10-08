@@ -44,12 +44,14 @@ public partial class MainWindow : Window
     private readonly SqlInConversionGuard _conversionGuard = new();
     private readonly WindowsClipboard _clipboard = new();
     private readonly KeyboardAutomation _keyboard = new();
+    private readonly FocusedTextAutomation _focusedText;
     private readonly WindowsDisplayAwakeService _displayAwake = new();
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
     private readonly AppNavigationState _navigation = new();
     private ICollectionView? _commandView;
     private readonly List<ShortcutRow> _shortcutRows = [];
+    private readonly DraftStack _draftStack = new();
     private readonly Dictionary<string, TextBlock> _shortcutStatusLabels = new(StringComparer.Ordinal);
     private TextBox? _testInput;
     private TextBlock? _testOutput;
@@ -77,6 +79,7 @@ public partial class MainWindow : Window
             _historyStore = new ConversionHistoryStore(historyPath);
             _historyRecorder = new ConversionHistoryRecorder(_historyStore);
             _historyStore.DeleteOlderThan(_settings.HistoryRetentionDays);
+            _draftStack.RestoreFromHistory(_historyStore.Search(string.Empty));
             if (_historyStore.GetLatest() is { } lastConversion &&
                 (lastConversion.CommandName == "Montar SQL IN" ||
                  lastConversion.CommandName.StartsWith("Substituir seleção", StringComparison.Ordinal)))
@@ -87,6 +90,7 @@ public partial class MainWindow : Window
             SetStatus($"O histórico está indisponível: {exception.Message}", false);
         }
         _selectionTransformer = new SelectionTransformer(_clipboard, _keyboard);
+        _focusedText = new FocusedTextAutomation(_keyboard);
         BuildCommands();
         CommandsList.ItemsSource = _commands;
         _commandView = CollectionViewSource.GetDefaultView(_commands);
@@ -103,6 +107,8 @@ public partial class MainWindow : Window
         var source = (HwndSource)PresentationSource.FromVisual(this)!;
         _hotkeys = new GlobalHotkeyService(source);
         _hotkeys.HotkeyPressed += id => Dispatcher.BeginInvoke(() => HandleHotkeyAsync(id));
+        _hotkeys.TryRegister("draftSave", new ShortcutBinding(ShortcutModifiers.Shift, 0x26), out _);
+        _hotkeys.TryRegister("draftRestore", new ShortcutBinding(ShortcutModifiers.Shift, 0x28), out _);
         RegisterConfiguredShortcuts();
         RefreshCommandStatuses();
         RefreshShortcutStatuses();
@@ -180,6 +186,15 @@ public partial class MainWindow : Window
         AddShortcutRow("jsonCompact", "Compactar JSON/XML", "Identifica o formato e deixa o conteúdo em uma linha.");
         AddShortcutRow("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior.");
         AddShortcutRow("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título.");
+
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Pilha de rascunhos: Shift + ↑ salva a seleção atual (ou o trecho acima do cursor) e apaga do campo. Shift + ↓ salva o conteúdo atual e restaura o último rascunho. Os rascunhos ficam disponíveis no Histórico.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            FontSize = 12,
+            Margin = new Thickness(2, 12, 2, 4)
+        });
 
         SettingsPanel.Children.Add(new TextBlock
         {
@@ -727,12 +742,79 @@ public partial class MainWindow : Window
                 case "saveSnippet":
                     await CaptureSnippetAsync();
                     break;
+                case "draftSave":
+                    await SaveDraftAsync();
+                    break;
+                case "draftRestore":
+                    await RestoreDraftAsync();
+                    break;
             }
         }
         catch (Exception exception)
         {
             SetStatus($"Operação falhou: {exception.Message}", false);
         }
+    }
+
+    private async Task SaveDraftAsync()
+    {
+        if (!await _keyboard.WaitForModifiersReleasedAsync()) return;
+        var draft = _focusedText.ReadSelection();
+        if (string.IsNullOrWhiteSpace(draft))
+        {
+            _keyboard.SendShiftUp();
+            await Task.Delay(40);
+            draft = _focusedText.ReadSelection();
+        }
+        if (string.IsNullOrWhiteSpace(draft))
+        {
+            Notify("JMD", "Nenhum texto selecionado no campo ativo.", false);
+            return;
+        }
+        if (!_focusedText.DeleteSelection())
+        {
+            Notify("JMD", "Não foi possível apagar o texto selecionado.", false);
+            return;
+        }
+        _draftStack.Push(draft);
+        RecordActionHistory(DraftStack.SavedCommandName, string.Empty, draft);
+        Notify("JMD", $"Rascunho salvo ({_draftStack.Count} na pilha).", true);
+    }
+
+    private async Task RestoreDraftAsync()
+    {
+        if (_draftStack.Count == 0)
+        {
+            Notify("JMD", "A pilha de rascunhos está vazia. Você pode copiá-los pelo histórico.", false);
+            return;
+        }
+        if (!await _keyboard.WaitForModifiersReleasedAsync()) return;
+        var currentText = _focusedText.ReadText();
+        if (currentText is null)
+        {
+            Notify("JMD", "O campo ativo não permite ler o texto atual.", false);
+            return;
+        }
+        if (!_draftStack.TryPop(out var draft) || draft is null) return;
+        if (!_focusedText.ReplaceAll(draft))
+        {
+            if (!string.IsNullOrWhiteSpace(currentText))
+            {
+                _draftStack.Push(currentText);
+                RecordActionHistory(DraftStack.SavedCommandName, string.Empty, currentText);
+            }
+            _draftStack.Push(draft);
+            RecordActionHistory(DraftStack.SavedCommandName, string.Empty, draft);
+            Notify("JMD", "Não foi possível inserir o rascunho no campo ativo.", false);
+            return;
+        }
+        RecordActionHistory(DraftStack.RestoredCommandName, string.Empty, draft);
+        if (!string.IsNullOrWhiteSpace(currentText))
+        {
+            _draftStack.Push(currentText);
+            RecordActionHistory(DraftStack.SavedCommandName, string.Empty, currentText);
+        }
+        Notify("JMD", $"Rascunho restaurado ({_draftStack.Count} na pilha).", true);
     }
 
     private void ShortcutEnabled_Changed(object sender, RoutedEventArgs e)
@@ -1192,10 +1274,17 @@ public partial class MainWindow : Window
             Hide();
             e.Handled = true;
         }
-        else if (e.Key == Key.Enter && !_navigation.IsEditingShortcuts && CommandsList.SelectedItem is CommandRow selected)
+        else if (e.Key == Key.Enter && _navigation.CurrentPage == AppPage.Palette &&
+                 (SearchBox.IsKeyboardFocusWithin || CommandsList.IsKeyboardFocusWithin))
         {
-            _ = ExecuteCommandAsync(selected.Id);
-            e.Handled = true;
+            var selected = CommandsList.SelectedItem as CommandRow;
+            if (selected is null || !selected.Visible)
+                selected = _commands.FirstOrDefault(command => command.Visible);
+            if (selected is not null)
+            {
+                _ = ExecuteCommandAsync(selected.Id);
+                e.Handled = true;
+            }
         }
         else if (e.Key == Key.Down && SearchBox.IsKeyboardFocusWithin && _commands.Count > 0)
         {
