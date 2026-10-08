@@ -38,11 +38,18 @@ public static class ShortcutDefaults
         "jsonCompact" => "Alt+Shift+B",
         "snippets" => "Ctrl+Shift+Y",
         "saveSnippet" => "Ctrl+Alt+Shift+Y",
+        "draftSave" => "Ctrl+Shift+Up",
+        "draftRestore" => "Ctrl+Shift+Down",
         _ => throw new ArgumentOutOfRangeException(nameof(commandId), commandId, "Comando desconhecido.")
     };
 
     public static void MigratePreviousDefaults(IDictionary<string, string> shortcuts)
     {
+        if (shortcuts.TryGetValue("draftSave", out var draftSave) && draftSave == "Shift+Up")
+            shortcuts["draftSave"] = ForCommand("draftSave");
+        if (shortcuts.TryGetValue("draftRestore", out var draftRestore) && draftRestore == "Shift+Down")
+            shortcuts["draftRestore"] = ForCommand("draftRestore");
+
         if (shortcuts.TryGetValue("palette", out var palette) && palette == "Win+J")
             shortcuts["palette"] = ForCommand("palette");
 

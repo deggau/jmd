@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
+using JMD.Core;
 
 namespace JMD.Windows;
 
@@ -48,12 +49,14 @@ public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
 
     public bool DeleteSelection() => keyboard.SendBackspace();
 
-    public bool ReplaceAll(string text)
+    public async Task<bool> ReplaceAllAsync(string text, WindowsClipboard clipboard)
     {
         try
         {
             var element = AutomationElement.FocusedElement;
             if (element is null || !IsTextEntry(element)) return false;
+            if (DraftTextPolicy.ShouldUseClipboard(text))
+                return await ReplaceAllWithClipboardAsync(text, clipboard);
             if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern))
             {
                 var value = (ValuePattern)pattern;
@@ -64,6 +67,29 @@ public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
                 }
             }
             return keyboard.SendSelectAll() && keyboard.SendBackspace() && keyboard.SendUnicodeText(text);
+        }
+        catch (Exception exception) when (IsAutomationFailure(exception))
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> ReplaceAllWithClipboardAsync(string text, WindowsClipboard clipboard)
+    {
+        var previousContent = clipboard.TryGetRichContent();
+        if (!await clipboard.TrySetTextAsync(text)) return false;
+        var pasted = keyboard.SendSelectAll() && keyboard.SendPaste();
+        await Task.Delay(120);
+        if (previousContent is not null) clipboard.TrySetRichContent(previousContent);
+        return pasted;
+    }
+
+    public bool HasEditableTextFocus()
+    {
+        try
+        {
+            var element = AutomationElement.FocusedElement;
+            return element is not null && IsTextEntry(element);
         }
         catch (Exception exception) when (IsAutomationFailure(exception))
         {

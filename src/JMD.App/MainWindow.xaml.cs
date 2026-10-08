@@ -69,6 +69,11 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _settings = _settingsStore.Load();
+        _updatingKeepAwakeToggle = true;
+        KeepAwakeToggle.IsChecked = _settings.KeepAwakeEnabled;
+        _updatingKeepAwakeToggle = false;
+        if (_settings.KeepAwakeEnabled && !_displayAwake.SetEnabled(true))
+            SetStatus("A preferência para manter a tela ativa foi carregada, mas o Windows não aceitou a solicitação.", false);
         if (_settings.PreferredDelimiter is not (null or "," or "|" or ";" or "\r\n" or "\n" or "\r"))
             _settings.PreferredDelimiter = null;
         if (_settings.HistoryRetentionDays is < 1 or > 3650)
@@ -107,8 +112,6 @@ public partial class MainWindow : Window
         var source = (HwndSource)PresentationSource.FromVisual(this)!;
         _hotkeys = new GlobalHotkeyService(source);
         _hotkeys.HotkeyPressed += id => Dispatcher.BeginInvoke(() => HandleHotkeyAsync(id));
-        _hotkeys.TryRegister("draftSave", new ShortcutBinding(ShortcutModifiers.Shift, 0x26), out _);
-        _hotkeys.TryRegister("draftRestore", new ShortcutBinding(ShortcutModifiers.Shift, 0x28), out _);
         RegisterConfiguredShortcuts();
         RefreshCommandStatuses();
         RefreshShortcutStatuses();
@@ -186,10 +189,12 @@ public partial class MainWindow : Window
         AddShortcutRow("jsonCompact", "Compactar JSON/XML", "Identifica o formato e deixa o conteúdo em uma linha.");
         AddShortcutRow("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior.");
         AddShortcutRow("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título.");
+        AddShortcutRow("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo.");
+        AddShortcutRow("draftRestore", "Usar rascunho", "Guarda o conteúdo atual e recupera o último rascunho.");
 
         SettingsPanel.Children.Add(new TextBlock
         {
-            Text = "Pilha de rascunhos: Shift + ↑ salva a seleção atual (ou o trecho acima do cursor) e apaga do campo. Shift + ↓ salva o conteúdo atual e restaura o último rascunho. Os rascunhos ficam disponíveis no Histórico.",
+            Text = "A pilha de rascunhos usa os atalhos configurados acima. Os rascunhos ficam disponíveis no Histórico.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
             FontSize = 12,
@@ -610,7 +615,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet"];
+    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore"];
 
     private string GetShortcut(string id)
     {
@@ -759,12 +764,23 @@ public partial class MainWindow : Window
     private async Task SaveDraftAsync()
     {
         if (!await _keyboard.WaitForModifiersReleasedAsync()) return;
+        if (!_focusedText.HasEditableTextFocus())
+        {
+            Notify("JMD", "O foco atual não está em um campo de texto editável.", false);
+            return;
+        }
         var draft = _focusedText.ReadSelection();
         if (string.IsNullOrWhiteSpace(draft))
         {
-            _keyboard.SendShiftUp();
+            draft = await CaptureFocusedSelectionAsync();
+        }
+        if (string.IsNullOrWhiteSpace(draft))
+        {
+            _keyboard.SendHome();
+            _keyboard.SendShiftEnd();
             await Task.Delay(40);
             draft = _focusedText.ReadSelection();
+            if (string.IsNullOrWhiteSpace(draft)) draft = await CaptureFocusedSelectionAsync();
         }
         if (string.IsNullOrWhiteSpace(draft))
         {
@@ -796,7 +812,7 @@ public partial class MainWindow : Window
             return;
         }
         if (!_draftStack.TryPop(out var draft) || draft is null) return;
-        if (!_focusedText.ReplaceAll(draft))
+        if (!await _focusedText.ReplaceAllAsync(draft, _clipboard))
         {
             if (!string.IsNullOrWhiteSpace(currentText))
             {
@@ -815,6 +831,19 @@ public partial class MainWindow : Window
             RecordActionHistory(DraftStack.SavedCommandName, string.Empty, currentText);
         }
         Notify("JMD", $"Rascunho restaurado ({_draftStack.Count} na pilha).", true);
+    }
+
+    private async Task<string?> CaptureFocusedSelectionAsync()
+    {
+        var previousContent = _clipboard.TryGetRichContent();
+        var sequenceBeforeCopy = _clipboard.SequenceNumber;
+        if (!_keyboard.SendCopy()) return null;
+        await Task.Delay(60);
+        var selectedText = _clipboard.SequenceNumber != sequenceBeforeCopy
+            ? await _clipboard.TryGetTextAsync()
+            : null;
+        if (previousContent is not null) _clipboard.TrySetRichContent(previousContent);
+        return selectedText;
     }
 
     private void ShortcutEnabled_Changed(object sender, RoutedEventArgs e)
@@ -1158,6 +1187,17 @@ public partial class MainWindow : Window
             toggle.IsChecked = _displayAwake.IsEnabled;
             _updatingKeepAwakeToggle = false;
             SetStatus("O Windows não aceitou a solicitação para manter a tela ativa.", false);
+            return;
+        }
+
+        _settings.KeepAwakeEnabled = enabled;
+        try
+        {
+            _settingsStore.Save(_settings);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"A opção foi alterada, mas não foi possível salvar a preferência: {exception.Message}", false);
             return;
         }
 

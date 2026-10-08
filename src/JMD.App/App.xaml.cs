@@ -79,6 +79,7 @@ internal sealed class UserSettings
 
     public string? PreferredDelimiter { get; set; }
     public int HistoryRetentionDays { get; set; } = 15;
+    public bool KeepAwakeEnabled { get; set; }
     public List<SnippetEntry> Snippets { get; set; } = [];
 
     public Dictionary<string, string> Shortcuts { get; set; } = new(StringComparer.Ordinal)
@@ -89,7 +90,9 @@ internal sealed class UserSettings
         ["jsonPretty"] = ShortcutDefaults.ForCommand("jsonPretty"),
         ["jsonCompact"] = ShortcutDefaults.ForCommand("jsonCompact"),
         ["snippets"] = ShortcutDefaults.ForCommand("snippets"),
-        ["saveSnippet"] = ShortcutDefaults.ForCommand("saveSnippet")
+        ["saveSnippet"] = ShortcutDefaults.ForCommand("saveSnippet"),
+        ["draftSave"] = ShortcutDefaults.ForCommand("draftSave"),
+        ["draftRestore"] = ShortcutDefaults.ForCommand("draftRestore")
     };
     public HashSet<string> DisabledCommands { get; set; } = new(StringComparer.Ordinal);
 }

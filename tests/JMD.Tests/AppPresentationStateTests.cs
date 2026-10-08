@@ -28,8 +28,31 @@ public sealed class AppPresentationStateTests
         Assert.Equal("Alt+J", ShortcutDefaults.ForCommand("palette"));
         Assert.Equal("Ctrl+Alt+B", ShortcutDefaults.ForCommand("jsonPretty"));
         Assert.Equal("Alt+Shift+B", ShortcutDefaults.ForCommand("jsonCompact"));
+        Assert.Equal("Ctrl+Shift+Up", ShortcutDefaults.ForCommand("draftSave"));
+        Assert.Equal("Ctrl+Shift+Down", ShortcutDefaults.ForCommand("draftRestore"));
         Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("jsonPretty"), out _, out _));
         Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("jsonCompact"), out _, out _));
+        Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("draftSave"), out var saveBinding, out _));
+        Assert.Equal(ShortcutModifiers.Control | ShortcutModifiers.Shift, saveBinding?.Modifiers);
+        Assert.Equal(0x26, saveBinding?.VirtualKey);
+        Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("draftRestore"), out var restoreBinding, out _));
+        Assert.Equal(ShortcutModifiers.Control | ShortcutModifiers.Shift, restoreBinding?.Modifiers);
+        Assert.Equal(0x28, restoreBinding?.VirtualKey);
+    }
+
+    [Fact]
+    public void Shortcut_migration_updates_only_the_old_draft_defaults()
+    {
+        var shortcuts = new Dictionary<string, string>
+        {
+            ["draftSave"] = "Shift+Up",
+            ["draftRestore"] = "Ctrl+Alt+Down"
+        };
+
+        ShortcutDefaults.MigratePreviousDefaults(shortcuts);
+
+        Assert.Equal("Ctrl+Shift+Up", shortcuts["draftSave"]);
+        Assert.Equal("Ctrl+Alt+Down", shortcuts["draftRestore"]);
     }
 
     [Fact]

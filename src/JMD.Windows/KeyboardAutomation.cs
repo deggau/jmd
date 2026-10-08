@@ -13,7 +13,8 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
     private const ushort VkC = 0x43;
     private const ushort VkV = 0x56;
     private const ushort VkA = 0x41;
-    private const ushort VkUp = 0x26;
+    private const ushort VkHome = 0x24;
+    private const ushort VkEnd = 0x23;
     private const ushort VkBackspace = 0x08;
     private static readonly int[] ModifierKeys = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C];
 
@@ -37,6 +38,13 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
 
     public bool SendSelectAll() => SendChord(VkA);
     public bool SendBackspace() => SendKey(VkBackspace);
+    public bool SendHome() => SendKey(VkHome);
+
+    public bool SendShiftEnd()
+    {
+        var inputs = new[] { Key(0x10, false), Key(VkEnd, false), Key(VkEnd, true), Key(0x10, true) };
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) == inputs.Length;
+    }
 
     public bool SendUnicodeText(string text)
     {
@@ -47,12 +55,6 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
             inputs.Add(UnicodeKey(character, true));
         }
         return inputs.Count == 0 || SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<Input>()) == inputs.Count;
-    }
-
-    public bool SendShiftUp()
-    {
-        var inputs = new[] { Key(0x10, false), Key(VkUp, false), Key(VkUp, true), Key(0x10, true) };
-        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) == inputs.Length;
     }
 
     private static bool SendChord(ushort key)
