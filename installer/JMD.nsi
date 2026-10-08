@@ -2,7 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.14"
+  !define APP_VERSION "0.1.15"
 !endif
 !ifndef PUBLISH_DIR
   !error "PUBLISH_DIR must point to the published application directory"
@@ -45,6 +45,10 @@ ShowUninstDetails show
 
 Section "Install" SEC_INSTALL
   SectionIn RO
+  DetailPrint "Closing any running JMD instance before updating..."
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "${APP_EXE}"'
+  Pop $0
+  Sleep 500
   SetOutPath "$INSTDIR"
   File /r "${PUBLISH_DIR}\*"
 
