@@ -8,7 +8,6 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -145,9 +144,9 @@ public partial class MainWindow : Window
             "Converte os valores copiados em uma lista SQL entre apóstrofos.", ShortcutDefaults.ForCommand("clipboard")));
         _commands.Add(new CommandRow("selection", "Substituir seleção formatada",
             "Recorta o texto selecionado, formata e cola o resultado no lugar.", ShortcutDefaults.ForCommand("selection")));
-        _commands.Add(new CommandRow("jsonPretty", "Formatar JSON/XML",
+        _commands.Add(new CommandRow("jsonPretty", "Formatar",
             "Identifica JSON ou XML e aplica indentação ao conteúdo selecionado.", ShortcutDefaults.ForCommand("jsonPretty")));
-        _commands.Add(new CommandRow("jsonCompact", "Compactar JSON/XML",
+        _commands.Add(new CommandRow("jsonCompact", "Compactar",
             "Identifica JSON ou XML e remove espaços e quebras de linha.", ShortcutDefaults.ForCommand("jsonCompact")));
         _commands.Add(new CommandRow("snippets", "Inserir texto salvo",
             "Busca pelo título e cola o texto escolhido no aplicativo anterior.", ShortcutDefaults.ForCommand("snippets")));
@@ -157,6 +156,15 @@ public partial class MainWindow : Window
             "Salva a seleção ou a linha do cursor e limpa o campo.", ShortcutDefaults.ForCommand("draftSave")));
         _commands.Add(new CommandRow("draftRestore", "Usar rascunho",
             "Guarda o conteúdo atual e recupera o último rascunho.", ShortcutDefaults.ForCommand("draftRestore")));
+        foreach (var shortcut in _settings.CustomShortcuts)
+        {
+            var row = new CommandRow(shortcut.Id, shortcut.Name, shortcut.Target,
+                string.IsNullOrWhiteSpace(shortcut.Shortcut) ? "Comando personalizado" : shortcut.Shortcut)
+            {
+                VoicePhrasesDisplay = GetVoicePhrasesDisplay(shortcut.Id)
+            };
+            _commands.Add(row);
+        }
     }
 
     private void RegisterConfiguredShortcuts()
@@ -182,6 +190,17 @@ public partial class MainWindow : Window
                 SetShortcutStatus(id, error ?? "Atalho indisponível.", false);
             else
                 SetShortcutStatus(id, "Ativo", true);
+        }
+        foreach (var shortcut in _settings.CustomShortcuts)
+        {
+            if (string.IsNullOrWhiteSpace(shortcut.Shortcut))
+            {
+                _hotkeys.Unregister(shortcut.Id);
+                continue;
+            }
+            if (!ShortcutParser.TryParse(shortcut.Shortcut, out var binding, out _) ||
+                !_hotkeys.TryRegister(shortcut.Id, binding!, out _))
+                SetStatus($"Atalho personalizado indisponível: {shortcut.Name}", false);
         }
     }
 
@@ -211,8 +230,8 @@ public partial class MainWindow : Window
         AddShortcutRow("palette", "Abrir paleta", "Exibe a lista de comandos e configurações.");
         AddShortcutRow("clipboard", "Formatar clipboard", "Transforma o texto copiado para SQL IN.");
         AddShortcutRow("selection", "Substituir seleção", "Recorta, transforma e cola a seleção atual.");
-        AddShortcutRow("jsonPretty", "Formatar JSON/XML", "Identifica o formato e aplica indentação.");
-        AddShortcutRow("jsonCompact", "Compactar JSON/XML", "Identifica o formato e deixa o conteúdo em uma linha.");
+        AddShortcutRow("jsonPretty", "Formatar", "Identifica JSON ou XML e aplica indentação.");
+        AddShortcutRow("jsonCompact", "Compactar", "Identifica JSON ou XML e deixa o conteúdo em uma linha.");
         AddShortcutRow("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior.");
         AddShortcutRow("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título.");
         AddShortcutRow("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo.");
@@ -226,6 +245,8 @@ public partial class MainWindow : Window
             FontSize = 12,
             Margin = new Thickness(2, 12, 2, 4)
         });
+
+        RenderCustomShortcutSettings();
 
         SettingsPanel.Children.Add(new TextBlock
         {
@@ -476,11 +497,19 @@ public partial class MainWindow : Window
     private void VoicePhrasesEditor_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (sender is not TextBox { Tag: string commandId } editor) return;
-        _settings.VoicePhrases[commandId] = editor.Text
+        var phrases = editor.Text
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(phrase => !string.IsNullOrWhiteSpace(phrase))
-            .Distinct(StringComparer.CurrentCultureIgnoreCase)
             .ToList();
+        var existing = _settings.VoicePhrases.Where(pair => pair.Key != commandId).SelectMany(pair => pair.Value);
+        if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases, existing))
+        {
+            SetStatus("Essa frase do Jey já está associada a outro comando. Use uma frase diferente.", false);
+            editor.Text = GetVoicePhrasesText(commandId);
+            editor.CaretIndex = editor.Text.Length;
+            return;
+        }
+        _settings.VoicePhrases[commandId] = phrases;
         var command = _commands.FirstOrDefault(item => item.Id == commandId);
         if (command is not null) command.VoicePhrasesDisplay = GetVoicePhrasesDisplay(commandId);
         try { _settingsStore.Save(_settings); }
@@ -490,13 +519,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private void CustomVoicePhrasesEditor_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is not TextBox { Tag: string commandId } editor) return;
+        var phrases = ParseVoicePhrases(editor.Text);
+        var existing = _settings.VoicePhrases.Where(pair => pair.Key != commandId).SelectMany(pair => pair.Value);
+        if (!VoicePhrasePolicy.HasDuplicate(phrases) && !VoicePhrasePolicy.ConflictsWith(phrases, existing)) return;
+        SetStatus("Essa frase do Jey já está associada a outro comando. Use uma frase diferente.", false);
+        editor.Text = GetVoicePhrasesText(commandId);
+        editor.CaretIndex = editor.Text.Length;
+    }
+
     private string? FindVoiceCommand(string? transcript)
     {
         var normalizedTranscript = NormalizeVoicePhrase(transcript);
         if (normalizedTranscript.Length == 0) return null;
 
         string? matchedCommand = null;
-        foreach (var commandId in ShortcutIds)
+        foreach (var commandId in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
         {
             if (_settings.DisabledCommands.Contains(commandId) ||
                 !_settings.VoicePhrases.TryGetValue(commandId, out var phrases))
@@ -516,19 +556,342 @@ public partial class MainWindow : Window
     private static string NormalizeVoicePhrase(string? phrase)
     {
         if (string.IsNullOrWhiteSpace(phrase)) return string.Empty;
-        var decomposed = phrase.Normalize(NormalizationForm.FormD);
-        var normalized = new StringBuilder(decomposed.Length);
-        foreach (var character in decomposed)
+        return VoicePhrasePolicy.Normalize(phrase);
+    }
+
+    private string GetVoiceCommandName(string commandId)
+        => _commands.FirstOrDefault(command => command.Id == commandId)?.Name
+           ?? _settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == commandId)?.Name
+           ?? commandId;
+
+    private void RenderCustomShortcutSettings()
+    {
+        SettingsPanel.Children.Add(new TextBlock
         {
-            var category = CharUnicodeInfo.GetUnicodeCategory(character);
-            if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark)
-                continue;
-            if (char.IsLetterOrDigit(character))
-                normalized.Append(char.ToLowerInvariant(character));
-            else if (normalized.Length > 0 && normalized[^1] != ' ')
-                normalized.Append(' ');
+            Text = "Atalhos personalizados",
+            Foreground = Brushes.White,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(2, 18, 0, 5)
+        });
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Crie um comando para abrir um programa ou uma URL. Configure uma combinação de teclas, uma frase do Jey ou ambos.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+            FontSize = 12,
+            Margin = new Thickness(2, 0, 2, 10)
+        });
+
+        var nameBox = CreateSettingsTextBox("", 36);
+        nameBox.ToolTip = "Nome que aparecerá no comando e no histórico";
+        var targetBox = CreateSettingsTextBox("", 36);
+        targetBox.ToolTip = "Caminho do programa (ex.: notepad.exe) ou endereço http(s)";
+        var shortcutBox = CreateSettingsTextBox("", 36);
+        shortcutBox.ToolTip = "Opcional. Foque aqui e pressione uma combinação com Ctrl, Alt, Shift ou Win";
+        shortcutBox.PreviewKeyDown += CustomShortcutCapture_PreviewKeyDown;
+        var phrasesBox = CreateSettingsTextBox("", 64, multiline: true);
+        phrasesBox.ToolTip = "Opcional. Uma frase exclusiva do Jey por linha";
+
+        AddCustomField("Nome do comando", nameBox);
+        AddCustomField("Programa ou URL", targetBox);
+        AddCustomField("Atalho de teclado (opcional)", shortcutBox);
+        AddCustomField("Frases do Jey (opcional, uma por linha)", phrasesBox);
+
+        var createButton = new Button
+        {
+            Content = "Criar atalho personalizado",
+            FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
+            Padding = new Thickness(12, 7, 12, 7),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            Margin = new Thickness(0, 4, 0, 10),
+            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
+            BorderThickness = new Thickness(0)
+        };
+        createButton.Click += (_, _) =>
+        {
+            var name = nameBox.Text.Trim();
+            var target = targetBox.Text.Trim();
+            var shortcutText = shortcutBox.Text.Trim();
+            var phrases = ParseVoicePhrases(phrasesBox.Text);
+            if (name.Length == 0 || target.Length == 0)
+            {
+                SetStatus("Informe o nome e o programa ou URL do atalho.", false);
+                return;
+            }
+            if (!IsValidCustomTarget(target))
+            {
+                SetStatus("Informe um caminho de programa ou uma URL http/https válida.", false);
+                return;
+            }
+            if (shortcutText.Length == 0 && phrases.Count == 0)
+            {
+                SetStatus("Configure um atalho de teclado ou uma frase do Jey.", false);
+                return;
+            }
+            if (shortcutText.Length > 0 && !ShortcutParser.TryParse(shortcutText, out _, out var parseError))
+            {
+                SetStatus(parseError ?? "Atalho de teclado inválido.", false);
+                return;
+            }
+            if (shortcutText.Length > 0 && HasShortcutConflict(shortcutText, null))
+            {
+                SetStatus("Essa combinação de teclas já está associada a outro comando.", false);
+                return;
+            }
+            var existingPhrases = _settings.VoicePhrases.Values.SelectMany(items => items);
+            if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases, existingPhrases))
+            {
+                SetStatus("Uma dessas frases do Jey já está associada a outro comando. Escolha frases exclusivas.", false);
+                return;
+            }
+            var entry = new CustomShortcutEntry
+            {
+                Name = name,
+                Target = target,
+                Shortcut = shortcutText
+            };
+            _settings.CustomShortcuts.Add(entry);
+            _settings.VoicePhrases[entry.Id] = phrases;
+            try
+            {
+                _settingsStore.Save(_settings);
+                _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target,
+                    string.IsNullOrWhiteSpace(entry.Shortcut) ? "Comando personalizado" : entry.Shortcut)
+                {
+                    VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
+                });
+                BuildSettingsPanel();
+                SetStatus($"Atalho personalizado criado: {name}.", true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _settings.CustomShortcuts.Remove(entry);
+                _settings.VoicePhrases.Remove(entry.Id);
+                SetStatus($"Não foi possível salvar o atalho: {exception.Message}", false);
+            }
+        };
+        SettingsPanel.Children.Add(createButton);
+
+        foreach (var entry in _settings.CustomShortcuts)
+        {
+            var card = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(12),
+                Margin = new Thickness(0, 0, 0, 7)
+            };
+            var details = new StackPanel();
+            var nameEditor = CreateSettingsTextBox(entry.Name, 34);
+            var targetEditor = CreateSettingsTextBox(entry.Target, 34);
+            var shortcutEditor = CreateSettingsTextBox(entry.Shortcut, 34);
+            shortcutEditor.PreviewKeyDown += CustomShortcutCapture_PreviewKeyDown;
+            var phrasesEditor = CreateSettingsTextBox(GetVoicePhrasesText(entry.Id), 58, multiline: true);
+            phrasesEditor.Tag = entry.Id;
+            phrasesEditor.TextChanged += CustomVoicePhrasesEditor_TextChanged;
+            details.Children.Add(new TextBlock { Text = "Nome", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10 });
+            details.Children.Add(nameEditor);
+            details.Children.Add(new TextBlock { Text = "Programa ou URL", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(0, 5, 0, 2) });
+            details.Children.Add(targetEditor);
+            details.Children.Add(new TextBlock { Text = "Atalho (opcional)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(0, 5, 0, 2) });
+            details.Children.Add(shortcutEditor);
+            details.Children.Add(new TextBlock { Text = "Frases do Jey (uma por linha)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(0, 5, 0, 2) });
+            details.Children.Add(phrasesEditor);
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+            var saveButton = new Button
+            {
+                Content = "Salvar alterações",
+                Tag = entry,
+                Padding = new Thickness(9, 5, 9, 5),
+                Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+                Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
+                BorderThickness = new Thickness(0)
+            };
+            saveButton.Click += (_, _) =>
+            {
+                var name = nameEditor.Text.Trim();
+                var target = targetEditor.Text.Trim();
+                var shortcut = shortcutEditor.Text.Trim();
+                if (name.Length == 0 || target.Length == 0)
+                {
+                    SetStatus("Informe o nome e o programa ou URL do atalho.", false);
+                    return;
+                }
+                if (!IsValidCustomTarget(target))
+                {
+                    SetStatus("Informe um caminho de programa ou uma URL http/https válida.", false);
+                    return;
+                }
+                if (shortcut.Length > 0 && !ShortcutParser.TryParse(shortcut, out _, out var parseError))
+                {
+                    SetStatus(parseError ?? "Atalho de teclado inválido.", false);
+                    return;
+                }
+                if (shortcut.Length > 0 && HasShortcutConflict(shortcut, entry.Id))
+                {
+                    SetStatus("Essa combinação de teclas já está associada a outro comando.", false);
+                    return;
+                }
+                var phrases = ParseVoicePhrases(phrasesEditor.Text);
+                var existingPhrases = _settings.VoicePhrases.Where(pair => pair.Key != entry.Id).SelectMany(pair => pair.Value);
+                if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases, existingPhrases))
+                {
+                    SetStatus("Essa frase do Jey já está associada a outro comando. Escolha frases exclusivas.", false);
+                    return;
+                }
+                if (shortcut.Length == 0 && phrases.Count == 0)
+                {
+                    SetStatus("Configure um atalho de teclado ou uma frase do Jey.", false);
+                    return;
+                }
+                var previous = (Name: entry.Name, Target: entry.Target, Shortcut: entry.Shortcut);
+                var previousPhrases = _settings.VoicePhrases.TryGetValue(entry.Id, out var configuredPhrases)
+                    ? configuredPhrases.ToList()
+                    : [];
+                entry.Name = name;
+                entry.Target = target;
+                entry.Shortcut = shortcut;
+                _settings.VoicePhrases[entry.Id] = phrases;
+                try
+                {
+                    _settingsStore.Save(_settings);
+                    var oldRow = _commands.FirstOrDefault(command => command.Id == entry.Id);
+                    if (oldRow is not null) _commands.Remove(oldRow);
+                    _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target,
+                        string.IsNullOrWhiteSpace(entry.Shortcut) ? "Comando personalizado" : entry.Shortcut)
+                    {
+                        VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
+                    });
+                    BuildSettingsPanel();
+                    SetStatus($"Atalho atualizado: {entry.Name}.", true);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    entry.Name = previous.Name;
+                    entry.Target = previous.Target;
+                    entry.Shortcut = previous.Shortcut;
+                    _settings.VoicePhrases[entry.Id] = previousPhrases;
+                    SetStatus($"Não foi possível salvar o atalho: {exception.Message}", false);
+                }
+            };
+            var removeButton = new Button
+            {
+                Content = "Remover",
+                Tag = entry,
+                Padding = new Thickness(9, 5, 9, 5),
+                Margin = new Thickness(8, 0, 0, 0),
+                Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(0)
+            };
+            removeButton.Click += RemoveCustomShortcut_Click;
+            actions.Children.Add(saveButton);
+            actions.Children.Add(removeButton);
+            details.Children.Add(actions);
+            card.Child = details;
+            SettingsPanel.Children.Add(card);
         }
-        return normalized.ToString().Trim();
+
+        void AddCustomField(string label, TextBox editor)
+        {
+            SettingsPanel.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+                FontSize = 10,
+                Margin = new Thickness(2, 5, 2, 3)
+            });
+            SettingsPanel.Children.Add(editor);
+        }
+    }
+
+    private static TextBox CreateSettingsTextBox(string text, double height, bool multiline = false)
+        => new()
+        {
+            Text = text,
+            Height = height,
+            Padding = new Thickness(8, 6, 8, 6),
+            FontSize = 12,
+            Foreground = Brushes.White,
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 32)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(65, 70, 81)),
+            TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
+            AcceptsReturn = multiline,
+            VerticalScrollBarVisibility = multiline ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled
+        };
+
+    private static List<string> ParseVoicePhrases(string text)
+        => text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(phrase => !string.IsNullOrWhiteSpace(phrase)).ToList();
+
+    private static bool IsValidCustomTarget(string target)
+    {
+        if (!target.Contains("://", StringComparison.Ordinal)) return true;
+        return Uri.TryCreate(target, UriKind.Absolute, out var uri) &&
+               uri.Scheme is "http" or "https";
+    }
+
+    private bool HasShortcutConflict(string shortcutText, string? exceptId)
+    {
+        if (!ShortcutParser.TryParse(shortcutText, out var candidate, out _)) return false;
+        var values = _settings.Shortcuts.Where(pair => pair.Key != exceptId).Select(pair => pair.Value)
+            .Concat(_settings.CustomShortcuts.Where(entry => entry.Id != exceptId).Select(entry => entry.Shortcut));
+        return values.Any(value => ShortcutParser.TryParse(value, out var existing, out _) && existing == candidate);
+    }
+
+    private void CustomShortcutCapture_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox editor) return;
+        e.Handled = true;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if ((key is Key.Back or Key.Delete) && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            editor.Clear();
+            return;
+        }
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin) return;
+        var modifiers = ShortcutModifiers.None;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) modifiers |= ShortcutModifiers.Control;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)) modifiers |= ShortcutModifiers.Alt;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) modifiers |= ShortcutModifiers.Shift;
+        if (IsKeyDown(VkLWin) || IsKeyDown(VkRWin)) modifiers |= ShortcutModifiers.Windows;
+        if (modifiers == ShortcutModifiers.None)
+        {
+            SetStatus("Inclua Ctrl, Alt, Shift ou Win na combinação.", false);
+            return;
+        }
+        editor.Text = new ShortcutBinding(modifiers, KeyInterop.VirtualKeyFromKey(key)).ToString();
+    }
+
+    private void RemoveCustomShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: CustomShortcutEntry entry }) return;
+        var savedPhrases = _settings.VoicePhrases.TryGetValue(entry.Id, out var phrases) ? phrases : null;
+        _hotkeys?.Unregister(entry.Id);
+        _settings.CustomShortcuts.Remove(entry);
+        _settings.VoicePhrases.Remove(entry.Id);
+        var commandRow = _commands.FirstOrDefault(command => command.Id == entry.Id);
+        if (commandRow is not null) _commands.Remove(commandRow);
+        try
+        {
+            _settingsStore.Save(_settings);
+            BuildSettingsPanel();
+            SetStatus($"Atalho personalizado removido: {entry.Name}.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _settings.CustomShortcuts.Add(entry);
+            if (savedPhrases is not null) _settings.VoicePhrases[entry.Id] = savedPhrases;
+            _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target, entry.Shortcut)
+            {
+                VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
+            });
+            SetStatus($"Não foi possível remover o atalho: {exception.Message}", false);
+        }
     }
 
     private void RenderSnippetSettings()
@@ -811,6 +1174,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (HasShortcutConflict(new ShortcutBinding(modifiers, KeyInterop.VirtualKeyFromKey(key)).ToString(), row.Id))
+        {
+            row.Status = "Já atribuída a outro comando, inclusive personalizado.";
+            row.StatusBrush = new SolidColorBrush(Color.FromRgb(255, 145, 135));
+            RefreshShortcutStatuses();
+            return;
+        }
+
         string? error = null;
         if (row.Enabled && !_navigation.IsEditingShortcuts && (_hotkeys is null || !_hotkeys.TryRegister(row.Id, binding, out error)))
         {
@@ -878,6 +1249,10 @@ public partial class MainWindow : Window
                 case "draftRestore":
                     await RestoreDraftAsync(voiceCommand);
                     break;
+                default:
+                    var customShortcut = _settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id);
+                    if (customShortcut is not null) OpenCustomShortcut(customShortcut, voiceCommand);
+                    break;
             }
         }
         catch (Exception exception)
@@ -920,6 +1295,20 @@ public partial class MainWindow : Window
         _draftStack.Push(draft);
         RecordActionHistory(DraftStack.SavedCommandName, string.Empty, draft, voiceCommand);
         Notify("JMD", $"Rascunho salvo ({_draftStack.Count} na pilha).", true);
+    }
+
+    private void OpenCustomShortcut(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = shortcut.Target, UseShellExecute = true });
+            if (voiceCommand is not null)
+                RecordActionHistory($"Abrir {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
+        }
+        catch (Exception exception)
+        {
+            SetStatus($"Não foi possível abrir {shortcut.Name}: {exception.Message}", false);
+        }
     }
 
     private async Task RestoreDraftAsync(VoiceCommandInvocation? voiceCommand = null)
@@ -1142,7 +1531,7 @@ public partial class MainWindow : Window
         if (_historyStore is null) return;
         var historyCommandName = voiceCommand is null
             ? commandName
-            : $"Ativação por voz (Jey) - {commandName}";
+            : $"Ativação por voz (Jey) - {voiceCommand.CommandName}";
         _historyStore.Add(historyCommandName, beforeValue, afterValue,
             source: GetConversionSource(), isVoiceTriggered: voiceCommand is not null,
             voiceTranscript: voiceCommand?.Transcript, voiceAudioWav: voiceCommand?.AudioWav);
@@ -1285,7 +1674,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private sealed record VoiceCommandInvocation(string Transcript, byte[] AudioWav);
+    private sealed record VoiceCommandInvocation(string CommandName, string Transcript, byte[] AudioWav);
 
     private sealed record HistoryDisplayEntry(
         long Id,
@@ -1338,6 +1727,8 @@ public partial class MainWindow : Window
         else if (id == "saveSnippet") await CaptureSnippetAsync();
         else if (id == "draftSave") await SaveDraftAsync();
         else if (id == "draftRestore") await RestoreDraftAsync();
+        else if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
+            OpenCustomShortcut(customShortcut);
     }
 
     private void ManageButton_Click(object sender, RoutedEventArgs e)
@@ -1362,7 +1753,7 @@ public partial class MainWindow : Window
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Gerenciar atalhos";
         PageSubtitle.Text = "Configure os comandos e combinações globais";
-        foreach (var id in ShortcutIds)
+        foreach (var id in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
             _hotkeys?.Unregister(id);
         RefreshShortcutStatuses();
         Show();
@@ -1426,7 +1817,8 @@ public partial class MainWindow : Window
                 var voiceCommandId = FindVoiceCommand(transcript);
                 if (voiceCommandId is not null && transcript is not null)
                 {
-                    HandleHotkeyAsync(voiceCommandId, new VoiceCommandInvocation(transcript, audioWav));
+                    var commandName = GetVoiceCommandName(voiceCommandId);
+                    HandleHotkeyAsync(voiceCommandId, new VoiceCommandInvocation(commandName, transcript, audioWav));
                     return;
                 }
 
@@ -1770,6 +2162,8 @@ public partial class MainWindow : Window
             await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
         if (id == "snippets") await InsertSavedSnippetAsync();
         if (id == "saveSnippet") await CaptureSnippetAsync();
+        if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
+            OpenCustomShortcut(customShortcut);
     }
 
     private async Task TransformSelectionFromPaletteAsync()

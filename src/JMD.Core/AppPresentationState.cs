@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text;
+
 namespace JMD.Core;
 
 public enum AppPage
@@ -60,6 +63,43 @@ public static class ShortcutDefaults
             shortcuts["clipboard"] = ForCommand("clipboard");
             shortcuts["selection"] = ForCommand("selection");
         }
+    }
+}
+
+public static class VoicePhrasePolicy
+{
+    public static string Normalize(string? phrase)
+    {
+        if (string.IsNullOrWhiteSpace(phrase)) return string.Empty;
+        var decomposed = phrase.Normalize(NormalizationForm.FormD);
+        var result = new StringBuilder(decomposed.Length);
+        foreach (var character in decomposed)
+        {
+            var category = CharUnicodeInfo.GetUnicodeCategory(character);
+            if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark)
+                continue;
+            if (char.IsLetterOrDigit(character)) result.Append(char.ToLowerInvariant(character));
+            else if (result.Length > 0 && result[^1] != ' ') result.Append(' ');
+        }
+        return result.ToString().Trim();
+    }
+
+    public static bool HasDuplicate(IEnumerable<string> phrases)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var phrase in phrases)
+        {
+            var normalized = Normalize(phrase);
+            if (normalized.Length > 0 && !seen.Add(normalized)) return true;
+        }
+        return false;
+    }
+
+    public static bool ConflictsWith(IEnumerable<string> phrases, IEnumerable<string> existingPhrases)
+    {
+        var existing = existingPhrases.Select(Normalize).Where(value => value.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        return phrases.Select(Normalize).Any(value => value.Length > 0 && existing.Contains(value));
     }
 }
 

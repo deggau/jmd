@@ -105,6 +105,7 @@ internal sealed class UserSettings
     public bool KeepAwakeEnabled { get; set; }
     public bool VoiceWakeWordEnabled { get; set; } = true;
     public List<SnippetEntry> Snippets { get; set; } = [];
+    public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
 
     public Dictionary<string, string> Shortcuts { get; set; } = new(StringComparer.Ordinal)
     {
@@ -131,6 +132,14 @@ internal sealed class SnippetEntry
     public string? Html { get; set; }
 }
 
+internal sealed class CustomShortcutEntry
+{
+    public string Id { get; set; } = $"custom:{Guid.NewGuid():N}";
+    public string Name { get; set; } = string.Empty;
+    public string Target { get; set; } = string.Empty;
+    public string Shortcut { get; set; } = string.Empty;
+}
+
 internal sealed class SettingsStore
 {
     private readonly string _path = Path.Combine(
@@ -149,6 +158,7 @@ internal sealed class SettingsStore
                     loaded.VoicePhrases ??= new Dictionary<string, List<string>>(StringComparer.Ordinal);
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];
+                    loaded.CustomShortcuts ??= [];
                     ShortcutDefaults.MigratePreviousDefaults(loaded.Shortcuts);
                     return loaded;
                 }

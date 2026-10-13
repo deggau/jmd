@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using JMD.Core;
 using NAudio.Wave;
 using Vosk;
 
@@ -67,17 +68,10 @@ internal sealed class VoiceWakeWordService : IDisposable
         {
             var wakeWordResult = _recognizer.Result();
             if (!IsWakeWordResult(wakeWordResult)) return;
-            string? transcript;
-            try
-            {
-                var portugueseResult = TranscribePortugueseUtterance();
-                transcript = GetTranscriptAfterWakeWord(wakeWordResult, portugueseResult);
-            }
-            catch
-            {
-                transcript = null;
-            }
             var pcmAudio = _utteranceAudio.ToArray();
+            string? transcript;
+            try { transcript = TranscribeSpeechAfterWakeWord(wakeWordResult, pcmAudio); }
+            catch { transcript = null; }
             if (string.IsNullOrWhiteSpace(transcript)) BeginPostWakeCapture(pcmAudio);
             WakeWordRecognized?.Invoke(transcript, CreateWaveAudio(pcmAudio));
         }
@@ -86,9 +80,6 @@ internal sealed class VoiceWakeWordService : IDisposable
             _utteranceAudio.SetLength(0);
         }
     }
-
-    private string TranscribePortugueseUtterance()
-        => TranscribePortugueseAudio(_utteranceAudio.GetBuffer(), checked((int)_utteranceAudio.Length));
 
     private string TranscribePortugueseAudio(byte[] audio, int length)
     {
@@ -189,6 +180,21 @@ internal sealed class VoiceWakeWordService : IDisposable
         return string.IsNullOrWhiteSpace(transcript) ? null : transcript;
     }
 
+    private string? TranscribeSpeechAfterWakeWord(string wakeWordJson, byte[] pcmAudio)
+    {
+        using var wakeWord = JsonDocument.Parse(wakeWordJson);
+        if (!TryGetWakeWordEnd(wakeWord.RootElement, out var wakeWordEnd)) return null;
+        var speechAudio = VoiceAudioSegmenter.AfterBoundary(pcmAudio, wakeWordEnd);
+        if (speechAudio.Length == 0) return null;
+        var portugueseResult = TranscribePortugueseAudio(speechAudio, speechAudio.Length);
+        var transcript = GetPortugueseText(portugueseResult);
+        if (string.IsNullOrWhiteSpace(transcript)) return null;
+        var words = transcript.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length > 0 && IsActivationWord(words[0]))
+            transcript = string.Join(' ', words.Skip(1));
+        return string.IsNullOrWhiteSpace(transcript) ? null : transcript;
+    }
+
     private static bool HasRecognizedText(string resultJson)
     {
         using var result = JsonDocument.Parse(resultJson);
@@ -201,40 +207,6 @@ internal sealed class VoiceWakeWordService : IDisposable
         using var result = JsonDocument.Parse(resultJson);
         return result.RootElement.TryGetProperty("partial", out var text) &&
             !string.IsNullOrWhiteSpace(text.GetString());
-    }
-
-    private static string? GetTranscriptAfterWakeWord(string wakeWordJson, string portugueseJson)
-    {
-        using var wakeWord = JsonDocument.Parse(wakeWordJson);
-        if (!TryGetWakeWordEnd(wakeWord.RootElement, out var wakeWordEnd)) return null;
-        using var portuguese = JsonDocument.Parse(portugueseJson);
-        if (!portuguese.RootElement.TryGetProperty("result", out var recognizedWords) ||
-            recognizedWords.ValueKind != JsonValueKind.Array)
-            return null;
-
-        var transcriptWords = new List<string>();
-        foreach (var word in recognizedWords.EnumerateArray())
-        {
-            if (!word.TryGetProperty("start", out var startElement) || !word.TryGetProperty("end", out var endElement) ||
-                !word.TryGetProperty("word", out var textElement))
-                continue;
-            var start = startElement.GetDouble();
-            var end = endElement.GetDouble();
-            var text = textElement.GetString();
-            if (string.IsNullOrWhiteSpace(text) || end < wakeWordEnd - 0.35) continue;
-
-            if (IsActivationWord(text) && start < wakeWordEnd + 0.05) continue;
-            transcriptWords.Add(text);
-        }
-        var transcript = string.Join(' ', transcriptWords);
-        if (!string.IsNullOrWhiteSpace(transcript)) return transcript;
-
-        if (!portuguese.RootElement.TryGetProperty("text", out var fullText)) return null;
-        var fallbackWords = fullText.GetString()?.Split(' ', StringSplitOptions.RemoveEmptyEntries) ?? [];
-        if (fallbackWords.Length > 0 && IsActivationWord(fallbackWords[0]))
-            fallbackWords = fallbackWords.Skip(1).ToArray();
-        var fallbackTranscript = string.Join(' ', fallbackWords);
-        return string.IsNullOrWhiteSpace(fallbackTranscript) ? null : fallbackTranscript;
     }
 
     private static bool IsActivationWord(string word)

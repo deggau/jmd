@@ -101,6 +101,21 @@ public sealed class AppPresentationStateTests
         Assert.Equal(AppPage.History, navigation.CurrentPage);
     }
 
+    [Fact]
+    public void Voice_phrase_policy_detects_duplicate_phrases_across_commands()
+    {
+        Assert.True(VoicePhrasePolicy.ConflictsWith(["formatar json"], ["Formatar, JSON!"]));
+        Assert.True(VoicePhrasePolicy.ConflictsWith(["acao"], ["ação"]));
+        Assert.False(VoicePhrasePolicy.ConflictsWith(["compactar"], ["formatar"]));
+    }
+
+    [Fact]
+    public void Voice_phrase_policy_detects_duplicates_inside_one_command()
+    {
+        Assert.True(VoicePhrasePolicy.HasDuplicate(["formatar JSON", "Formatar, JSON!"]));
+        Assert.False(VoicePhrasePolicy.HasDuplicate(["formatar", "compactar"]));
+    }
+
     [Theory]
     [InlineData("0.1.2", "v0.1.3", true)]
     [InlineData("0.1.2+build.4", "0.1.2", false)]
