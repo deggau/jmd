@@ -2,7 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.15"
+  !define APP_VERSION "0.1.16"
 !endif
 !ifndef PUBLISH_DIR
   !error "PUBLISH_DIR must point to the published application directory"
@@ -30,9 +30,6 @@ ShowInstDetails show
 ShowUninstDetails show
 
 !define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
-!define MUI_FINISHPAGE_RUN_PARAMETERS "--settings"
-!define MUI_FINISHPAGE_RUN_TEXT "Iniciar o JMD e abrir as configurações"
 !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
 !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
 !insertmacro MUI_PAGE_WELCOME
@@ -66,6 +63,7 @@ Section "Install" SEC_INSTALL
   WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '$"$INSTDIR\Uninstall.exe$" /S'
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
+  ExecShell "open" "$INSTDIR\${APP_EXE}" "--settings"
 SectionEnd
 
 Section "Uninstall" un.Uninstall

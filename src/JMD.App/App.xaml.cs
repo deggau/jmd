@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using JMD.Core;
@@ -20,6 +21,7 @@ public partial class App : System.Windows.Application
         _instanceMutex = new Mutex(true, @"Local\JMD.SingleInstance", out var isFirstInstance);
         if (!isFirstInstance)
         {
+            ShowExistingWindow();
             _instanceMutex.Dispose();
             _instanceMutex = null;
             Shutdown();
@@ -55,7 +57,28 @@ public partial class App : System.Windows.Application
             _mainWindow.Dispatcher.BeginInvoke(_mainWindow.ShowHistory);
         if (openSettingsOnStartup)
             _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowShortcutSettings));
+        else
+            _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowPalette));
     }
+
+    private static void ShowExistingWindow()
+    {
+        var window = FindWindow(null, "JMD");
+        if (window == IntPtr.Zero) return;
+        ShowWindow(window, 9);
+        SetForegroundWindow(window);
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string? className, string windowName);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr window, int command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr window);
 
     protected override void OnExit(ExitEventArgs e)
     {
@@ -80,6 +103,7 @@ internal sealed class UserSettings
     public string? PreferredDelimiter { get; set; }
     public int HistoryRetentionDays { get; set; } = 15;
     public bool KeepAwakeEnabled { get; set; }
+    public bool VoiceWakeWordEnabled { get; set; } = true;
     public List<SnippetEntry> Snippets { get; set; } = [];
 
     public Dictionary<string, string> Shortcuts { get; set; } = new(StringComparer.Ordinal)

@@ -46,6 +46,9 @@ public partial class MainWindow : Window
     private readonly KeyboardAutomation _keyboard = new();
     private readonly FocusedTextAutomation _focusedText;
     private readonly WindowsDisplayAwakeService _displayAwake = new();
+    private VoiceWakeWordService? _voiceWakeWord;
+    private CheckBox? _voiceWakeWordToggle;
+    private bool _updatingVoiceWakeWordToggle;
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
     private readonly AppNavigationState _navigation = new();
@@ -68,6 +71,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        FooterVersionText.Text = $"v{GetInstalledVersion()}";
         _settings = _settingsStore.Load();
         _updatingKeepAwakeToggle = true;
         KeepAwakeToggle.IsChecked = _settings.KeepAwakeEnabled;
@@ -101,6 +105,19 @@ public partial class MainWindow : Window
         _commandView = CollectionViewSource.GetDefaultView(_commands);
         _commandView.Filter = item => item is CommandRow command && command.Visible;
         BuildSettingsPanel();
+        if (_settings.VoiceWakeWordEnabled)
+        {
+            try { StartVoiceWakeWord(); }
+            catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
+            {
+                _settings.VoiceWakeWordEnabled = false;
+                StopVoiceWakeWord();
+                UpdateVoiceWakeWordToggle(false);
+                try { _settingsStore.Save(_settings); }
+                catch (Exception saveException) when (saveException is IOException or UnauthorizedAccessException) { }
+                SetStatus($"Ativação por voz indisponível: {exception.Message}", false);
+            }
+        }
         HistoryRetentionBox.Text = _settings.HistoryRetentionDays.ToString(CultureInfo.InvariantCulture);
         RefreshHistory();
         SourceInitialized += MainWindow_SourceInitialized;
@@ -131,6 +148,10 @@ public partial class MainWindow : Window
             "Busca pelo título e cola o texto escolhido no aplicativo anterior.", ShortcutDefaults.ForCommand("snippets")));
         _commands.Add(new CommandRow("saveSnippet", "Salvar seleção como texto",
             "Copia a seleção e pede um título para salvá-la.", ShortcutDefaults.ForCommand("saveSnippet")));
+        _commands.Add(new CommandRow("draftSave", "Salvar rascunho",
+            "Salva a seleção ou a linha do cursor e limpa o campo.", ShortcutDefaults.ForCommand("draftSave")));
+        _commands.Add(new CommandRow("draftRestore", "Usar rascunho",
+            "Guarda o conteúdo atual e recupera o último rascunho.", ShortcutDefaults.ForCommand("draftRestore")));
     }
 
     private void RegisterConfiguredShortcuts()
@@ -165,6 +186,30 @@ public partial class MainWindow : Window
         SettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
+        _voiceWakeWordToggle = new CheckBox
+        {
+            Content = "Ativar Jey",
+            IsChecked = _settings.VoiceWakeWordEnabled,
+            Foreground = Brushes.White,
+            Margin = new Thickness(2, 0, 2, 14)
+        };
+        _voiceWakeWordToggle.Checked += (_, _) =>
+        {
+            if (!_updatingVoiceWakeWordToggle) SetVoiceWakeWordEnabled(true);
+        };
+        _voiceWakeWordToggle.Unchecked += (_, _) =>
+        {
+            if (!_updatingVoiceWakeWordToggle) SetVoiceWakeWordEnabled(false);
+        };
+        SettingsPanel.Children.Add(_voiceWakeWordToggle);
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Quando ativado, o JMD usa o reconhecimento local do Windows e o microfone padrão para ouvir “Jey”. Desative para interromper o acesso ao áudio.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+            FontSize = 12,
+            Margin = new Thickness(2, 0, 2, 14)
+        });
         SettingsPanel.Children.Add(new TextBlock
         {
             Text = "Combinações globais",
@@ -1116,6 +1161,8 @@ public partial class MainWindow : Window
         }
         else if (id == "snippets") await InsertSavedSnippetAsync();
         else if (id == "saveSnippet") await CaptureSnippetAsync();
+        else if (id == "draftSave") await SaveDraftAsync();
+        else if (id == "draftRestore") await RestoreDraftAsync();
     }
 
     private void ManageButton_Click(object sender, RoutedEventArgs e)
@@ -1146,6 +1193,51 @@ public partial class MainWindow : Window
         Show();
         WindowState = WindowState.Normal;
         Activate();
+    }
+
+    private void SetVoiceWakeWordEnabled(bool enabled)
+    {
+        try
+        {
+            if (enabled) StartVoiceWakeWord();
+            else StopVoiceWakeWord();
+            _settings.VoiceWakeWordEnabled = enabled;
+            _settingsStore.Save(_settings);
+            SetStatus(enabled ? "Ativação por voz local ativada." : "Ativação por voz desativada; o JMD não está ouvindo o microfone.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
+        {
+            _settings.VoiceWakeWordEnabled = false;
+            StopVoiceWakeWord();
+            UpdateVoiceWakeWordToggle(false);
+            SetStatus($"Não foi possível salvar ou iniciar a ativação por voz local: {exception.Message}", false);
+        }
+    }
+
+    private void StartVoiceWakeWord()
+    {
+        StopVoiceWakeWord();
+        var service = new VoiceWakeWordService();
+        _voiceWakeWord = service;
+        service.WakeWordRecognized += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
+                ShowShortcutSettings();
+        }));
+        service.Start();
+    }
+
+    private void StopVoiceWakeWord()
+    {
+        _voiceWakeWord?.Dispose();
+        _voiceWakeWord = null;
+    }
+
+    private void UpdateVoiceWakeWordToggle(bool enabled)
+    {
+        _updatingVoiceWakeWordToggle = true;
+        if (_voiceWakeWordToggle is not null) _voiceWakeWordToggle.IsChecked = enabled;
+        _updatingVoiceWakeWordToggle = false;
     }
 
     private void HistoryButton_Click(object sender, RoutedEventArgs e)
@@ -1216,13 +1308,16 @@ public partial class MainWindow : Window
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Sobre";
         PageSubtitle.Text = "Informações e atualizações do JMD";
-        var version = Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-                      ?? Assembly.GetEntryAssembly()?.GetName().Version?.ToString()
-                      ?? "desconhecida";
+        var version = GetInstalledVersion();
         AboutVersionText.Text = $"Versão instalada: {version}";
         UpdateStatusText.Text = "Verifique se há uma versão mais recente no GitHub.";
         InstallUpdateButton.Visibility = Visibility.Collapsed;
     }
+
+    private static string GetInstalledVersion()
+        => Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+           ?? Assembly.GetEntryAssembly()?.GetName().Version?.ToString()
+           ?? "desconhecida";
 
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1484,6 +1579,7 @@ public partial class MainWindow : Window
 
     public void DisposeServices()
     {
+        StopVoiceWakeWord();
         _hotkeys?.Dispose();
         _displayAwake.Dispose();
     }
