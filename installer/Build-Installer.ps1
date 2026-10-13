@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$')]
-    [string] $Version = '0.1.18',
+    [string] $Version = '0.1.19',
     [ValidateSet('win-x64')]
     [string] $Runtime = 'win-x64',
     [string] $Configuration = 'Release',
@@ -48,6 +48,26 @@ finally {
 }
 if (-not (Test-Path (Join-Path $publishDir "$voiceModel\am\final.mdl"))) {
     throw "O modelo de voz não foi extraído corretamente: $voiceModel"
+}
+
+$portugueseModel = 'vosk-model-small-pt-0.3'
+$portugueseModelArchive = Join-Path $env:TEMP "$portugueseModel.zip"
+$portugueseModelUrl = "https://alphacephei.com/vosk/models/$portugueseModel.zip"
+$portugueseModelSha256 = '6e1ce909032e1afa7a88e68a3d628ecafff302bdf195befab308826c395e93b7'
+Write-Host "Baixando modelo de transcrição em português: $portugueseModel"
+Invoke-WebRequest -Uri $portugueseModelUrl -OutFile $portugueseModelArchive
+try {
+    $downloadedHash = (Get-FileHash -Path $portugueseModelArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($downloadedHash -ne $portugueseModelSha256) {
+        throw "Checksum inválido para o modelo Vosk $portugueseModel."
+    }
+    Expand-Archive -Path $portugueseModelArchive -DestinationPath $publishDir -Force
+}
+finally {
+    Remove-Item $portugueseModelArchive -Force -ErrorAction SilentlyContinue
+}
+if (-not (Test-Path (Join-Path $publishDir "$portugueseModel\final.mdl"))) {
+    throw "O modelo de português não foi extraído corretamente: $portugueseModel"
 }
 
 & $Makensis '/INPUTCHARSET' 'UTF8' "/DAPP_VERSION=$Version" "/DAPP_RUNTIME=$Runtime" "/DPUBLISH_DIR=$publishDir" "/DOUTPUT_DIR=$outputDir" $installerScript

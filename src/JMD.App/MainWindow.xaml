@@ -59,7 +59,7 @@
           <CheckBox x:Name="VoiceWakeWordToggle" Content="Ativar Jey"
                     Style="{StaticResource CompactToggleCheckBoxStyle}"
                     Checked="VoiceWakeWordToggle_Changed" Unchecked="VoiceWakeWordToggle_Changed"
-                    ToolTip="Ativa o reconhecimento local pelo microfone. O modelo do Vosk é incluído no instalador." />
+                    ToolTip="Ativa o reconhecimento local pelo microfone. Os modelos do Vosk são incluídos no instalador." />
         </StackPanel>
       </Grid>
       <ListBox x:Name="CommandsList" Grid.Row="2" Background="Transparent" BorderThickness="0"
