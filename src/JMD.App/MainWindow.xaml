@@ -123,7 +123,7 @@
             <Grid Grid.Row="3">
               <TextBlock x:Name="HistoryEmptyText" Text="Nenhuma conversão encontrada." Foreground="#FF969BA7"
                          HorizontalAlignment="Center" VerticalAlignment="Center" />
-              <ScrollViewer VerticalScrollBarVisibility="Auto">
+              <ScrollViewer x:Name="HistoryScrollViewer" VerticalScrollBarVisibility="Auto">
                 <ItemsControl x:Name="HistoryItemsControl">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
@@ -161,7 +161,30 @@
                                 </Style.Triggers>
                               </Style>
                             </StackPanel.Style>
-                            <TextBlock Text="Transcrição após Jey" Foreground="#FF969BA7" FontSize="11" />
+                            <DockPanel LastChildFill="False">
+                              <TextBlock Text="Transcrição após Jey" Foreground="#FF969BA7" FontSize="11"
+                                         VerticalAlignment="Center" />
+                              <Button Tag="{Binding Id}" Click="PlayHistoryAudio_Click" ToolTip="Reproduzir áudio gravado"
+                                      Padding="6,3" Margin="8,0,0,0" Background="#FF30343E" Foreground="White"
+                                      BorderThickness="0" DockPanel.Dock="Right">
+                                <Button.Style>
+                                  <Style TargetType="Button">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                      <DataTrigger Binding="{Binding HasVoiceAudio}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                      </DataTrigger>
+                                    </Style.Triggers>
+                                  </Style>
+                                </Button.Style>
+                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                              </Button>
+                              <Button Tag="{Binding VoiceTranscript}" Click="CopyHistoryValue_Click" ToolTip="Copiar transcrição"
+                                      Padding="6,3" Margin="8,0,0,0" Background="#FF30343E" Foreground="White"
+                                      BorderThickness="0" DockPanel.Dock="Right">
+                                <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                              </Button>
+                            </DockPanel>
                             <TextBlock Text="{Binding VoiceTranscript, TargetNullValue=Transcrição indisponível}"
                                        Foreground="White" TextWrapping="Wrap" Margin="0,3,0,0" />
                           </StackPanel>
@@ -198,6 +221,9 @@
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
                                   <DataTrigger Binding="{Binding CommandName}" Value="Restaurar rascunho">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
+                                  <DataTrigger Binding="{Binding IsVoiceTriggered}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
                                 </Style.Triggers>

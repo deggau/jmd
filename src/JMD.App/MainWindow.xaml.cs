@@ -47,6 +47,8 @@ public partial class MainWindow : Window
     private readonly FocusedTextAutomation _focusedText;
     private readonly WindowsDisplayAwakeService _displayAwake = new();
     private VoiceWakeWordService? _voiceWakeWord;
+    private MediaPlayer? _historyAudioPlayer;
+    private string? _historyAudioPlaybackPath;
     private bool _updatingVoiceWakeWordToggle;
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
@@ -1036,15 +1038,18 @@ public partial class MainWindow : Window
         {
             var entries = _historyStore.Search(HistorySearchBox?.Text ?? string.Empty)
                 .Select(entry => new HistoryDisplayEntry(
+                    entry.Id,
                     entry.CommandName,
                     entry.BeforeValue,
                     entry.AfterValue,
                     entry.OccurredAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.CurrentCulture),
                     FormatSourceDisplay(entry.ApplicationName, entry.WindowTitle),
                     entry.IsVoiceTriggered,
-                    entry.VoiceTranscript ?? "Transcrição indisponível"))
+                    entry.VoiceTranscript ?? "Transcrição indisponível",
+                    entry.HasVoiceAudio))
                 .ToList();
             HistoryItemsControl.ItemsSource = entries;
+            HistoryScrollViewer.ScrollToTop();
             HistoryEmptyText.Text = entries.Count == 0
                 ? string.IsNullOrWhiteSpace(HistorySearchBox?.Text) ? "Nenhuma conversão registrada." : "Nenhum resultado para essa busca."
                 : string.Empty;
@@ -1078,6 +1083,66 @@ public partial class MainWindow : Window
         }
     }
 
+    private void PlayHistoryAudio_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: long id }) return;
+        try
+        {
+            var audio = _historyStore?.GetVoiceAudio(id);
+            if (audio is null)
+            {
+                SetStatus("O áudio deste registro não está disponível.", false);
+                return;
+            }
+
+            StopHistoryAudioPlayback();
+            var path = Path.Combine(Path.GetTempPath(), $"JMD-history-{Guid.NewGuid():N}.wav");
+            File.WriteAllBytes(path, audio);
+            var player = new MediaPlayer();
+            _historyAudioPlayer = player;
+            _historyAudioPlaybackPath = path;
+            player.MediaOpened += (_, _) =>
+            {
+                if (ReferenceEquals(_historyAudioPlayer, player)) player.Play();
+            };
+            player.MediaEnded += (_, _) =>
+            {
+                if (ReferenceEquals(_historyAudioPlayer, player)) StopHistoryAudioPlayback();
+            };
+            player.MediaFailed += (_, args) =>
+            {
+                if (!ReferenceEquals(_historyAudioPlayer, player)) return;
+                SetStatus($"Não foi possível reproduzir o áudio: {args.ErrorException.Message}", false);
+                StopHistoryAudioPlayback();
+            };
+            player.Open(new Uri(path, UriKind.Absolute));
+            SetStatus("Reproduzindo áudio do comando de voz.", true);
+        }
+        catch (Exception exception)
+        {
+            StopHistoryAudioPlayback();
+            SetStatus($"Não foi possível reproduzir o áudio: {exception.Message}", false);
+        }
+    }
+
+    private void StopHistoryAudioPlayback()
+    {
+        var player = _historyAudioPlayer;
+        _historyAudioPlayer = null;
+        if (player is not null)
+        {
+            player.Stop();
+            player.Close();
+        }
+
+        var path = _historyAudioPlaybackPath;
+        _historyAudioPlaybackPath = null;
+        if (path is null) return;
+        try { File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     private void SaveHistoryRetention_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(HistoryRetentionBox.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var days) || days is < 1 or > 3650)
@@ -1100,13 +1165,15 @@ public partial class MainWindow : Window
     }
 
     private sealed record HistoryDisplayEntry(
+        long Id,
         string CommandName,
         string BeforeValue,
         string AfterValue,
         string DisplayDate,
         string SourceDisplay,
         bool IsVoiceTriggered,
-        string VoiceTranscript);
+        string VoiceTranscript,
+        bool HasVoiceAudio);
 
     private static string FormatSourceDisplay(string? applicationName, string? windowTitle)
     {
@@ -1226,21 +1293,43 @@ public partial class MainWindow : Window
         StopVoiceWakeWord();
         var service = new VoiceWakeWordService();
         _voiceWakeWord = service;
-        service.WakeWordRecognized += transcript => Dispatcher.BeginInvoke(new Action(() =>
+        service.WakeWordRecognized += (transcript, audioWav) => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
             {
                 try
                 {
-                    _historyStore?.Add("Ativação por voz (Jey)", string.Empty, transcript ?? string.Empty,
-                        source: GetConversionSource(), isVoiceTriggered: true, voiceTranscript: transcript);
+                    var historyId = _historyStore?.Add("Ativação por voz (Jey)", string.Empty, transcript ?? string.Empty,
+                        source: GetConversionSource(), isVoiceTriggered: true, voiceTranscript: transcript,
+                        voiceAudioWav: audioWav);
                     RefreshHistory();
+                    Action<string?, byte[]>? followupHandler = null;
+                    followupHandler = (followupTranscript, completeAudio) => Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        service.FollowupSpeechCaptured -= followupHandler;
+                        if (!_settings.VoiceWakeWordEnabled || !ReferenceEquals(_voiceWakeWord, service) || historyId is null) return;
+                        try
+                        {
+                            _historyStore?.UpdateVoiceCapture(historyId.Value, followupTranscript, completeAudio);
+                            RefreshHistory();
+                        }
+                        catch (Exception exception)
+                        {
+                            SetStatus($"Jey foi reconhecido, mas não foi possível atualizar a gravação: {exception.Message}", false);
+                        }
+                    }));
+                    service.FollowupSpeechCaptured += followupHandler;
                 }
                 catch (Exception exception)
                 {
                     SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
                 }
-                ShowShortcutSettings();
+                if (IsVisible)
+                {
+                    if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+                    Activate();
+                }
+                else ShowShortcutSettings();
             }
         }));
         service.Start();
@@ -1333,13 +1422,16 @@ public partial class MainWindow : Window
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Sobre";
         PageSubtitle.Text = "Informações e atualizações do JMD";
-        var version = GetInstalledVersion();
+        var version = GetInformationalVersion();
         AboutVersionText.Text = $"Versão instalada: {version}";
         UpdateStatusText.Text = "Verifique se há uma versão mais recente no GitHub.";
         InstallUpdateButton.Visibility = Visibility.Collapsed;
     }
 
     private static string GetInstalledVersion()
+        => GetInformationalVersion().Split('+')[0];
+
+    private static string GetInformationalVersion()
         => Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
            ?? Assembly.GetEntryAssembly()?.GetName().Version?.ToString()
            ?? "desconhecida";
@@ -1606,6 +1698,7 @@ public partial class MainWindow : Window
     public void DisposeServices()
     {
         StopVoiceWakeWord();
+        StopHistoryAudioPlayback();
         _hotkeys?.Dispose();
         _displayAwake.Dispose();
     }
