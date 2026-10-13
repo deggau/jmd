@@ -12,7 +12,7 @@ internal sealed class VoiceWakeWordService : IDisposable
     private readonly WaveInEvent _microphone;
     private bool _started;
 
-    public event Action? WakeWordRecognized;
+    public event Action<string?>? WakeWordRecognized;
 
     public VoiceWakeWordService()
     {
@@ -22,7 +22,7 @@ internal sealed class VoiceWakeWordService : IDisposable
 
         Vosk.Vosk.SetLogLevel(-1);
         _model = new Model(modelPath);
-        _recognizer = new VoskRecognizer(_model, 16000.0f, "[\"jay\"]");
+        _recognizer = new VoskRecognizer(_model, 16000.0f);
         _microphone = new WaveInEvent
         {
             WaveFormat = new WaveFormat(16000, 16, 1),
@@ -41,9 +41,13 @@ internal sealed class VoiceWakeWordService : IDisposable
     {
         if (!_recognizer.AcceptWaveform(eventArgs.Buffer, eventArgs.BytesRecorded)) return;
         using var result = JsonDocument.Parse(_recognizer.Result());
-        if (result.RootElement.TryGetProperty("text", out var text) &&
-            string.Equals(text.GetString(), "jay", StringComparison.OrdinalIgnoreCase))
-            WakeWordRecognized?.Invoke();
+        if (!result.RootElement.TryGetProperty("text", out var textElement)) return;
+        var text = textElement.GetString()?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return;
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (!string.Equals(words[0], "jay", StringComparison.OrdinalIgnoreCase)) return;
+        var transcript = words.Length > 1 ? string.Join(' ', words.Skip(1)) : null;
+        WakeWordRecognized?.Invoke(transcript);
     }
 
     public void Dispose()

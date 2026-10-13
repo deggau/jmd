@@ -47,7 +47,6 @@ public partial class MainWindow : Window
     private readonly FocusedTextAutomation _focusedText;
     private readonly WindowsDisplayAwakeService _displayAwake = new();
     private VoiceWakeWordService? _voiceWakeWord;
-    private CheckBox? _voiceWakeWordToggle;
     private bool _updatingVoiceWakeWordToggle;
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
@@ -76,6 +75,9 @@ public partial class MainWindow : Window
         _updatingKeepAwakeToggle = true;
         KeepAwakeToggle.IsChecked = _settings.KeepAwakeEnabled;
         _updatingKeepAwakeToggle = false;
+        _updatingVoiceWakeWordToggle = true;
+        VoiceWakeWordToggle.IsChecked = _settings.VoiceWakeWordEnabled;
+        _updatingVoiceWakeWordToggle = false;
         if (_settings.KeepAwakeEnabled && !_displayAwake.SetEnabled(true))
             SetStatus("A preferência para manter a tela ativa foi carregada, mas o Windows não aceitou a solicitação.", false);
         if (_settings.PreferredDelimiter is not (null or "," or "|" or ";" or "\r\n" or "\n" or "\r"))
@@ -186,30 +188,6 @@ public partial class MainWindow : Window
         SettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
-        _voiceWakeWordToggle = new CheckBox
-        {
-            Content = "Ativar Jey",
-            IsChecked = _settings.VoiceWakeWordEnabled,
-            Foreground = Brushes.White,
-            Margin = new Thickness(2, 0, 2, 14)
-        };
-        _voiceWakeWordToggle.Checked += (_, _) =>
-        {
-            if (!_updatingVoiceWakeWordToggle) SetVoiceWakeWordEnabled(true);
-        };
-        _voiceWakeWordToggle.Unchecked += (_, _) =>
-        {
-            if (!_updatingVoiceWakeWordToggle) SetVoiceWakeWordEnabled(false);
-        };
-        SettingsPanel.Children.Add(_voiceWakeWordToggle);
-        SettingsPanel.Children.Add(new TextBlock
-        {
-            Text = "Quando ativado, o JMD usa o reconhecimento local do Windows e o microfone padrão para ouvir “Jey”. Desative para interromper o acesso ao áudio.",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
-            FontSize = 12,
-            Margin = new Thickness(2, 0, 2, 14)
-        });
         SettingsPanel.Children.Add(new TextBlock
         {
             Text = "Combinações globais",
@@ -1062,7 +1040,9 @@ public partial class MainWindow : Window
                     entry.BeforeValue,
                     entry.AfterValue,
                     entry.OccurredAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.CurrentCulture),
-                    FormatSourceDisplay(entry.ApplicationName, entry.WindowTitle)))
+                    FormatSourceDisplay(entry.ApplicationName, entry.WindowTitle),
+                    entry.IsVoiceTriggered,
+                    entry.VoiceTranscript ?? "Transcrição indisponível"))
                 .ToList();
             HistoryItemsControl.ItemsSource = entries;
             HistoryEmptyText.Text = entries.Count == 0
@@ -1124,7 +1104,9 @@ public partial class MainWindow : Window
         string BeforeValue,
         string AfterValue,
         string DisplayDate,
-        string SourceDisplay);
+        string SourceDisplay,
+        bool IsVoiceTriggered,
+        string VoiceTranscript);
 
     private static string FormatSourceDisplay(string? applicationName, string? windowTitle)
     {
@@ -1244,10 +1226,22 @@ public partial class MainWindow : Window
         StopVoiceWakeWord();
         var service = new VoiceWakeWordService();
         _voiceWakeWord = service;
-        service.WakeWordRecognized += () => Dispatcher.BeginInvoke(new Action(() =>
+        service.WakeWordRecognized += transcript => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
+            {
+                try
+                {
+                    _historyStore?.Add("Ativação por voz (Jey)", string.Empty, transcript ?? string.Empty,
+                        source: GetConversionSource(), isVoiceTriggered: true, voiceTranscript: transcript);
+                    RefreshHistory();
+                }
+                catch (Exception exception)
+                {
+                    SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
+                }
                 ShowShortcutSettings();
+            }
         }));
         service.Start();
     }
@@ -1261,7 +1255,7 @@ public partial class MainWindow : Window
     private void UpdateVoiceWakeWordToggle(bool enabled)
     {
         _updatingVoiceWakeWordToggle = true;
-        if (_voiceWakeWordToggle is not null) _voiceWakeWordToggle.IsChecked = enabled;
+        VoiceWakeWordToggle.IsChecked = enabled;
         _updatingVoiceWakeWordToggle = false;
     }
 
@@ -1321,6 +1315,12 @@ public partial class MainWindow : Window
         SetStatus(enabled
             ? "Solicitado ao Windows que mantenha a tela e o sistema ativos enquanto o JMD estiver aberto."
             : "A solicitação para manter a tela ativa foi removida.", true);
+    }
+
+    private void VoiceWakeWordToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updatingVoiceWakeWordToggle || sender is not CheckBox toggle) return;
+        SetVoiceWakeWordEnabled(toggle.IsChecked == true);
     }
 
     private void AboutMenuItem_Click(object sender, RoutedEventArgs e)

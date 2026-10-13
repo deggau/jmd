@@ -9,7 +9,9 @@ public sealed record ConversionHistoryEntry(
     string BeforeValue,
     string AfterValue,
     string? ApplicationName = null,
-    string? WindowTitle = null);
+    string? WindowTitle = null,
+    bool IsVoiceTriggered = false,
+    string? VoiceTranscript = null);
 
 public sealed record ConversionSource(string? ApplicationName, string? WindowTitle);
 
@@ -41,6 +43,8 @@ public sealed class ConversionHistoryStore
         command.ExecuteNonQuery();
         EnsureColumn(connection, "ApplicationName");
         EnsureColumn(connection, "WindowTitle");
+        EnsureColumn(connection, "IsVoiceTriggered", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "VoiceTranscript");
     }
 
     public void Add(
@@ -48,13 +52,15 @@ public sealed class ConversionHistoryStore
         string beforeValue,
         string afterValue,
         DateTimeOffset? occurredAtUtc = null,
-        ConversionSource? source = null)
+        ConversionSource? source = null,
+        bool isVoiceTriggered = false,
+        string? voiceTranscript = null)
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle)
-            VALUES ($occurredAt, $commandName, $beforeValue, $afterValue, $applicationName, $windowTitle);
+            INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript)
+            VALUES ($occurredAt, $commandName, $beforeValue, $afterValue, $applicationName, $windowTitle, $isVoiceTriggered, $voiceTranscript);
             """;
         command.Parameters.AddWithValue("$occurredAt", (occurredAtUtc ?? _utcNow()).ToUniversalTime().ToString("O"));
         command.Parameters.AddWithValue("$commandName", commandName);
@@ -62,6 +68,8 @@ public sealed class ConversionHistoryStore
         command.Parameters.AddWithValue("$afterValue", afterValue);
         command.Parameters.AddWithValue("$applicationName", (object?)source?.ApplicationName ?? DBNull.Value);
         command.Parameters.AddWithValue("$windowTitle", (object?)source?.WindowTitle ?? DBNull.Value);
+        command.Parameters.AddWithValue("$isVoiceTriggered", isVoiceTriggered ? 1 : 0);
+        command.Parameters.AddWithValue("$voiceTranscript", (object?)voiceTranscript ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -70,10 +78,11 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript
             FROM ConversionHistory
             WHERE $query = '' OR CommandName LIKE $pattern ESCAPE '\'
                 OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
+                OR VoiceTranscript LIKE $pattern ESCAPE '\'
                 OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\'
             ORDER BY OccurredAtUtc DESC, Id DESC;
             """;
@@ -95,7 +104,7 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript
             FROM ConversionHistory
             ORDER BY OccurredAtUtc DESC, Id DESC
             LIMIT 1;
@@ -111,9 +120,11 @@ public sealed class ConversionHistoryStore
         reader.GetString(3),
         reader.GetString(4),
         reader.IsDBNull(5) ? null : reader.GetString(5),
-        reader.IsDBNull(6) ? null : reader.GetString(6));
+        reader.IsDBNull(6) ? null : reader.GetString(6),
+        reader.GetInt32(7) != 0,
+        reader.IsDBNull(8) ? null : reader.GetString(8));
 
-    private static void EnsureColumn(SqliteConnection connection, string columnName)
+    private static void EnsureColumn(SqliteConnection connection, string columnName, string declaration = "TEXT NULL")
     {
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA table_info(ConversionHistory);";
@@ -130,7 +141,7 @@ public sealed class ConversionHistoryStore
         if (exists) return;
 
         using var alter = connection.CreateCommand();
-        alter.CommandText = $"ALTER TABLE ConversionHistory ADD COLUMN {columnName} TEXT NULL;";
+        alter.CommandText = $"ALTER TABLE ConversionHistory ADD COLUMN {columnName} {declaration};";
         alter.ExecuteNonQuery();
     }
 

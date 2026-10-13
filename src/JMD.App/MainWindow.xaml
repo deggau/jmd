@@ -51,32 +51,16 @@
                  Background="#FF242730" Foreground="White" BorderBrush="#FF3A3E48"
                  CaretBrush="{StaticResource AccentBrush}" TextChanged="SearchBox_TextChanged"
                  VerticalContentAlignment="Center" Margin="0,0,12,0" ToolTip="Buscar comando…" />
-        <CheckBox x:Name="KeepAwakeToggle" Grid.Column="1" Content="Manter tela ativa"
-                  Foreground="White" VerticalAlignment="Center" Checked="KeepAwakeToggle_Changed"
-                  Unchecked="KeepAwakeToggle_Changed"
-                  ToolTip="Solicita ao Windows manter a tela e o sistema ativos. Políticas de segurança ainda podem bloquear a tela.">
-          <CheckBox.Template>
-            <ControlTemplate TargetType="CheckBox">
-              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Border x:Name="ToggleTrack" Width="36" Height="20" CornerRadius="10" Background="#FF3A3E48">
-                  <Ellipse x:Name="ToggleThumb" Width="14" Height="14" Margin="3" HorizontalAlignment="Left"
-                           Fill="#FFE4E7EC" />
-                </Border>
-                <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
-              </StackPanel>
-              <ControlTemplate.Triggers>
-                <Trigger Property="IsChecked" Value="True">
-                  <Setter TargetName="ToggleTrack" Property="Background" Value="{StaticResource AccentBrush}" />
-                  <Setter TargetName="ToggleThumb" Property="HorizontalAlignment" Value="Right" />
-                  <Setter TargetName="ToggleThumb" Property="Fill" Value="#FF17191F" />
-                </Trigger>
-                <Trigger Property="IsMouseOver" Value="True">
-                  <Setter TargetName="ToggleTrack" Property="Opacity" Value="0.85" />
-                </Trigger>
-              </ControlTemplate.Triggers>
-            </ControlTemplate>
-          </CheckBox.Template>
-        </CheckBox>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <CheckBox x:Name="KeepAwakeToggle" Content="Manter tela ativa"
+                    Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,0,12,0"
+                    Checked="KeepAwakeToggle_Changed" Unchecked="KeepAwakeToggle_Changed"
+                    ToolTip="Solicita ao Windows manter a tela e o sistema ativos. Políticas de segurança ainda podem bloquear a tela." />
+          <CheckBox x:Name="VoiceWakeWordToggle" Content="Ativar Jey"
+                    Style="{StaticResource CompactToggleCheckBoxStyle}"
+                    Checked="VoiceWakeWordToggle_Changed" Unchecked="VoiceWakeWordToggle_Changed"
+                    ToolTip="Ativa o reconhecimento local pelo microfone. O modelo do Vosk é incluído no instalador." />
+        </StackPanel>
       </Grid>
       <ListBox x:Name="CommandsList" Grid.Row="2" Background="Transparent" BorderThickness="0"
                HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -147,12 +131,40 @@
                               CornerRadius="8" Padding="12" Margin="0,0,0,8">
                         <StackPanel>
                           <DockPanel Margin="0,0,0,8">
+                            <TextBlock Text="&#xE720;" FontFamily="Segoe MDL2 Assets" Foreground="#FFB4F36A"
+                                       Margin="0,0,6,0" VerticalAlignment="Center">
+                              <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                  <Setter Property="Visibility" Value="Collapsed" />
+                                  <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsVoiceTriggered}" Value="True">
+                                      <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                  </Style.Triggers>
+                                </Style>
+                              </TextBlock.Style>
+                            </TextBlock>
                             <TextBlock Text="{Binding CommandName}" Foreground="#FFB4F36A" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding DisplayDate}" Foreground="#FF969BA7"
                                        HorizontalAlignment="Right" DockPanel.Dock="Right" />
                           </DockPanel>
                           <TextBlock Text="{Binding SourceDisplay}" Foreground="#FF747985" FontSize="10"
                                      TextWrapping="Wrap" Margin="0,-5,0,8" />
+                          <StackPanel Margin="0,0,0,8">
+                            <StackPanel.Style>
+                              <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding IsVoiceTriggered}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Transcrição após Jey" Foreground="#FF969BA7" FontSize="11" />
+                            <TextBlock Text="{Binding VoiceTranscript, TargetNullValue=Transcrição indisponível}"
+                                       Foreground="White" TextWrapping="Wrap" Margin="0,3,0,0" />
+                          </StackPanel>
                           <StackPanel>
                             <StackPanel.Style>
                               <Style TargetType="StackPanel">

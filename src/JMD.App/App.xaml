@@ -113,6 +113,34 @@
       </Setter>
     </Style>
 
+    <Style x:Key="CompactToggleCheckBoxStyle" TargetType="CheckBox">
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <Border x:Name="ToggleTrack" Width="36" Height="20" CornerRadius="10" Background="#FF3A3E48">
+                <Ellipse x:Name="ToggleThumb" Width="14" Height="14" Margin="3" HorizontalAlignment="Left"
+                         Fill="#FFE4E7EC" />
+              </Border>
+              <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="ToggleTrack" Property="Background" Value="{StaticResource AccentBrush}" />
+                <Setter TargetName="ToggleThumb" Property="HorizontalAlignment" Value="Right" />
+                <Setter TargetName="ToggleThumb" Property="Fill" Value="#FF17191F" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ToggleTrack" Property="Opacity" Value="0.85" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <Style TargetType="ScrollBar">
       <Setter Property="Width" Value="10" />
       <Setter Property="Background" Value="#FF1B1E25" />
