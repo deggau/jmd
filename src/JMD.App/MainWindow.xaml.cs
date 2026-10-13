@@ -466,6 +466,13 @@ public partial class MainWindow : Window
             ? string.Join(Environment.NewLine, phrases.Where(phrase => !string.IsNullOrWhiteSpace(phrase)))
             : string.Empty;
 
+    private string GetVoicePhrasesDisplay(string commandId)
+    {
+        if (!_settings.VoicePhrases.TryGetValue(commandId, out var phrases)) return string.Empty;
+        var display = string.Join(" · ", phrases.Where(phrase => !string.IsNullOrWhiteSpace(phrase)));
+        return display.Length == 0 ? string.Empty : $"Jey: {display}";
+    }
+
     private void VoicePhrasesEditor_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (sender is not TextBox { Tag: string commandId } editor) return;
@@ -474,6 +481,8 @@ public partial class MainWindow : Window
             .Where(phrase => !string.IsNullOrWhiteSpace(phrase))
             .Distinct(StringComparer.CurrentCultureIgnoreCase)
             .ToList();
+        var command = _commands.FirstOrDefault(item => item.Id == commandId);
+        if (command is not null) command.VoicePhrasesDisplay = GetVoicePhrasesDisplay(commandId);
         try { _settingsStore.Save(_settings); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -621,7 +630,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task CaptureSnippetAsync()
+    private async Task CaptureSnippetAsync(VoiceCommandInvocation? voiceCommand = null)
     {
         var sourceWindow = _previousWindow;
         if (sourceWindow == IntPtr.Zero || !await _keyboard.WaitForModifiersReleasedAsync())
@@ -667,7 +676,7 @@ public partial class MainWindow : Window
         try
         {
             _settingsStore.Save(_settings);
-            RecordActionHistory($"Salvar texto: {snippet.Title}", string.Empty, snippet.Text);
+            RecordActionHistory($"Salvar texto: {snippet.Title}", string.Empty, snippet.Text, voiceCommand);
             Notify("JMD", $"Texto salvo: {snippet.Title}", true);
             if (_navigation.CurrentPage == AppPage.ShortcutSettings) BuildSettingsPanel();
         }
@@ -678,7 +687,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task InsertSavedSnippetAsync()
+    private async Task InsertSavedSnippetAsync(VoiceCommandInvocation? voiceCommand = null)
     {
         if (_settings.Snippets.Count == 0)
         {
@@ -711,17 +720,16 @@ public partial class MainWindow : Window
             Notify("JMD", "Não foi possível colar. O texto está disponível no clipboard.", false);
             return;
         }
-        RecordActionHistory($"Inserir texto salvo: {snippet.Title}", snippet.Title, snippet.Text);
+        RecordActionHistory($"Inserir texto salvo: {snippet.Title}", snippet.Title, snippet.Text, voiceCommand);
         Notify("JMD", $"Texto inserido: {snippet.Title}", true);
     }
 
-    private void RecordActionHistory(string commandName, string beforeValue, string afterValue)
+    private void RecordActionHistory(string commandName, string beforeValue, string afterValue, VoiceCommandInvocation? voiceCommand = null)
     {
         if (_historyStore is null) return;
         try
         {
-            _historyStore.Add(commandName, beforeValue, afterValue, source: GetConversionSource());
-            RefreshHistory();
+            RecordCommandHistory(commandName, beforeValue, afterValue, voiceCommand);
         }
         catch (Exception exception)
         {
@@ -765,6 +773,7 @@ public partial class MainWindow : Window
         foreach (var command in _commands)
         {
             command.Shortcut = GetShortcut(command.Id);
+            command.VoicePhrasesDisplay = GetVoicePhrasesDisplay(command.Id);
             var shortcutRow = _shortcutRows.FirstOrDefault(row => row.Id == command.Id);
             command.Status = shortcutRow?.Status ?? "Atalho configurável";
             command.StatusBrush = shortcutRow?.StatusBrush ?? new SolidColorBrush(Color.FromRgb(150, 155, 167));
@@ -833,7 +842,7 @@ public partial class MainWindow : Window
         if (saved) SetStatus($"Atalho atualizado: {shortcut}", true);
     }
 
-    private async void HandleHotkeyAsync(string id)
+    private async void HandleHotkeyAsync(string id, VoiceCommandInvocation? voiceCommand = null)
     {
         try
         {
@@ -842,30 +851,32 @@ public partial class MainWindow : Window
             {
                 case "palette":
                     ShowPalette();
+                    if (voiceCommand is not null)
+                        RecordActionHistory("Abrir paleta", string.Empty, string.Empty, voiceCommand);
                     break;
                 case "clipboard":
-                    await TransformClipboardAsync();
+                    await TransformClipboardAsync(voiceCommand);
                     break;
                 case "selection":
-                    await TransformSelectionAsync();
+                    await TransformSelectionAsync(voiceCommand);
                     break;
                 case "jsonPretty":
-                    await TransformStructuredDataAsync(StructuredDataLayout.Pretty);
+                    await TransformStructuredDataAsync(StructuredDataLayout.Pretty, voiceCommand);
                     break;
                 case "jsonCompact":
-                    await TransformStructuredDataAsync(StructuredDataLayout.Compact);
+                    await TransformStructuredDataAsync(StructuredDataLayout.Compact, voiceCommand);
                     break;
                 case "snippets":
-                    await InsertSavedSnippetAsync();
+                    await InsertSavedSnippetAsync(voiceCommand);
                     break;
                 case "saveSnippet":
-                    await CaptureSnippetAsync();
+                    await CaptureSnippetAsync(voiceCommand);
                     break;
                 case "draftSave":
-                    await SaveDraftAsync();
+                    await SaveDraftAsync(voiceCommand);
                     break;
                 case "draftRestore":
-                    await RestoreDraftAsync();
+                    await RestoreDraftAsync(voiceCommand);
                     break;
             }
         }
@@ -875,7 +886,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task SaveDraftAsync()
+    private async Task SaveDraftAsync(VoiceCommandInvocation? voiceCommand = null)
     {
         if (!await _keyboard.WaitForModifiersReleasedAsync()) return;
         if (!_focusedText.HasEditableTextFocus())
@@ -907,11 +918,11 @@ public partial class MainWindow : Window
             return;
         }
         _draftStack.Push(draft);
-        RecordActionHistory(DraftStack.SavedCommandName, string.Empty, draft);
+        RecordActionHistory(DraftStack.SavedCommandName, string.Empty, draft, voiceCommand);
         Notify("JMD", $"Rascunho salvo ({_draftStack.Count} na pilha).", true);
     }
 
-    private async Task RestoreDraftAsync()
+    private async Task RestoreDraftAsync(VoiceCommandInvocation? voiceCommand = null)
     {
         if (_draftStack.Count == 0)
         {
@@ -938,7 +949,7 @@ public partial class MainWindow : Window
             Notify("JMD", "Não foi possível inserir o rascunho no campo ativo.", false);
             return;
         }
-        RecordActionHistory(DraftStack.RestoredCommandName, string.Empty, draft);
+        RecordActionHistory(DraftStack.RestoredCommandName, string.Empty, draft, voiceCommand);
         if (!string.IsNullOrWhiteSpace(currentText))
         {
             _draftStack.Push(currentText);
@@ -1035,7 +1046,7 @@ public partial class MainWindow : Window
         Keyboard.Focus(SearchBox);
     }
 
-    private async Task TransformClipboardAsync()
+    private async Task TransformClipboardAsync(VoiceCommandInvocation? voiceCommand = null)
     {
         if (_conversionRunning) return;
         _conversionRunning = true;
@@ -1061,7 +1072,7 @@ public partial class MainWindow : Window
             if (result.Success)
             {
                 _conversionGuard.Remember(input, result.Value!);
-                RecordHistory("Montar SQL IN", input, result);
+                RecordHistory("Montar SQL IN", input, result, voiceCommand);
             }
             var message = result.Success
                 ? WithConversionCounts("Lista formatada para SQL IN e pronta para colar.", result.InputItemCount, result.OutputItemCount)
@@ -1072,7 +1083,7 @@ public partial class MainWindow : Window
         finally { _conversionRunning = false; }
     }
 
-    private async Task TransformSelectionAsync()
+    private async Task TransformSelectionAsync(VoiceCommandInvocation? voiceCommand = null)
     {
         if (_conversionRunning) return;
         _conversionRunning = true;
@@ -1081,7 +1092,7 @@ public partial class MainWindow : Window
             var result = await _selectionTransformer.ExecuteAsync(FormatTextForExecution);
             if (result.Success && result.BeforeValue is not null && result.AfterValue is not null)
                 _conversionGuard.Remember(result.BeforeValue, result.AfterValue);
-            RecordSelectionHistory(result);
+            RecordSelectionHistory(result, voiceCommand);
             var message = result.Success
                 ? WithConversionCounts(result.Message, result.InputItemCount, result.OutputItemCount)
                 : result.Message;
@@ -1091,12 +1102,15 @@ public partial class MainWindow : Window
         finally { _conversionRunning = false; }
     }
 
-    private void RecordHistory(string commandName, string beforeValue, TransformationResult result)
+    private void RecordHistory(string commandName, string beforeValue, TransformationResult result, VoiceCommandInvocation? voiceCommand = null)
     {
-        if (_historyRecorder is null) return;
+        if (!result.Success || result.Value is null || _historyStore is null) return;
         try
         {
-            if (_historyRecorder.RecordIfSuccessful(commandName, beforeValue, result, GetConversionSource())) RefreshHistory();
+            if (voiceCommand is not null)
+                RecordCommandHistory(commandName, beforeValue, result.Value, voiceCommand);
+            else if (_historyRecorder?.RecordIfSuccessful(commandName, beforeValue, result, GetConversionSource()) == true)
+                RefreshHistory();
         }
         catch (Exception exception)
         {
@@ -1104,20 +1118,35 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RecordSelectionHistory(SelectionTransformResult result)
+    private void RecordSelectionHistory(SelectionTransformResult result, VoiceCommandInvocation? voiceCommand = null)
     {
-        if (_historyRecorder is null) return;
+        if (!result.Success || result.BeforeValue is null || result.AfterValue is null || _historyStore is null) return;
         try
         {
             var commandName = result.UsedClipboardFallback
                 ? "Formatar clipboard (atalho de seleção)"
                 : "Substituir seleção (SQL IN)";
-            if (_historyRecorder.RecordIfSuccessful(commandName, result, GetConversionSource())) RefreshHistory();
+            if (voiceCommand is not null)
+                RecordCommandHistory(commandName, result.BeforeValue, result.AfterValue, voiceCommand);
+            else if (_historyRecorder?.RecordIfSuccessful(commandName, result, GetConversionSource()) == true)
+                RefreshHistory();
         }
         catch (Exception exception)
         {
             SetStatus($"Conversão concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
         }
+    }
+
+    private void RecordCommandHistory(string commandName, string beforeValue, string afterValue, VoiceCommandInvocation? voiceCommand = null)
+    {
+        if (_historyStore is null) return;
+        var historyCommandName = voiceCommand is null
+            ? commandName
+            : $"Ativação por voz (Jey) - {commandName}";
+        _historyStore.Add(historyCommandName, beforeValue, afterValue,
+            source: GetConversionSource(), isVoiceTriggered: voiceCommand is not null,
+            voiceTranscript: voiceCommand?.Transcript, voiceAudioWav: voiceCommand?.AudioWav);
+        RefreshHistory();
     }
 
     private void RefreshHistory()
@@ -1135,7 +1164,10 @@ public partial class MainWindow : Window
                     FormatSourceDisplay(entry.ApplicationName, entry.WindowTitle),
                     entry.IsVoiceTriggered,
                     entry.VoiceTranscript ?? "Transcrição indisponível",
-                    entry.HasVoiceAudio))
+                    entry.HasVoiceAudio,
+                    entry.IsVoiceTriggered && entry.CommandName.StartsWith("Ativação por voz (Jey) - ", StringComparison.Ordinal),
+                    entry.CommandName.EndsWith(DraftStack.SavedCommandName, StringComparison.Ordinal),
+                    entry.CommandName.EndsWith(DraftStack.RestoredCommandName, StringComparison.Ordinal)))
                 .ToList();
             HistoryItemsControl.ItemsSource = entries;
             HistoryScrollViewer.ScrollToTop();
@@ -1253,6 +1285,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private sealed record VoiceCommandInvocation(string Transcript, byte[] AudioWav);
+
     private sealed record HistoryDisplayEntry(
         long Id,
         string CommandName,
@@ -1262,7 +1296,10 @@ public partial class MainWindow : Window
         string SourceDisplay,
         bool IsVoiceTriggered,
         string VoiceTranscript,
-        bool HasVoiceAudio);
+        bool HasVoiceAudio,
+        bool IsVoiceCommand,
+        bool IsDraftSaved,
+        bool IsDraftRestored);
 
     private static string FormatSourceDisplay(string? applicationName, string? windowTitle)
     {
@@ -1387,6 +1424,12 @@ public partial class MainWindow : Window
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
             {
                 var voiceCommandId = FindVoiceCommand(transcript);
+                if (voiceCommandId is not null && transcript is not null)
+                {
+                    HandleHotkeyAsync(voiceCommandId, new VoiceCommandInvocation(transcript, audioWav));
+                    return;
+                }
+
                 try
                 {
                     var historyId = _historyStore?.Add("Ativação por voz (Jey)", string.Empty, transcript ?? string.Empty,
@@ -1417,17 +1460,12 @@ public partial class MainWindow : Window
                 {
                     SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
                 }
-                if (voiceCommandId is not null)
-                {
-                    HandleHotkeyAsync(voiceCommandId);
-                    return;
-                }
                 if (IsVisible)
                 {
                     if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
                     Activate();
                 }
-                else ShowShortcutSettings();
+                else ShowPalette();
             }
         }));
         service.Start();
@@ -1774,7 +1812,7 @@ public partial class MainWindow : Window
         await TransformStructuredDataAsync(layout);
     }
 
-    private async Task TransformStructuredDataAsync(StructuredDataLayout layout)
+    private async Task TransformStructuredDataAsync(StructuredDataLayout layout, VoiceCommandInvocation? voiceCommand = null)
     {
         if (_conversionRunning) return;
         _conversionRunning = true;
@@ -1793,7 +1831,7 @@ public partial class MainWindow : Window
                 var verb = layout == StructuredDataLayout.Pretty ? "Formatar" : "Compactar";
                 var commandName = $"{verb} {formatName}";
                 if (result.UsedClipboardFallback) commandName += " (clipboard)";
-                RecordSelectionHistory(commandName, result);
+                RecordSelectionHistory(commandName, result, voiceCommand);
                 var action = layout == StructuredDataLayout.Pretty ? "formatado" : "compactado";
                 var subject = detectedFormat == StructuredDataFormat.Json ? "JSON" : "XML";
                 var target = result.UsedClipboardFallback ? "O texto do clipboard foi" : "O texto selecionado foi";
@@ -1808,12 +1846,15 @@ public partial class MainWindow : Window
         finally { _conversionRunning = false; }
     }
 
-    private void RecordSelectionHistory(string commandName, SelectionTransformResult result)
+    private void RecordSelectionHistory(string commandName, SelectionTransformResult result, VoiceCommandInvocation? voiceCommand = null)
     {
-        if (_historyRecorder is null) return;
+        if (!result.Success || result.BeforeValue is null || result.AfterValue is null || _historyStore is null) return;
         try
         {
-            if (_historyRecorder.RecordIfSuccessful(commandName, result, GetConversionSource())) RefreshHistory();
+            if (voiceCommand is not null)
+                RecordCommandHistory(commandName, result.BeforeValue, result.AfterValue, voiceCommand);
+            else if (_historyRecorder?.RecordIfSuccessful(commandName, result, GetConversionSource()) == true)
+                RefreshHistory();
         }
         catch (Exception exception)
         {
@@ -1892,10 +1933,22 @@ internal sealed class CommandRow(string id, string name, string description, str
     private string _status = "Atalho configurável";
     private Brush _statusBrush = new SolidColorBrush(Color.FromRgb(150, 155, 167));
     private bool _visible = true;
+    private string _voicePhrasesDisplay = string.Empty;
     public string Shortcut { get => _shortcut; set { _shortcut = value; Changed(nameof(Shortcut)); } }
     public string Status { get => _status; set { _status = value; Changed(nameof(Status)); } }
     public Brush StatusBrush { get => _statusBrush; set { _statusBrush = value; Changed(nameof(StatusBrush)); } }
     public bool Visible { get => _visible; set { _visible = value; Changed(nameof(Visible)); } }
+    public string VoicePhrasesDisplay
+    {
+        get => _voicePhrasesDisplay;
+        set
+        {
+            _voicePhrasesDisplay = value;
+            Changed(nameof(VoicePhrasesDisplay));
+            Changed(nameof(HasVoicePhrases));
+        }
+    }
+    public bool HasVoicePhrases => !string.IsNullOrWhiteSpace(_voicePhrasesDisplay);
     private void Changed(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 

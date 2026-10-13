@@ -52,6 +52,20 @@ public sealed class DraftStackTests
     }
 
     [Fact]
+    public void Restore_from_history_replays_voice_triggered_draft_commands()
+    {
+        var at = DateTimeOffset.UtcNow;
+        var stack = new DraftStack();
+
+        stack.RestoreFromHistory([
+            Entry(1, at, "Ativação por voz (Jey) - " + DraftStack.SavedCommandName, "voice draft"),
+            Entry(2, at.AddMinutes(1), "Ativação por voz (Jey) - " + DraftStack.RestoredCommandName, "voice draft")
+        ]);
+
+        Assert.Equal(0, stack.Count);
+    }
+
+    [Fact]
     public void Restore_from_history_uses_id_to_order_events_with_same_timestamp()
     {
         var at = DateTimeOffset.UtcNow;

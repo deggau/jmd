@@ -84,6 +84,19 @@
                     <TextBlock Text="{Binding Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding Description}" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
                     <TextBlock Text="{Binding Status}" Foreground="{Binding StatusBrush}" FontSize="11" Margin="0,7,0,0" />
+                    <TextBlock Text="{Binding VoicePhrasesDisplay}" Foreground="#FFB4F36A" FontSize="11"
+                               TextWrapping="Wrap" Margin="0,5,0,0">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasVoicePhrases}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
                   </StackPanel>
                   <Border Grid.Column="1" Background="#FF30343E" CornerRadius="6" Padding="9,5" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Shortcut}" Foreground="#FFE4E7EC" FontSize="11" />
@@ -193,10 +206,10 @@
                               <Style TargetType="StackPanel">
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
-                                  <DataTrigger Binding="{Binding CommandName}" Value="Salvar rascunho">
+                                  <DataTrigger Binding="{Binding IsDraftSaved}" Value="True">
                                     <Setter Property="Visibility" Value="Visible" />
                                   </DataTrigger>
-                                  <DataTrigger Binding="{Binding CommandName}" Value="Restaurar rascunho">
+                                  <DataTrigger Binding="{Binding IsDraftRestored}" Value="True">
                                     <Setter Property="Visibility" Value="Visible" />
                                   </DataTrigger>
                                 </Style.Triggers>
@@ -217,15 +230,19 @@
                               <Style TargetType="Grid">
                                 <Setter Property="Visibility" Value="Visible" />
                                 <Style.Triggers>
-                                  <DataTrigger Binding="{Binding CommandName}" Value="Salvar rascunho">
+                                  <DataTrigger Binding="{Binding IsDraftSaved}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
-                                  <DataTrigger Binding="{Binding CommandName}" Value="Restaurar rascunho">
+                                  <DataTrigger Binding="{Binding IsDraftRestored}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
-                                  <DataTrigger Binding="{Binding IsVoiceTriggered}" Value="True">
+                                  <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                      <Condition Binding="{Binding IsVoiceTriggered}" Value="True" />
+                                      <Condition Binding="{Binding IsVoiceCommand}" Value="False" />
+                                    </MultiDataTrigger.Conditions>
                                     <Setter Property="Visibility" Value="Collapsed" />
-                                  </DataTrigger>
+                                  </MultiDataTrigger>
                                 </Style.Triggers>
                               </Style>
                             </Grid.Style>

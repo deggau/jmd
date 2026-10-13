@@ -38,8 +38,8 @@ public sealed class DraftStack
         _items.Clear();
         foreach (var entry in history.OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.Id))
         {
-            if (entry.CommandName == SavedCommandName) Push(entry.AfterValue);
-            else if (entry.CommandName == RestoredCommandName)
+            if (entry.CommandName.EndsWith(SavedCommandName, StringComparison.Ordinal)) Push(entry.AfterValue);
+            else if (entry.CommandName.EndsWith(RestoredCommandName, StringComparison.Ordinal))
             {
                 var restoredIndex = _items.FindLastIndex(text => text == entry.AfterValue);
                 if (restoredIndex >= 0) _items.RemoveAt(restoredIndex);
