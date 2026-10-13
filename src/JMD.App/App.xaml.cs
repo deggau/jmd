@@ -118,6 +118,7 @@ internal sealed class UserSettings
         ["draftSave"] = ShortcutDefaults.ForCommand("draftSave"),
         ["draftRestore"] = ShortcutDefaults.ForCommand("draftRestore")
     };
+    public Dictionary<string, List<string>> VoicePhrases { get; set; } = new(StringComparer.Ordinal);
     public HashSet<string> DisabledCommands { get; set; } = new(StringComparer.Ordinal);
 }
 
@@ -145,6 +146,7 @@ internal sealed class SettingsStore
                 if (loaded is not null)
                 {
                     loaded.Shortcuts ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                    loaded.VoicePhrases ??= new Dictionary<string, List<string>>(StringComparer.Ordinal);
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];
                     ShortcutDefaults.MigratePreviousDefaults(loaded.Shortcuts);

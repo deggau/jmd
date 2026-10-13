@@ -5,6 +5,7 @@ using System.IO;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -200,7 +201,7 @@ public partial class MainWindow : Window
         });
         SettingsPanel.Children.Add(new TextBlock
         {
-            Text = "Clique no campo e pressione a nova combinação. O Windows informa quando uma combinação não pode ser registrada.",
+            Text = "Clique no campo e pressione a nova combinação. Para ativar por voz, associe uma ou mais frases ao comando, uma por linha. Diga ‘Jey’ seguido de uma dessas frases.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
             FontSize = 12,
@@ -387,6 +388,7 @@ public partial class MainWindow : Window
             Padding = new Thickness(14),
             Margin = new Thickness(0, 0, 0, 8)
         };
+        var content = new StackPanel();
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
@@ -429,8 +431,95 @@ public partial class MainWindow : Window
         enabledToggle.Unchecked += ShortcutEnabled_Changed;
         Grid.SetColumn(enabledToggle, 2);
         grid.Children.Add(enabledToggle);
-        card.Child = grid;
+        content.Children.Add(grid);
+        content.Children.Add(new TextBlock
+        {
+            Text = "Frases de voz (uma por linha)",
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+            FontSize = 10,
+            Margin = new Thickness(0, 10, 0, 4)
+        });
+        var voicePhrasesEditor = new TextBox
+        {
+            Text = GetVoicePhrasesText(id),
+            Tag = id,
+            MinHeight = 48,
+            MaxHeight = 96,
+            Padding = new Thickness(8, 6, 8, 6),
+            FontSize = 12,
+            Foreground = Brushes.White,
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 32)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(65, 70, 81)),
+            TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            ToolTip = "Digite uma frase por linha; deixe em branco para não associar frases de voz."
+        };
+        voicePhrasesEditor.TextChanged += VoicePhrasesEditor_TextChanged;
+        content.Children.Add(voicePhrasesEditor);
+        card.Child = content;
         SettingsPanel.Children.Add(card);
+    }
+
+    private string GetVoicePhrasesText(string commandId)
+        => _settings.VoicePhrases.TryGetValue(commandId, out var phrases)
+            ? string.Join(Environment.NewLine, phrases.Where(phrase => !string.IsNullOrWhiteSpace(phrase)))
+            : string.Empty;
+
+    private void VoicePhrasesEditor_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is not TextBox { Tag: string commandId } editor) return;
+        _settings.VoicePhrases[commandId] = editor.Text
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(phrase => !string.IsNullOrWhiteSpace(phrase))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        try { _settingsStore.Save(_settings); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"Não foi possível salvar as frases de voz: {exception.Message}", false);
+        }
+    }
+
+    private string? FindVoiceCommand(string? transcript)
+    {
+        var normalizedTranscript = NormalizeVoicePhrase(transcript);
+        if (normalizedTranscript.Length == 0) return null;
+
+        string? matchedCommand = null;
+        foreach (var commandId in ShortcutIds)
+        {
+            if (_settings.DisabledCommands.Contains(commandId) ||
+                !_settings.VoicePhrases.TryGetValue(commandId, out var phrases))
+                continue;
+
+            if (!phrases.Any(phrase => NormalizeVoicePhrase(phrase) == normalizedTranscript)) continue;
+            if (matchedCommand is not null)
+            {
+                SetStatus("Essa frase está associada a mais de um comando. Deixe-a em apenas um comando para usá-la por voz.", false);
+                return null;
+            }
+            matchedCommand = commandId;
+        }
+        return matchedCommand;
+    }
+
+    private static string NormalizeVoicePhrase(string? phrase)
+    {
+        if (string.IsNullOrWhiteSpace(phrase)) return string.Empty;
+        var decomposed = phrase.Normalize(NormalizationForm.FormD);
+        var normalized = new StringBuilder(decomposed.Length);
+        foreach (var character in decomposed)
+        {
+            var category = CharUnicodeInfo.GetUnicodeCategory(character);
+            if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark)
+                continue;
+            if (char.IsLetterOrDigit(character))
+                normalized.Append(char.ToLowerInvariant(character));
+            else if (normalized.Length > 0 && normalized[^1] != ' ')
+                normalized.Append(' ');
+        }
+        return normalized.ToString().Trim();
     }
 
     private void RenderSnippetSettings()
@@ -1297,32 +1386,41 @@ public partial class MainWindow : Window
         {
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
             {
+                var voiceCommandId = FindVoiceCommand(transcript);
                 try
                 {
                     var historyId = _historyStore?.Add("Ativação por voz (Jey)", string.Empty, transcript ?? string.Empty,
                         source: GetConversionSource(), isVoiceTriggered: true, voiceTranscript: transcript,
                         voiceAudioWav: audioWav);
                     RefreshHistory();
-                    Action<string?, byte[]>? followupHandler = null;
-                    followupHandler = (followupTranscript, completeAudio) => Dispatcher.BeginInvoke(new Action(() =>
+                    if (string.IsNullOrWhiteSpace(transcript))
                     {
-                        service.FollowupSpeechCaptured -= followupHandler;
-                        if (!_settings.VoiceWakeWordEnabled || !ReferenceEquals(_voiceWakeWord, service) || historyId is null) return;
-                        try
+                        Action<string?, byte[]>? followupHandler = null;
+                        followupHandler = (followupTranscript, completeAudio) => Dispatcher.BeginInvoke(new Action(() =>
                         {
-                            _historyStore?.UpdateVoiceCapture(historyId.Value, followupTranscript, completeAudio);
-                            RefreshHistory();
-                        }
-                        catch (Exception exception)
-                        {
-                            SetStatus($"Jey foi reconhecido, mas não foi possível atualizar a gravação: {exception.Message}", false);
-                        }
-                    }));
-                    service.FollowupSpeechCaptured += followupHandler;
+                            service.FollowupSpeechCaptured -= followupHandler;
+                            if (!_settings.VoiceWakeWordEnabled || !ReferenceEquals(_voiceWakeWord, service) || historyId is null) return;
+                            try
+                            {
+                                _historyStore?.UpdateVoiceCapture(historyId.Value, followupTranscript, completeAudio);
+                                RefreshHistory();
+                            }
+                            catch (Exception exception)
+                            {
+                                SetStatus($"Jey foi reconhecido, mas não foi possível atualizar a gravação: {exception.Message}", false);
+                            }
+                        }));
+                        service.FollowupSpeechCaptured += followupHandler;
+                    }
                 }
                 catch (Exception exception)
                 {
                     SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
+                }
+                if (voiceCommandId is not null)
+                {
+                    HandleHotkeyAsync(voiceCommandId);
+                    return;
                 }
                 if (IsVisible)
                 {
@@ -1476,21 +1574,70 @@ public partial class MainWindow : Window
         }
     }
 
-    private void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
+    private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_checkingUpdates) return;
+        _checkingUpdates = true;
+        InstallUpdateButton.IsEnabled = false;
+        string? downloadDirectory = null;
+        var installerStarted = false;
         try
         {
-            var startInfo = new ProcessStartInfo
+            UpdateStatusText.Text = "Baixando e validando o instalador…";
+            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("JMD-App");
+            using var releaseResponse = await client.GetAsync("https://api.github.com/repos/deggau/jmd/releases/latest");
+            releaseResponse.EnsureSuccessStatusCode();
+            using var release = JsonDocument.Parse(await releaseResponse.Content.ReadAsStringAsync());
+
+            var root = release.RootElement;
+            var tag = root.GetProperty("tag_name").GetString();
+            var version = tag?.TrimStart('v', 'V');
+            if (version is null || !Version.TryParse(version, out _))
+                throw new InvalidDataException("O GitHub retornou uma versão inválida.");
+
+            var installerName = $"JMD-{version}-win-x64-setup.exe";
+            var assets = root.GetProperty("assets").EnumerateArray().ToArray();
+            var installerAsset = assets.FirstOrDefault(asset =>
+                string.Equals(asset.GetProperty("name").GetString(), installerName, StringComparison.Ordinal));
+            var checksumAsset = assets.FirstOrDefault(asset =>
+                string.Equals(asset.GetProperty("name").GetString(), $"{installerName}.sha256", StringComparison.Ordinal));
+            if (installerAsset.ValueKind == JsonValueKind.Undefined || checksumAsset.ValueKind == JsonValueKind.Undefined)
+                throw new InvalidDataException("A release não contém o instalador x64 e seu checksum SHA-256.");
+
+            var installerUri = GetGitHubAssetUri(installerAsset);
+            var checksumUri = GetGitHubAssetUri(checksumAsset);
+            var expectedHashText = await client.GetStringAsync(checksumUri);
+            var expectedHash = expectedHashText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (expectedHash is null || expectedHash.Length != 64 || !expectedHash.All(Uri.IsHexDigit))
+                throw new InvalidDataException("O checksum SHA-256 publicado é inválido.");
+
+            downloadDirectory = Path.Combine(Path.GetTempPath(), $"JMD-Update-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(downloadDirectory);
+            var installerPath = Path.Combine(downloadDirectory, installerName);
+            await using (var installerStream = await client.GetStreamAsync(installerUri))
+            await using (var output = new FileStream(installerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                             bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
             {
-                FileName = "powershell.exe",
+                await installerStream.CopyToAsync(output);
+            }
+
+            await using (var downloadedInstaller = File.OpenRead(installerPath))
+            {
+                var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(downloadedInstaller));
+                if (!CryptographicOperations.FixedTimeEquals(
+                        Convert.FromHexString(actualHash), Convert.FromHexString(expectedHash)))
+                    throw new InvalidDataException("O checksum SHA-256 do instalador não confere; a atualização foi cancelada.");
+            }
+
+            var startedProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = installerPath,
                 UseShellExecute = true
-            };
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-Command");
-            startInfo.ArgumentList.Add("Start-Sleep -Seconds 2; irm https://raw.githubusercontent.com/deggau/jmd/main/installer/install.ps1 | iex");
-            Process.Start(startInfo);
+            });
+            if (startedProcess is null)
+                throw new InvalidOperationException("O Windows não iniciou o instalador.");
+            installerStarted = true;
             PrepareForExit();
             System.Windows.Application.Current.Shutdown();
         }
@@ -1498,6 +1645,26 @@ public partial class MainWindow : Window
         {
             UpdateStatusText.Text = $"Não foi possível iniciar a atualização: {exception.Message}";
         }
+        finally
+        {
+            InstallUpdateButton.IsEnabled = true;
+            _checkingUpdates = false;
+            if (!installerStarted && downloadDirectory is not null)
+            {
+                try { Directory.Delete(downloadDirectory, recursive: true); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+    }
+
+    private static Uri GetGitHubAssetUri(JsonElement asset)
+    {
+        var url = asset.GetProperty("browser_download_url").GetString();
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("A release contém um link de download inválido.");
+        return uri;
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
