@@ -84,7 +84,7 @@ public sealed class ConversionHistoryStore
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE ConversionHistory SET AfterValue = $transcript, VoiceTranscript = $transcript, VoiceAudioWav = $audio WHERE Id = $id AND IsVoiceTriggered = 1;";
+        command.CommandText = "UPDATE ConversionHistory SET AfterValue = COALESCE($transcript, AfterValue), VoiceTranscript = COALESCE($transcript, VoiceTranscript), VoiceAudioWav = $audio WHERE Id = $id AND IsVoiceTriggered = 1;";
         command.Parameters.AddWithValue("$id", id);
         command.Parameters.AddWithValue("$transcript", (object?)transcript ?? DBNull.Value);
         command.Parameters.AddWithValue("$audio", audioWav);
