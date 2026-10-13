@@ -108,14 +108,14 @@ public partial class MainWindow : Window
         if (_settings.VoiceWakeWordEnabled)
         {
             try { StartVoiceWakeWord(); }
-            catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
+            catch (Exception exception)
             {
                 _settings.VoiceWakeWordEnabled = false;
                 StopVoiceWakeWord();
                 UpdateVoiceWakeWordToggle(false);
                 try { _settingsStore.Save(_settings); }
                 catch (Exception saveException) when (saveException is IOException or UnauthorizedAccessException) { }
-                SetStatus($"Ativação por voz indisponível: {exception.Message}", false);
+                SetVoiceWakeWordUnavailable(exception);
             }
         }
         HistoryRetentionBox.Text = _settings.HistoryRetentionDays.ToString(CultureInfo.InvariantCulture);
@@ -1197,21 +1197,46 @@ public partial class MainWindow : Window
 
     private void SetVoiceWakeWordEnabled(bool enabled)
     {
+        if (enabled)
+        {
+            try { StartVoiceWakeWord(); }
+            catch (Exception exception)
+            {
+                StopVoiceWakeWord();
+                DisableVoiceWakeWordPreference();
+                SetVoiceWakeWordUnavailable(exception);
+                return;
+            }
+        }
+        else StopVoiceWakeWord();
+
+        _settings.VoiceWakeWordEnabled = enabled;
         try
         {
-            if (enabled) StartVoiceWakeWord();
-            else StopVoiceWakeWord();
-            _settings.VoiceWakeWordEnabled = enabled;
             _settingsStore.Save(_settings);
             SetStatus(enabled ? "Ativação por voz local ativada." : "Ativação por voz desativada; o JMD não está ouvindo o microfone.", true);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.Runtime.InteropServices.COMException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _settings.VoiceWakeWordEnabled = false;
             StopVoiceWakeWord();
-            UpdateVoiceWakeWordToggle(false);
-            SetStatus($"Não foi possível salvar ou iniciar a ativação por voz local: {exception.Message}", false);
+            DisableVoiceWakeWordPreference();
+            SetStatus("Não foi possível salvar a opção “Ativar Jey”.", false, exception.ToString());
         }
+    }
+
+    private void DisableVoiceWakeWordPreference()
+    {
+        _settings.VoiceWakeWordEnabled = false;
+        UpdateVoiceWakeWordToggle(false);
+        try { _settingsStore.Save(_settings); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+    }
+
+    private void SetVoiceWakeWordUnavailable(Exception exception)
+    {
+        _settings.VoiceWakeWordEnabled = false;
+        UpdateVoiceWakeWordToggle(false);
+        SetStatus("Ativar Jey não iniciou. Confira o modelo local e o acesso ao microfone.", false, exception.ToString());
     }
 
     private void StartVoiceWakeWord()
@@ -1567,9 +1592,10 @@ public partial class MainWindow : Window
     private static string WithConversionCounts(string message, int? identified, int? output)
         => ConversionCountSummary.Append(message, identified, output);
 
-    private void SetStatus(string message, bool success)
+    private void SetStatus(string message, bool success, string? details = null)
     {
         StatusText.Text = message;
+        StatusText.ToolTip = details ?? message;
         StatusText.Foreground = success
             ? new SolidColorBrush(Color.FromRgb(180, 243, 106))
             : new SolidColorBrush(Color.FromRgb(255, 145, 135));
