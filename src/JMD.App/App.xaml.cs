@@ -136,6 +136,8 @@ internal sealed class UserSettings
     public bool KeepAwakeEnabled { get; set; }
     public bool VoiceWakeWordEnabled { get; set; } = true;
     public bool VoiceDebugEnabled { get; set; }
+    public string JeyPortugueseModel { get; set; } = "vosk";
+    public string JeyEnglishModel { get; set; } = "vosk";
     public List<SnippetEntry> Snippets { get; set; } = [];
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
 
@@ -191,6 +193,8 @@ internal sealed class SettingsStore
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];
                     loaded.CustomShortcuts ??= [];
+                    if (loaded.JeyPortugueseModel is not ("vosk" or "whisper")) loaded.JeyPortugueseModel = "vosk";
+                    if (loaded.JeyEnglishModel is not ("vosk" or "whisper")) loaded.JeyEnglishModel = "vosk";
                     ShortcutDefaults.MigratePreviousDefaults(loaded.Shortcuts);
                     return loaded;
                 }

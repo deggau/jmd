@@ -8,12 +8,16 @@ using Vosk;
 namespace JMD.App;
 
 internal sealed record VoiceCaptureDebugInfo(int DurationMilliseconds, int? CutMilliseconds, byte[]? TranscriptionAudioWav);
+internal sealed record VoiceTranscriptionCandidate(string Text, double? Confidence);
 
 internal sealed class VoiceWakeWordService : IDisposable
 {
     private readonly Model _model;
     private readonly VoskRecognizer _recognizer;
     private readonly Model _portugueseModel;
+    private readonly bool _useWhisperPortuguese;
+    private readonly bool _useWhisperEnglish;
+    private readonly WhisperCppTranscriber _whisper = new();
     private readonly WaveInEvent _microphone;
     private readonly MemoryStream _utteranceAudio = new();
     private readonly MemoryStream _followupAudio = new();
@@ -32,8 +36,10 @@ internal sealed class VoiceWakeWordService : IDisposable
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? WakeWordRecognized;
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? FollowupSpeechCaptured;
 
-    public VoiceWakeWordService()
+    public VoiceWakeWordService(bool useWhisperPortuguese = false, bool useWhisperEnglish = false)
     {
+        _useWhisperPortuguese = useWhisperPortuguese;
+        _useWhisperEnglish = useWhisperEnglish;
         var wakeWordModelPath = Path.Combine(AppContext.BaseDirectory, "vosk-model-small-en-us-0.15");
         var portugueseModelPath = Path.Combine(AppContext.BaseDirectory, "vosk-model-small-pt-0.3");
         if (!Directory.Exists(wakeWordModelPath))
@@ -97,10 +103,36 @@ internal sealed class VoiceWakeWordService : IDisposable
 
     private string TranscribePortugueseAudio(byte[] audio, int length)
     {
-        using var recognizer = new VoskRecognizer(_portugueseModel, 16000.0f);
+        return TranscribeAudio(_portugueseModel, audio, length);
+    }
+
+    private string TranscribeEnglishAudio(byte[] audio, int length)
+    {
+        return TranscribeAudio(_model, audio, length);
+    }
+
+    private static string TranscribeAudio(Model model, byte[] audio, int length)
+    {
+        using var recognizer = new VoskRecognizer(model, 16000.0f);
         recognizer.SetWords(true);
         var isFinalized = recognizer.AcceptWaveform(audio, length);
         return isFinalized ? recognizer.Result() : recognizer.FinalResult();
+    }
+
+    private string? TranscribeBestAudio(byte[] audio, int length)
+    {
+        VoiceTranscriptionCandidate? portuguese = null;
+        VoiceTranscriptionCandidate? english = null;
+        try { portuguese = _useWhisperPortuguese
+            ? _whisper.Transcribe(audio, length, "pt")
+            : CreateTranscriptionCandidate(TranscribePortugueseAudio(audio, length)); }
+        catch { }
+        try { english = _useWhisperEnglish
+            ? _whisper.Transcribe(audio, length, "en")
+            : CreateTranscriptionCandidate(TranscribeEnglishAudio(audio, length)); }
+        catch { }
+        var best = ChooseBestTranscription(portuguese, english);
+        return best is null ? null : RemoveActivationWord(best.Text);
     }
 
     private void BeginPostWakeCapture(byte[] wakeWordPcm)
@@ -120,9 +152,8 @@ internal sealed class VoiceWakeWordService : IDisposable
         if (finalized)
         {
             var wakeRecognizerResult = _recognizer.Result();
-            var portugueseResult = TranscribePortugueseAudio(
+            var transcript = TranscribeBestAudio(
                 _followupSegmentAudio.GetBuffer(), checked((int)_followupSegmentAudio.Length));
-            var transcript = GetPortugueseText(portugueseResult);
             if (HasRecognizedText(wakeRecognizerResult) || transcript is not null)
             {
                 FollowupSpeechCaptured?.Invoke(transcript, CreateCombinedWaveAudio(), GetFollowupDebugInfo());
@@ -137,9 +168,9 @@ internal sealed class VoiceWakeWordService : IDisposable
         var partialResult = _recognizer.PartialResult();
         if (HasRecognizedPartialText(partialResult) && _followupSegmentAudio.Length > 0)
         {
-            var portugueseResult = TranscribePortugueseAudio(
+            var transcript = TranscribeBestAudio(
                 _followupSegmentAudio.GetBuffer(), checked((int)_followupSegmentAudio.Length));
-            FollowupSpeechCaptured?.Invoke(GetPortugueseText(portugueseResult), CreateCombinedWaveAudio(), GetFollowupDebugInfo());
+            FollowupSpeechCaptured?.Invoke(transcript, CreateCombinedWaveAudio(), GetFollowupDebugInfo());
         }
         EndPostWakeCapture();
     }
@@ -198,12 +229,27 @@ internal sealed class VoiceWakeWordService : IDisposable
         return wave.ToArray();
     }
 
-    private static string? GetPortugueseText(string resultJson)
+    private static VoiceTranscriptionCandidate? CreateTranscriptionCandidate(string resultJson)
     {
         using var result = JsonDocument.Parse(resultJson);
-        if (!result.RootElement.TryGetProperty("text", out var text)) return null;
-        var transcript = text.GetString()?.Trim();
-        return string.IsNullOrWhiteSpace(transcript) ? null : transcript;
+        if (!result.RootElement.TryGetProperty("text", out var textElement)) return null;
+        var text = textElement.GetString()?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        double? confidence = null;
+        if (result.RootElement.TryGetProperty("result", out var words) &&
+            words.ValueKind == JsonValueKind.Array)
+        {
+            var confidences = new List<double>();
+            foreach (var word in words.EnumerateArray())
+            {
+                if (word.TryGetProperty("conf", out var value) && value.TryGetDouble(out var wordConfidence))
+                    confidences.Add(wordConfidence);
+            }
+            if (confidences.Count > 0) confidence = confidences.Average();
+        }
+
+        return new VoiceTranscriptionCandidate(text, confidence);
     }
 
     private string? TranscribeSpeechAfterWakeWord(string wakeWordJson, byte[] pcmAudio, double segmentStartSeconds)
@@ -223,13 +269,29 @@ internal sealed class VoiceWakeWordService : IDisposable
             _lastDebugInfo = new VoiceCaptureDebugInfo(GetDurationMilliseconds(pcmAudio.Length), cutMilliseconds,
                 speechAudio.Length == 0 ? null : CreateWaveAudio(speechAudio));
         if (speechAudio.Length == 0) return null;
-        var portugueseResult = TranscribePortugueseAudio(speechAudio, speechAudio.Length);
-        var transcript = GetPortugueseText(portugueseResult);
-        if (string.IsNullOrWhiteSpace(transcript)) return null;
+        return TranscribeBestAudio(speechAudio, speechAudio.Length);
+    }
+
+    private static VoiceTranscriptionCandidate? ChooseBestTranscription(
+        VoiceTranscriptionCandidate? portuguese,
+        VoiceTranscriptionCandidate? english)
+    {
+        if (portuguese is null) return english;
+        if (english is null) return portuguese;
+        if (portuguese.Confidence is null || english.Confidence is null) return portuguese;
+
+        // Keep Portuguese on close scores to preserve current behavior unless English is clearly stronger.
+        return english.Confidence.Value > portuguese.Confidence.Value + 0.03
+            ? english
+            : portuguese;
+    }
+
+    private static string RemoveActivationWord(string transcript)
+    {
         var words = transcript.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (words.Length > 0 && IsActivationWord(words[0]))
-            transcript = string.Join(' ', words.Skip(1));
-        return string.IsNullOrWhiteSpace(transcript) ? null : transcript;
+            return string.Join(' ', words.Skip(1));
+        return transcript;
     }
 
     private static bool HasRecognizedText(string resultJson)

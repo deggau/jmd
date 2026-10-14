@@ -1,11 +1,12 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$')]
-    [string] $Version = '0.1.30',
+    [string] $Version = '0.1.31',
     [ValidateSet('win-x64')]
     [string] $Runtime = 'win-x64',
     [string] $Configuration = 'Release',
-    [string] $Makensis = 'makensis'
+    [string] $Makensis = 'makensis',
+    [string] $WhisperRuntimeDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +30,18 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish falhou com código $LASTEXITCOD
 
 $appExe = Join-Path $publishDir 'JMD.App.exe'
 if (-not (Test-Path $appExe)) { throw "Executável publicado não encontrado: $appExe" }
+
+if ($WhisperRuntimeDirectory) {
+    $whisperCli = Join-Path $WhisperRuntimeDirectory 'whisper-cli.exe'
+    if (-not (Test-Path $whisperCli)) { throw "Executável whisper-cli.exe não encontrado em: $WhisperRuntimeDirectory" }
+    $whisperOutput = Join-Path $publishDir 'whisper'
+    New-Item $whisperOutput -ItemType Directory -Force | Out-Null
+    Copy-Item $whisperCli $whisperOutput -Force
+    Get-ChildItem -Path $WhisperRuntimeDirectory -Filter '*.dll' -File | Copy-Item -Destination $whisperOutput -Force
+    $whisperLicense = Join-Path $WhisperRuntimeDirectory 'LICENSE-whisper.cpp.txt'
+    if (-not (Test-Path $whisperLicense)) { throw "Licença do whisper.cpp não encontrada: $whisperLicense" }
+    Copy-Item $whisperLicense $whisperOutput -Force
+}
 
 $voiceModel = 'vosk-model-small-en-us-0.15'
 $voiceModelArchive = Join-Path $env:TEMP "$voiceModel.zip"

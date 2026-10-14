@@ -14,6 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout whisper.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: v1.9.5
+          path: whisper.cpp
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
@@ -45,11 +52,31 @@ jobs:
           }
           Add-Content -Path $env:GITHUB_PATH -Value $nsisDirectory
 
+      - name: Build whisper.cpp for Windows 10
+        shell: pwsh
+        run: |
+          cmake -S whisper.cpp -B whisper.cpp/build -A x64 `
+            -DWHISPER_BUILD_TESTS=OFF `
+            -DWHISPER_BUILD_EXAMPLES=ON `
+            -DWHISPER_BUILD_SERVER=OFF `
+            -DGGML_NATIVE=OFF `
+            -DGGML_AVX=OFF `
+            -DGGML_AVX2=OFF `
+            -DGGML_FMA=OFF `
+            -DGGML_OPENMP=OFF `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build whisper.cpp/build --config Release --target whisper-cli
+          if ($LASTEXITCODE -ne 0) { throw "A compilação do whisper.cpp falhou com código $LASTEXITCODE" }
+          $whisperCli = Get-ChildItem whisper.cpp/build -Filter 'whisper-cli.exe' -Recurse -File | Select-Object -First 1
+          if (-not $whisperCli) { throw 'whisper-cli.exe não encontrado após a compilação.' }
+          Copy-Item whisper.cpp/LICENSE (Join-Path $whisperCli.DirectoryName 'LICENSE-whisper.cpp.txt')
+          "WHISPER_RUNTIME_DIRECTORY=$($whisperCli.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build installer
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          ./installer/Build-Installer.ps1 -Version $version -Runtime win-x64
+          ./installer/Build-Installer.ps1 -Version $version -Runtime win-x64 -WhisperRuntimeDirectory $env:WHISPER_RUNTIME_DIRECTORY
 
       - name: Create checksum
         shell: pwsh
