@@ -61,7 +61,6 @@ public partial class MainWindow : Window
     private readonly List<ShortcutRow> _shortcutRows = [];
     private readonly DraftStack _draftStack = new();
     private readonly Dictionary<string, TextBlock> _shortcutStatusLabels = new(StringComparer.Ordinal);
-    private TextBlock? _customShortcutsHeader;
     private GlobalHotkeyService? _hotkeys;
     private IntPtr _previousWindow;
     private bool _closingForExit;
@@ -189,11 +188,14 @@ public partial class MainWindow : Window
         {
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("checkUpdates")
         });
+        _commands.Add(new CommandRow("createCustomShortcut", "Criar atalho personalizado",
+            "Cadastra um comando para abrir um programa ou endereço da web.", "Sem atalho"));
         foreach (var shortcut in _settings.CustomShortcuts)
         {
             var row = new CommandRow(shortcut.Id, shortcut.Name, shortcut.Target,
                 string.IsNullOrWhiteSpace(shortcut.Shortcut) ? "Comando personalizado" : shortcut.Shortcut)
             {
+                IsCustomShortcut = true,
                 VoicePhrasesDisplay = GetVoicePhrasesDisplay(shortcut.Id)
             };
             _commands.Add(row);
@@ -249,30 +251,14 @@ public partial class MainWindow : Window
         SettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
-        var settingsHeading = new Grid { Margin = new Thickness(0, 0, 0, 5) };
-        settingsHeading.ColumnDefinitions.Add(new ColumnDefinition());
-        settingsHeading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        settingsHeading.Children.Add(new TextBlock
+        SettingsPanel.Children.Add(new TextBlock
         {
             Text = "Combinações globais",
             Foreground = Brushes.White,
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center
+            Margin = new Thickness(0, 0, 0, 5)
         });
-        var customShortcutsLink = new Button
-        {
-            Content = "Atalhos personalizados",
-            Padding = new Thickness(9, 5, 9, 5),
-            Background = new SolidColorBrush(Color.FromRgb(42, 45, 53)),
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            BorderThickness = new Thickness(0),
-            FocusVisualStyle = (Style)FindResource("DarkFocusCue")
-        };
-        customShortcutsLink.Click += (_, _) => _customShortcutsHeader?.BringIntoView();
-        Grid.SetColumn(customShortcutsLink, 1);
-        settingsHeading.Children.Add(customShortcutsLink);
-        SettingsPanel.Children.Add(settingsHeading);
         SettingsPanel.Children.Add(new TextBlock
         {
             Text = "Clique no campo e pressione a nova combinação. Para ativar por voz, associe uma ou mais frases ao comando, uma por linha. Diga ‘Jey’ seguido de uma dessas frases.",
@@ -304,7 +290,6 @@ public partial class MainWindow : Window
             Margin = new Thickness(2, 12, 2, 4)
         });
 
-        RenderCustomShortcutSettings();
 
         var note = new TextBlock
         {
@@ -539,269 +524,6 @@ public partial class MainWindow : Window
            ?? _settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == commandId)?.Name
            ?? commandId;
 
-    private void RenderCustomShortcutSettings()
-    {
-        _customShortcutsHeader = new TextBlock
-        {
-            Text = "Atalhos personalizados",
-            Foreground = Brushes.White,
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(2, 18, 0, 5)
-        };
-        SettingsPanel.Children.Add(_customShortcutsHeader);
-        SettingsPanel.Children.Add(new TextBlock
-        {
-            Text = "Crie um comando para abrir um programa ou uma URL. Configure uma combinação de teclas, uma frase do Jey ou ambos.",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
-            FontSize = 12,
-            Margin = new Thickness(2, 0, 2, 10)
-        });
-
-        var nameBox = CreateSettingsTextBox("", 36);
-        nameBox.ToolTip = "Nome que aparecerá no comando e no histórico";
-        var targetBox = CreateSettingsTextBox("", 36);
-        targetBox.ToolTip = "Caminho do programa (ex.: notepad.exe) ou endereço http(s)";
-        var shortcutBox = CreateSettingsTextBox("", 36);
-        shortcutBox.ToolTip = "Opcional. Foque aqui e pressione uma combinação com Ctrl, Alt, Shift ou Win";
-        shortcutBox.PreviewKeyDown += CustomShortcutCapture_PreviewKeyDown;
-        var phrasesBox = CreateSettingsTextBox("", 64, multiline: true);
-        phrasesBox.ToolTip = "Opcional. Uma frase exclusiva do Jey por linha";
-
-        var createFields = new Grid { Margin = new Thickness(0, 0, 0, 4) };
-        createFields.ColumnDefinitions.Add(new ColumnDefinition());
-        createFields.ColumnDefinitions.Add(new ColumnDefinition());
-        createFields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        createFields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        AddCustomField("Nome do comando", nameBox, 0, 0);
-        AddCustomField("Programa ou URL", targetBox, 1, 0);
-        AddCustomField("Atalho (opcional)", shortcutBox, 0, 1);
-        AddCustomField("Frases do Jey", phrasesBox, 1, 1);
-        SettingsPanel.Children.Add(createFields);
-
-        var createButton = new Button
-        {
-            Content = "Criar atalho personalizado",
-            FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
-            Padding = new Thickness(12, 7, 12, 7),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-            Margin = new Thickness(0, 2, 0, 10),
-            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
-            BorderThickness = new Thickness(0)
-        };
-        createButton.Click += (_, _) =>
-        {
-            var name = nameBox.Text.Trim();
-            var target = targetBox.Text.Trim();
-            var shortcutText = shortcutBox.Text.Trim();
-            var phrases = ParseVoicePhrases(phrasesBox.Text);
-            if (name.Length == 0 || target.Length == 0)
-            {
-                SetStatus("Informe o nome e o programa ou URL do atalho.", false);
-                return;
-            }
-            if (!IsValidCustomTarget(target))
-            {
-                SetStatus("Informe um caminho de programa ou uma URL http/https válida.", false);
-                return;
-            }
-            if (shortcutText.Length == 0 && phrases.Count == 0)
-            {
-                SetStatus("Configure um atalho de teclado ou uma frase do Jey.", false);
-                return;
-            }
-            if (shortcutText.Length > 0 && !ShortcutParser.TryParse(shortcutText, out _, out var parseError))
-            {
-                SetStatus(parseError ?? "Atalho de teclado inválido.", false);
-                return;
-            }
-            if (shortcutText.Length > 0 && HasShortcutConflict(shortcutText, null))
-            {
-                SetStatus("Essa combinação de teclas já está associada a outro comando.", false);
-                return;
-            }
-            var existingPhrases = _settings.VoicePhrases.Values.SelectMany(items => items);
-            if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases, existingPhrases))
-            {
-                SetStatus("Uma dessas frases do Jey já está associada a outro comando. Escolha frases exclusivas.", false);
-                return;
-            }
-            var entry = new CustomShortcutEntry
-            {
-                Name = name,
-                Target = target,
-                Shortcut = shortcutText
-            };
-            _settings.CustomShortcuts.Add(entry);
-            _settings.VoicePhrases[entry.Id] = phrases;
-            try
-            {
-                _settingsStore.Save(_settings);
-                _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target,
-                    string.IsNullOrWhiteSpace(entry.Shortcut) ? "Comando personalizado" : entry.Shortcut)
-                {
-                    VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
-                });
-                BuildSettingsPanel();
-                SetStatus($"Atalho personalizado criado: {name}.", true);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                _settings.CustomShortcuts.Remove(entry);
-                _settings.VoicePhrases.Remove(entry.Id);
-                SetStatus($"Não foi possível salvar o atalho: {exception.Message}", false);
-            }
-        };
-        SettingsPanel.Children.Add(createButton);
-
-        foreach (var entry in _settings.CustomShortcuts)
-        {
-            var card = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(12),
-                Margin = new Thickness(0, 0, 0, 7)
-            };
-            var details = new Grid();
-            details.ColumnDefinitions.Add(new ColumnDefinition());
-            details.ColumnDefinitions.Add(new ColumnDefinition());
-            details.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            details.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            details.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var nameEditor = CreateSettingsTextBox(entry.Name, 32);
-            var targetEditor = CreateSettingsTextBox(entry.Target, 32);
-            var shortcutEditor = CreateSettingsTextBox(entry.Shortcut, 32);
-            shortcutEditor.PreviewKeyDown += CustomShortcutCapture_PreviewKeyDown;
-            var phrasesEditor = CreateSettingsTextBox(GetVoicePhrasesText(entry.Id), 42, multiline: true);
-            phrasesEditor.Tag = entry.Id;
-            phrasesEditor.TextChanged += CustomVoicePhrasesEditor_TextChanged;
-            AddEditorField(details, "Nome", nameEditor, 0, 0);
-            AddEditorField(details, "Programa ou URL", targetEditor, 1, 0);
-            AddEditorField(details, "Atalho", shortcutEditor, 0, 1);
-            AddEditorField(details, "Frases do Jey", phrasesEditor, 1, 1);
-            var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 7, 0, 0) };
-            var saveButton = new Button
-            {
-                Content = "Salvar alterações",
-                Tag = entry,
-                Padding = new Thickness(9, 5, 9, 5),
-                Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-                Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
-                BorderThickness = new Thickness(0)
-            };
-            saveButton.Click += (_, _) =>
-            {
-                var name = nameEditor.Text.Trim();
-                var target = targetEditor.Text.Trim();
-                var shortcut = shortcutEditor.Text.Trim();
-                if (name.Length == 0 || target.Length == 0)
-                {
-                    SetStatus("Informe o nome e o programa ou URL do atalho.", false);
-                    return;
-                }
-                if (!IsValidCustomTarget(target))
-                {
-                    SetStatus("Informe um caminho de programa ou uma URL http/https válida.", false);
-                    return;
-                }
-                if (shortcut.Length > 0 && !ShortcutParser.TryParse(shortcut, out _, out var parseError))
-                {
-                    SetStatus(parseError ?? "Atalho de teclado inválido.", false);
-                    return;
-                }
-                if (shortcut.Length > 0 && HasShortcutConflict(shortcut, entry.Id))
-                {
-                    SetStatus("Essa combinação de teclas já está associada a outro comando.", false);
-                    return;
-                }
-                var phrases = ParseVoicePhrases(phrasesEditor.Text);
-                var existingPhrases = _settings.VoicePhrases.Where(pair => pair.Key != entry.Id).SelectMany(pair => pair.Value);
-                if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases, existingPhrases))
-                {
-                    SetStatus("Essa frase do Jey já está associada a outro comando. Escolha frases exclusivas.", false);
-                    return;
-                }
-                if (shortcut.Length == 0 && phrases.Count == 0)
-                {
-                    SetStatus("Configure um atalho de teclado ou uma frase do Jey.", false);
-                    return;
-                }
-                var previous = (Name: entry.Name, Target: entry.Target, Shortcut: entry.Shortcut);
-                var previousPhrases = _settings.VoicePhrases.TryGetValue(entry.Id, out var configuredPhrases)
-                    ? configuredPhrases.ToList()
-                    : [];
-                entry.Name = name;
-                entry.Target = target;
-                entry.Shortcut = shortcut;
-                _settings.VoicePhrases[entry.Id] = phrases;
-                try
-                {
-                    _settingsStore.Save(_settings);
-                    var oldRow = _commands.FirstOrDefault(command => command.Id == entry.Id);
-                    if (oldRow is not null) _commands.Remove(oldRow);
-                    _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target,
-                        string.IsNullOrWhiteSpace(entry.Shortcut) ? "Comando personalizado" : entry.Shortcut)
-                    {
-                        VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
-                    });
-                    BuildSettingsPanel();
-                    SetStatus($"Atalho atualizado: {entry.Name}.", true);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    entry.Name = previous.Name;
-                    entry.Target = previous.Target;
-                    entry.Shortcut = previous.Shortcut;
-                    _settings.VoicePhrases[entry.Id] = previousPhrases;
-                    SetStatus($"Não foi possível salvar o atalho: {exception.Message}", false);
-                }
-            };
-            var removeButton = new Button
-            {
-                Content = "Remover",
-                Tag = entry,
-                Padding = new Thickness(9, 5, 9, 5),
-                Margin = new Thickness(8, 0, 0, 0),
-                Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
-                Foreground = Brushes.White,
-                BorderThickness = new Thickness(0)
-            };
-            removeButton.Click += RemoveCustomShortcut_Click;
-            actions.Children.Add(saveButton);
-            actions.Children.Add(removeButton);
-            Grid.SetRow(actions, 2);
-            Grid.SetColumnSpan(actions, 2);
-            details.Children.Add(actions);
-            card.Child = details;
-            SettingsPanel.Children.Add(card);
-        }
-
-        void AddCustomField(string label, TextBox editor, int column, int row)
-        {
-            var field = new StackPanel { Margin = new Thickness(column == 0 ? 0 : 8, 4, 0, 2) };
-            field.Children.Add(new TextBlock { Text = label, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 0, 2, 3) });
-            field.Children.Add(editor);
-            Grid.SetColumn(field, column);
-            Grid.SetRow(field, row);
-            createFields.Children.Add(field);
-        }
-
-        static void AddEditorField(Grid parent, string label, TextBox editor, int column, int row)
-        {
-            var field = new StackPanel { Margin = new Thickness(column == 0 ? 0 : 8, 0, 0, 6) };
-            field.Children.Add(new TextBlock { Text = label, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 0, 2, 3) });
-            field.Children.Add(editor);
-            Grid.SetColumn(field, column);
-            Grid.SetRow(field, row);
-            parent.Children.Add(field);
-        }
-    }
-
     private static TextBox CreateSettingsTextBox(string text, double height, bool multiline = false)
         => new()
         {
@@ -860,6 +582,97 @@ public partial class MainWindow : Window
         editor.Text = new ShortcutBinding(modifiers, KeyInterop.VirtualKeyFromKey(key)).ToString();
     }
 
+    private void CreateCustomShortcutFromDialog(CustomShortcutEntry? existing = null)
+    {
+        (string Name, string Target, string Shortcut)? previous = existing is null ? null : (existing.Name, existing.Target, existing.Shortcut);
+        var previousPhrases = existing is not null && _settings.VoicePhrases.TryGetValue(existing.Id, out var savedPhrases)
+            ? savedPhrases.ToList() : [];
+        var dialog = new CustomShortcutEditorWindow(existing, previousPhrases);
+        _showingDialog = true;
+        bool accepted;
+        try { accepted = dialog.ShowDialog() == true; }
+        finally { _showingDialog = false; }
+        if (!accepted) return;
+
+        var name = dialog.CommandName;
+        var target = dialog.Target;
+        var shortcutText = dialog.Shortcut;
+        var phrases = dialog.VoicePhrases.ToList();
+        string? error = null;
+        if (name.Length == 0 || target.Length == 0) error = "Informe o nome e o programa ou URL do atalho.";
+        else if (!IsValidCustomTarget(target)) error = "Informe um caminho de programa ou uma URL http/https válida.";
+        else if (shortcutText.Length == 0 && phrases.Count == 0) error = "Configure um atalho de teclado ou uma frase do Jey.";
+        else if (shortcutText.Length > 0 && !ShortcutParser.TryParse(shortcutText, out _, out error)) { }
+        else if (shortcutText.Length > 0 && HasShortcutConflict(shortcutText, existing?.Id)) error = "Essa combinação de teclas já está associada a outro comando.";
+        else if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases,
+                     _settings.VoicePhrases.Where(pair => pair.Key != existing?.Id).SelectMany(pair => pair.Value)))
+            error = "Uma dessas frases do Jey já está associada a outro comando. Escolha frases exclusivas.";
+        if (error is not null)
+        {
+            Notify("JMD", error, false);
+            return;
+        }
+
+        var entry = existing ?? new CustomShortcutEntry();
+        entry.Name = name;
+        entry.Target = target;
+        entry.Shortcut = shortcutText;
+        if (existing is null) _settings.CustomShortcuts.Add(entry);
+        _settings.VoicePhrases[entry.Id] = phrases;
+        try
+        {
+            _settingsStore.Save(_settings);
+            var oldRow = _commands.FirstOrDefault(command => command.Id == entry.Id);
+            if (oldRow is not null) _commands.Remove(oldRow);
+            _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target,
+                string.IsNullOrWhiteSpace(entry.Shortcut) ? "Comando personalizado" : entry.Shortcut)
+            {
+                IsCustomShortcut = true,
+                VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
+            });
+            if (_hotkeys is not null)
+            {
+                _hotkeys.Unregister(entry.Id);
+                if (!string.IsNullOrWhiteSpace(entry.Shortcut) && ShortcutParser.TryParse(entry.Shortcut, out var binding, out _) &&
+                    !_settings.DisabledCommands.Contains(entry.Id))
+                    _hotkeys.TryRegister(entry.Id, binding!, out _);
+            }
+            _commandView?.Refresh();
+            Notify("JMD", $"Atalho personalizado {(existing is null ? "criado" : "atualizado")}: {name}.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (existing is null)
+            {
+                _settings.CustomShortcuts.Remove(entry);
+                _settings.VoicePhrases.Remove(entry.Id);
+            }
+            else if (previous is not null)
+            {
+                entry.Name = previous.Value.Name;
+                entry.Target = previous.Value.Target;
+                entry.Shortcut = previous.Value.Shortcut;
+                _settings.VoicePhrases[entry.Id] = previousPhrases;
+            }
+            Notify("JMD", $"Não foi possível salvar o atalho: {exception.Message}", false);
+        }
+    }
+
+    private void EditCustomCommandButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string id }) return;
+        var entry = _settings.CustomShortcuts.FirstOrDefault(item => item.Id == id);
+        if (entry is not null) CreateCustomShortcutFromDialog(entry);
+    }
+
+    private void RemoveCustomCommandButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string id }) return;
+        var entry = _settings.CustomShortcuts.FirstOrDefault(item => item.Id == id);
+        if (entry is null) return;
+        RemoveCustomShortcut_Click(new Button { Tag = entry }, e);
+    }
+
     private void RemoveCustomShortcut_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: CustomShortcutEntry entry }) return;
@@ -881,6 +694,7 @@ public partial class MainWindow : Window
             if (savedPhrases is not null) _settings.VoicePhrases[entry.Id] = savedPhrases;
             _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target, entry.Shortcut)
             {
+                IsCustomShortcut = true,
                 VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
             });
             SetStatus($"Não foi possível remover o atalho: {exception.Message}", false);
@@ -1776,6 +1590,7 @@ public partial class MainWindow : Window
         }
         else if (id == "snippets") await InsertSavedSnippetAsync();
         else if (id == "saveSnippet") await CaptureSnippetAsync();
+        else if (id == "createCustomShortcut") CreateCustomShortcutFromDialog();
         else if (id == "draftSave") await SaveDraftAsync();
         else if (id == "draftRestore") await RestoreDraftAsync();
         else if (id == "about") AboutMenuItem_Click(this, new RoutedEventArgs());
@@ -2601,6 +2416,7 @@ public partial class MainWindow : Window
             await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
         if (id == "snippets") await InsertSavedSnippetAsync();
         if (id == "saveSnippet") await CaptureSnippetAsync();
+        if (id == "createCustomShortcut") CreateCustomShortcutFromDialog();
         if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
             OpenCustomShortcut(customShortcut);
     }
@@ -2767,6 +2583,8 @@ internal sealed class CommandRow(string id, string name, string description, str
     private Brush _statusBrush = new SolidColorBrush(Color.FromRgb(150, 155, 167));
     private bool _visible = true;
     private string _voicePhrasesDisplay = string.Empty;
+    private bool _isCustomShortcut;
+    public bool IsCustomShortcut { get => _isCustomShortcut; set { _isCustomShortcut = value; Changed(nameof(IsCustomShortcut)); } }
     public string Shortcut { get => _shortcut; set { _shortcut = value; Changed(nameof(Shortcut)); } }
     public string Status { get => _status; set { _status = value; Changed(nameof(Status)); } }
     public Brush StatusBrush { get => _statusBrush; set { _statusBrush = value; Changed(nameof(StatusBrush)); } }

@@ -75,35 +75,57 @@
           </ListBox.ItemContainerStyle>
           <ListBox.ItemTemplate>
             <DataTemplate>
-              <Button Tag="{Binding Id}" Click="CommandButton_Click" Padding="16" Margin="0,0,0,9"
-                      Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1"
-                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Cursor="Hand"
-                      FocusVisualStyle="{StaticResource AccentFocusCue}">
-                <Grid>
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                  <StackPanel>
-                    <TextBlock Text="{Binding Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding Description}" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
-                    <TextBlock Text="{Binding Status}" Foreground="{Binding StatusBrush}" FontSize="11" Margin="0,7,0,0" />
-                    <TextBlock Text="{Binding VoicePhrasesDisplay}" Foreground="#FFB4F36A" FontSize="11"
-                               TextWrapping="Wrap" Margin="0,5,0,0">
-                      <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                          <Setter Property="Visibility" Value="Collapsed" />
-                          <Style.Triggers>
-                            <DataTrigger Binding="{Binding HasVoicePhrases}" Value="True">
-                              <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                          </Style.Triggers>
-                        </Style>
-                      </TextBlock.Style>
-                    </TextBlock>
-                  </StackPanel>
-                  <Border Grid.Column="1" Background="#FF30343E" CornerRadius="6" Padding="9,5" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Shortcut}" Foreground="#FFE4E7EC" FontSize="11" />
-                  </Border>
-                </Grid>
-              </Button>
+              <Grid Margin="0,0,0,9">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Button Tag="{Binding Id}" Click="CommandButton_Click" Padding="16"
+                        Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Cursor="Hand"
+                        FocusVisualStyle="{StaticResource AccentFocusCue}">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <DockPanel LastChildFill="False">
+                        <TextBlock Text="{Binding Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+                        <Border Background="#FF30343E" CornerRadius="5" Padding="6,2" Margin="8,0,0,0">
+                          <Border.Style>
+                            <Style TargetType="Border">
+                              <Setter Property="Visibility" Value="Collapsed" />
+                              <Style.Triggers><DataTrigger Binding="{Binding IsCustomShortcut}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                            </Style>
+                          </Border.Style>
+                          <TextBlock Text="Personalizado" Foreground="#FFB4F36A" FontSize="10" />
+                        </Border>
+                      </DockPanel>
+                      <TextBlock Text="{Binding Description}" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,5,0,0" />
+                      <TextBlock Text="{Binding Status}" Foreground="{Binding StatusBrush}" FontSize="11" Margin="0,7,0,0" />
+                      <TextBlock Text="{Binding VoicePhrasesDisplay}" Foreground="#FFB4F36A" FontSize="11"
+                                 TextWrapping="Wrap" Margin="0,5,0,0">
+                        <TextBlock.Style>
+                          <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers><DataTrigger Binding="{Binding HasVoicePhrases}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                          </Style>
+                        </TextBlock.Style>
+                      </TextBlock>
+                    </StackPanel>
+                    <Border Grid.Column="1" Background="#FF30343E" CornerRadius="6" Padding="9,5" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Shortcut}" Foreground="#FFE4E7EC" FontSize="11" />
+                    </Border>
+                  </Grid>
+                </Button>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                  <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                      <Style.Triggers><DataTrigger Binding="{Binding IsCustomShortcut}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                    </Style>
+                  </StackPanel.Style>
+                  <Button Tag="{Binding Id}" Click="EditCustomCommandButton_Click" Content="Editar" Padding="9,5"
+                          Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                  <Button Tag="{Binding Id}" Click="RemoveCustomCommandButton_Click" Content="Remover" Padding="9,5" Margin="6,0,0,0"
+                          Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                </StackPanel>
+              </Grid>
             </DataTemplate>
           </ListBox.ItemTemplate>
       </ListBox>
