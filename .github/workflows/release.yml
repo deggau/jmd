@@ -20,11 +20,20 @@ jobs:
 
       - name: Install NSIS
         shell: pwsh
-        run: choco install nsis --yes --no-progress
-
-      - name: Add NSIS to PATH
-        shell: pwsh
-        run: Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files (x86)\NSIS'
+        run: |
+          $nsisVersion = '3.13'
+          $nsisArchive = Join-Path $env:RUNNER_TEMP "nsis-$nsisVersion.zip"
+          $nsisDirectory = Join-Path $env:RUNNER_TEMP "nsis-$nsisVersion"
+          Invoke-WebRequest -Uri "https://downloads.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip" -OutFile $nsisArchive
+          $actualHash = (Get-FileHash -Path $nsisArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne 'ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8') {
+            throw 'O checksum SHA-256 do arquivo NSIS não confere.'
+          }
+          Expand-Archive -Path $nsisArchive -DestinationPath $env:RUNNER_TEMP -Force
+          if (-not (Test-Path (Join-Path $nsisDirectory 'makensis.exe'))) {
+            throw 'O arquivo makensis.exe não foi encontrado na extração do NSIS.'
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisDirectory
 
       - name: Build installer
         shell: pwsh
