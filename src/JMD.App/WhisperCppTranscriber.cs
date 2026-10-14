@@ -44,10 +44,15 @@ internal sealed class WhisperCppTranscriber
             }
 
             progress?.Report(new WhisperDownloadProgress(null, "Verificando integridade do modelo…"));
-            await using var model = File.OpenRead(temporaryPath);
-            var actualSha256 = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(model, cancellationToken)).ToLowerInvariant();
+            string actualSha256;
+            await using (var model = File.OpenRead(temporaryPath))
+            {
+                actualSha256 = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(model, cancellationToken)).ToLowerInvariant();
+            }
+
             if (!string.Equals(actualSha256, expectedSha256, StringComparison.Ordinal))
                 throw new InvalidDataException($"O checksum do modelo Whisper não confere (SHA-256 recebido: {actualSha256}).");
+
             File.Move(temporaryPath, ModelPath, overwrite: true);
         }
         finally
