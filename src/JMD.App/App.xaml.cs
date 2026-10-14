@@ -136,6 +136,7 @@ internal sealed class UserSettings
     public bool KeepAwakeEnabled { get; set; }
     public bool VoiceWakeWordEnabled { get; set; } = true;
     public bool VoiceDebugEnabled { get; set; }
+    public bool VoiceWakeRecognitionDebugEnabled { get; set; }
     public string JeyPortugueseModel { get; set; } = "vosk";
     public string JeyEnglishModel { get; set; } = "vosk";
     public List<SnippetEntry> Snippets { get; set; } = [];
@@ -151,7 +152,9 @@ internal sealed class UserSettings
         ["snippets"] = ShortcutDefaults.ForCommand("snippets"),
         ["saveSnippet"] = ShortcutDefaults.ForCommand("saveSnippet"),
         ["draftSave"] = ShortcutDefaults.ForCommand("draftSave"),
-        ["draftRestore"] = ShortcutDefaults.ForCommand("draftRestore")
+        ["draftRestore"] = ShortcutDefaults.ForCommand("draftRestore"),
+        ["about"] = string.Empty,
+        ["checkUpdates"] = string.Empty
     };
     public Dictionary<string, List<string>> VoicePhrases { get; set; } = new(StringComparer.Ordinal);
     public HashSet<string> DisabledCommands { get; set; } = new(StringComparer.Ordinal);

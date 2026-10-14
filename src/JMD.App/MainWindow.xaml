@@ -111,6 +111,39 @@
         <ScrollViewer x:Name="SettingsPage" VerticalScrollBarVisibility="Auto" Background="#FF17191F">
           <StackPanel x:Name="SettingsPanel" Margin="2,10,2,8" />
         </ScrollViewer>
+        <Grid x:Name="SqlInTestPage" Visibility="Collapsed" Background="#FF17191F">
+          <StackPanel Margin="14">
+            <Button Content="← Gerenciar atalhos" Click="BackToShortcutSettings_Click" HorizontalAlignment="Left"
+                    Padding="10,6" Margin="0,0,0,12" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
+            <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14">
+              <StackPanel>
+                <TextBlock Text="Testar conversão SQL IN" Foreground="White" FontWeight="SemiBold" FontSize="14" />
+                <TextBlock Text="Teste a conversão sem alterar o clipboard." Foreground="#FF969BA7" FontSize="11" Margin="0,4,0,8" />
+                <TextBox x:Name="TestInput" Text="abc,def,jeg" AcceptsReturn="True" TextWrapping="Wrap" Height="72" Padding="9"
+                         Margin="0,2,0,8" Foreground="White" Background="#FF181A20" BorderBrush="#FF414651" />
+                <Button Content="Testar conversão" Click="TestButton_Click" HorizontalAlignment="Left" Padding="12,7"
+                        Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" />
+                <TextBlock x:Name="TestOutput" Text="O resultado será exibido aqui sem alterar o clipboard."
+                           TextWrapping="Wrap" Foreground="#FFB4F36A" FontSize="12" Margin="0,9,0,0" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </Grid>
+        <Grid x:Name="SnippetManagementPage" Visibility="Collapsed" Background="#FF17191F">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="14">
+              <Button Content="← Gerenciar atalhos" Click="BackToShortcutSettings_Click" HorizontalAlignment="Left"
+                      Padding="10,6" Margin="0,0,0,12" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
+              <DockPanel Margin="0,0,0,10">
+                <Button Content="Adicionar texto" Click="AddSnippetButton_Click" DockPanel.Dock="Right" Padding="10,6"
+                        Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" />
+                <TextBlock x:Name="SnippetPageTitle" Text="Textos salvos" Foreground="White" FontSize="16" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+              </DockPanel>
+              <StackPanel x:Name="SnippetManagementPanel" />
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
         <Grid x:Name="HistoryPage" Visibility="Collapsed" Background="#FF17191F">
           <Grid Margin="12">
             <Grid.RowDefinitions>
@@ -330,12 +363,15 @@
                        TextWrapping="Wrap" FontSize="12" Margin="0,0,0,14" />
             <StackPanel Orientation="Horizontal">
               <Button x:Name="CheckUpdatesButton" Content="Verificar atualizações" Click="CheckUpdatesButton_Click"
-                      FocusVisualStyle="{StaticResource DarkFocusCue}"
-                      Padding="12,8" Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" />
+                      Style="{StaticResource JeyPrimaryButtonStyle}" />
               <Button x:Name="InstallUpdateButton" Content="Atualizar agora" Click="InstallUpdateButton_Click"
-                      Padding="12,8" Margin="8,0,0,0" Background="#FF2A2D35" Foreground="White"
-                      BorderThickness="0" Visibility="Collapsed" />
+                      Style="{StaticResource JeyPrimaryButtonStyle}" Margin="8,0,0,0" Visibility="Collapsed" />
             </StackPanel>
+            <TextBlock x:Name="UpdateProgressText" Foreground="#FFBFC3CC" FontSize="11"
+                       TextWrapping="Wrap" Margin="0,12,0,0" Visibility="Collapsed" />
+            <ProgressBar x:Name="UpdateDownloadProgress" Minimum="0" Maximum="100" Value="0" Height="5"
+                         Margin="0,7,0,0" Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}"
+                         BorderThickness="0" Visibility="Collapsed" />
           </StackPanel>
         </Border>
       </Grid>
@@ -343,12 +379,26 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="18">
           <TextBlock Text="Configurações do Jey" Foreground="White" FontSize="18" FontWeight="SemiBold" />
-          <CheckBox x:Name="VoiceDebugToggle" Content="Depuração de áudio"
+          <CheckBox x:Name="VoiceDebugToggle" Content="Histórico detalhado de áudio"
                     Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,18,0,0"
                     Checked="VoiceDebugToggle_Changed" Unchecked="VoiceDebugToggle_Changed"
-                    ToolTip="Guarda no histórico a duração, o ponto de corte e o trecho enviado à transcrição em português." />
-          <TextBlock Text="Quando ativada, os detalhes de captura aparecem nos registros de comandos de voz do histórico."
+                    ToolTip="Guarda no histórico a duração, o ponto de corte e o trecho enviado aos modelos de transcrição." />
+          <TextBlock Text="Guarda detalhes da captura nos registros de comandos de voz do histórico."
                      Foreground="#FF969BA7" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
+          <CheckBox x:Name="VoiceRecognitionDebugToggle" Content="Depuração de áudio"
+                    Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,16,0,0"
+                    Checked="VoiceRecognitionDebugToggle_Changed" Unchecked="VoiceRecognitionDebugToggle_Changed"
+                    ToolTip="Mostra os resultados parciais e finais do Vosk que escuta a palavra Jey." />
+          <TextBlock Text="Exibe o que o modelo de ativação está ouvindo e se reconheceu a palavra Jey. Isso ajuda a identificar variações de pronúncia."
+                     Foreground="#FF969BA7" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
+          <Border x:Name="VoiceRecognitionDebugPanel" Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1"
+                  CornerRadius="8" Padding="10" Margin="0,10,0,0" Visibility="Collapsed">
+            <StackPanel>
+              <TextBlock Text="Reconhecimento de ativação · Vosk" Foreground="#FFB4F36A" FontSize="11" FontWeight="SemiBold" />
+              <TextBlock x:Name="VoiceRecognitionDebugText" Text="Aguardando fala…" Foreground="White" FontSize="12"
+                         TextWrapping="Wrap" Margin="0,5,0,0" />
+            </StackPanel>
+          </Border>
           <TextBlock Text="Modelos de transcrição" Foreground="White" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,8" />
           <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="12">
             <StackPanel>
@@ -404,10 +454,14 @@
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*" />
           <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <TextBlock x:Name="StatusText" Grid.Column="0" Text="Atalhos prontos" Foreground="{StaticResource MutedBrush}"
                    FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
-        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+        <Button x:Name="SettingsRetryButton" Grid.Column="1" Content="Registrar atalhos novamente" Click="RetryShortcuts_Click"
+                Visibility="Collapsed" Padding="11,7" Margin="0,0,10,0" Background="#FF30343E" Foreground="White"
+                BorderThickness="0" VerticalAlignment="Center" />
+        <StackPanel x:Name="FooterHints" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
           <TextBlock x:Name="FooterVersionText" Foreground="#FF777D89" FontSize="11" Margin="0,0,12,0" />
           <TextBlock Text="↑ ↓ navegar   Enter executar   Esc fechar" Foreground="#FF777D89" FontSize="11" />
         </StackPanel>

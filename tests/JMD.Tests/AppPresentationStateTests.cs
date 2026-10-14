@@ -130,6 +130,30 @@ public sealed class AppPresentationStateTests
     }
 
     [Theory]
+    [InlineData("abrir sobre", "Abrir sobre!")]
+    [InlineData("verificar atualizações", "Verificar atualizações!!!")]
+    [InlineData("abrir sobre!", "abrir, sobre?")]
+    public void Voice_phrase_matching_ignores_punctuation(string configuredPhrase, string recognizedPhrase)
+    {
+        Assert.True(VoicePhrasePolicy.Matches(configuredPhrase, recognizedPhrase));
+    }
+
+    [Fact]
+    public void Voice_phrase_matching_rejects_different_words()
+    {
+        Assert.False(VoicePhrasePolicy.Matches("abrir sobre", "abrir configurações!"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("!!!")]
+    [InlineData("¿…?!")]
+    public void Voice_phrase_normalization_treats_empty_or_punctuation_only_transcripts_as_empty(string transcript)
+    {
+        Assert.Equal(string.Empty, VoicePhrasePolicy.Normalize(transcript));
+    }
+
+    [Theory]
     [InlineData("0.1.2", "v0.1.3", true)]
     [InlineData("0.1.2+build.4", "0.1.2", false)]
     [InlineData("0.2.0", "v0.1.9", false)]

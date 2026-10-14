@@ -9,6 +9,7 @@ namespace JMD.App;
 
 internal sealed record VoiceCaptureDebugInfo(int DurationMilliseconds, int? CutMilliseconds, byte[]? TranscriptionAudioWav);
 internal sealed record VoiceTranscriptionCandidate(string Text, double? Confidence);
+internal sealed record WakeWordRecognitionDebugInfo(string Transcript, bool IsFinal, bool? WakeWordDetected);
 
 internal sealed class VoiceWakeWordService : IDisposable
 {
@@ -34,12 +35,16 @@ internal sealed class VoiceWakeWordService : IDisposable
     private int _resourcesDisposed;
 
     private volatile bool _debugEnabled;
+    private volatile bool _wakeWordDebugEnabled;
     private VoiceCaptureDebugInfo? _lastDebugInfo;
+    private string _lastWakeWordDebugPartial = string.Empty;
 
     public bool DebugEnabled { get => _debugEnabled; set => _debugEnabled = value; }
+    public bool WakeWordRecognitionDebugEnabled { get => _wakeWordDebugEnabled; set => _wakeWordDebugEnabled = value; }
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? WakeWordRecognized;
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? FollowupSpeechCaptured;
     public event Action<Exception>? AudioProcessingFailed;
+    public event Action<WakeWordRecognitionDebugInfo>? WakeWordRecognitionDebugUpdated;
 
     public VoiceWakeWordService(bool useWhisperPortuguese = false, bool useWhisperEnglish = false)
     {
@@ -106,12 +111,19 @@ internal sealed class VoiceWakeWordService : IDisposable
 
         _utteranceAudio.Write(buffer, 0, buffer.Length);
         var wakeWordFinalized = _recognizer.AcceptWaveform(buffer, buffer.Length);
-        if (!wakeWordFinalized) return;
+        if (!wakeWordFinalized)
+        {
+            if (_wakeWordDebugEnabled) ReportWakeWordRecognition(_recognizer.PartialResult(), isFinal: false, wakeWordDetected: null);
+            return;
+        }
 
         try
         {
             var wakeWordResult = _recognizer.Result();
-            if (!IsWakeWordResult(wakeWordResult)) return;
+            var wakeWordDetected = IsWakeWordResult(wakeWordResult);
+            if (_wakeWordDebugEnabled) ReportWakeWordRecognition(wakeWordResult, isFinal: true, wakeWordDetected);
+            _lastWakeWordDebugPartial = string.Empty;
+            if (!wakeWordDetected) return;
             var pcmAudio = _utteranceAudio.ToArray();
             string? transcript;
             _lastDebugInfo = null;
@@ -335,6 +347,23 @@ internal sealed class VoiceWakeWordService : IDisposable
         using var result = JsonDocument.Parse(resultJson);
         return result.RootElement.TryGetProperty("partial", out var text) &&
             !string.IsNullOrWhiteSpace(text.GetString());
+    }
+
+    private void ReportWakeWordRecognition(string resultJson, bool isFinal, bool? wakeWordDetected)
+    {
+        try
+        {
+            using var result = JsonDocument.Parse(resultJson);
+            var property = isFinal ? "text" : "partial";
+            var transcript = result.RootElement.TryGetProperty(property, out var text)
+                ? text.GetString()?.Trim() ?? string.Empty
+                : string.Empty;
+            if (!isFinal && string.Equals(transcript, _lastWakeWordDebugPartial, StringComparison.Ordinal)) return;
+            _lastWakeWordDebugPartial = isFinal ? string.Empty : transcript;
+            WakeWordRecognitionDebugUpdated?.Invoke(new WakeWordRecognitionDebugInfo(transcript, isFinal, wakeWordDetected));
+        }
+        catch (JsonException) { }
+        catch (Exception) { }
     }
 
     private static bool IsActivationWord(string word)

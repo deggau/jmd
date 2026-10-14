@@ -74,6 +74,12 @@ public static class ShortcutDefaults
 
 public static class VoicePhrasePolicy
 {
+    public static bool Matches(string? configuredPhrase, string? recognizedPhrase)
+    {
+        var configured = Normalize(configuredPhrase);
+        return configured.Length > 0 && configured == Normalize(recognizedPhrase);
+    }
+
     public static string Normalize(string? phrase)
     {
         if (string.IsNullOrWhiteSpace(phrase)) return string.Empty;

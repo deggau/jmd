@@ -51,6 +51,7 @@ public partial class MainWindow : Window
     private string? _historyAudioPlaybackPath;
     private bool _updatingVoiceWakeWordToggle;
     private bool _updatingVoiceDebugToggle;
+    private bool _updatingVoiceRecognitionDebugToggle;
     private bool _loadingJeyModelSettings;
     private bool _downloadingWhisperModel;
     private readonly SelectionTransformer _selectionTransformer;
@@ -60,8 +61,7 @@ public partial class MainWindow : Window
     private readonly List<ShortcutRow> _shortcutRows = [];
     private readonly DraftStack _draftStack = new();
     private readonly Dictionary<string, TextBlock> _shortcutStatusLabels = new(StringComparer.Ordinal);
-    private TextBox? _testInput;
-    private TextBlock? _testOutput;
+    private TextBlock? _customShortcutsHeader;
     private GlobalHotkeyService? _hotkeys;
     private IntPtr _previousWindow;
     private bool _closingForExit;
@@ -69,6 +69,8 @@ public partial class MainWindow : Window
     private bool _updatingKeepAwakeToggle;
     private bool _showingDialog;
     private bool _checkingUpdates;
+    private string _wakeRecognitionPartial = string.Empty;
+    private string _wakeRecognitionLastFinal = "Nenhuma fala finalizada ainda.";
 
     public event Action<string, string>? TrayNotification;
 
@@ -87,6 +89,11 @@ public partial class MainWindow : Window
         _updatingVoiceDebugToggle = true;
         VoiceDebugToggle.IsChecked = _settings.VoiceDebugEnabled;
         _updatingVoiceDebugToggle = false;
+        _updatingVoiceRecognitionDebugToggle = true;
+        VoiceRecognitionDebugToggle.IsChecked = _settings.VoiceWakeRecognitionDebugEnabled;
+        VoiceRecognitionDebugPanel.Visibility = _settings.VoiceWakeRecognitionDebugEnabled ? Visibility.Visible : Visibility.Collapsed;
+        UpdateVoiceRecognitionDebugText();
+        _updatingVoiceRecognitionDebugToggle = false;
         _loadingJeyModelSettings = true;
         SelectVoiceModel(PortugueseModelCombo, _settings.JeyPortugueseModel);
         SelectVoiceModel(EnglishModelCombo, _settings.JeyEnglishModel);
@@ -121,6 +128,7 @@ public partial class MainWindow : Window
         _commandView = CollectionViewSource.GetDefaultView(_commands);
         _commandView.Filter = item => item is CommandRow command && command.Visible;
         BuildSettingsPanel();
+        BuildSnippetManagementPage();
         if (_settings.VoiceWakeWordEnabled)
         {
             try { StartVoiceWakeWord(); }
@@ -168,8 +176,14 @@ public partial class MainWindow : Window
             "Salva a seleção ou a linha do cursor e limpa o campo.", ShortcutDefaults.ForCommand("draftSave")));
         _commands.Add(new CommandRow("draftRestore", "Usar rascunho",
             "Guarda o conteúdo atual e recupera o último rascunho.", ShortcutDefaults.ForCommand("draftRestore")));
-        _commands.Add(new CommandRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.", "Jey"));
-        _commands.Add(new CommandRow("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.", "Jey"));
+        _commands.Add(new CommandRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.", "Sem atalho")
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("about")
+        });
+        _commands.Add(new CommandRow("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.", "Sem atalho")
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("checkUpdates")
+        });
         foreach (var shortcut in _settings.CustomShortcuts)
         {
             var row = new CommandRow(shortcut.Id, shortcut.Name, shortcut.Target,
@@ -195,6 +209,12 @@ public partial class MainWindow : Window
                 continue;
             }
             var value = GetShortcut(id);
+            if (IsJeyAction(id) && string.IsNullOrWhiteSpace(value))
+            {
+                _hotkeys.Unregister(id);
+                SetShortcutStatus(id, "Ativo por voz", true);
+                continue;
+            }
             if (!ShortcutParser.TryParse(value, out var binding, out var error))
             {
                 SetShortcutStatus(id, error ?? "Atalho inválido.", false);
@@ -224,14 +244,30 @@ public partial class MainWindow : Window
         SettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
-        SettingsPanel.Children.Add(new TextBlock
+        var settingsHeading = new Grid { Margin = new Thickness(0, 0, 0, 5) };
+        settingsHeading.ColumnDefinitions.Add(new ColumnDefinition());
+        settingsHeading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        settingsHeading.Children.Add(new TextBlock
         {
             Text = "Combinações globais",
             Foreground = Brushes.White,
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 5)
+            VerticalAlignment = VerticalAlignment.Center
         });
+        var customShortcutsLink = new Button
+        {
+            Content = "Atalhos personalizados",
+            Padding = new Thickness(9, 5, 9, 5),
+            Background = new SolidColorBrush(Color.FromRgb(42, 45, 53)),
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            BorderThickness = new Thickness(0),
+            FocusVisualStyle = (Style)FindResource("DarkFocusCue")
+        };
+        customShortcutsLink.Click += (_, _) => _customShortcutsHeader?.BringIntoView();
+        Grid.SetColumn(customShortcutsLink, 1);
+        settingsHeading.Children.Add(customShortcutsLink);
+        SettingsPanel.Children.Add(settingsHeading);
         SettingsPanel.Children.Add(new TextBlock
         {
             Text = "Clique no campo e pressione a nova combinação. Para ativar por voz, associe uma ou mais frases ao comando, uma por linha. Diga ‘Jey’ seguido de uma dessas frases.",
@@ -251,24 +287,8 @@ public partial class MainWindow : Window
         AddShortcutRow("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo.");
         AddShortcutRow("draftRestore", "Usar rascunho", "Guarda o conteúdo atual e recupera o último rascunho.");
 
-        SettingsPanel.Children.Add(new TextBlock
-        {
-            Text = "Ações do Jey",
-            Foreground = Brushes.White,
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(2, 18, 0, 5)
-        });
-        SettingsPanel.Children.Add(new TextBlock
-        {
-            Text = "Essas ações não precisam de atalho de teclado. Você pode ajustar as frases do Jey aqui.",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
-            FontSize = 12,
-            Margin = new Thickness(2, 0, 0, 10)
-        });
-        AddVoiceOnlyCommand("about", "Abrir Sobre", "Abre a tela Sobre do JMD.");
-        AddVoiceOnlyCommand("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.");
+        AddShortcutRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.");
+        AddShortcutRow("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.");
 
         SettingsPanel.Children.Add(new TextBlock
         {
@@ -280,28 +300,6 @@ public partial class MainWindow : Window
         });
 
         RenderCustomShortcutSettings();
-
-        SettingsPanel.Children.Add(new TextBlock
-        {
-            Text = $"Textos salvos ({_settings.Snippets.Count})",
-            Foreground = Brushes.White,
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(2, 18, 0, 8)
-        });
-        var addSnippetButton = new Button
-        {
-            Content = "Adicionar texto",
-            FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
-            Padding = new Thickness(12, 7, 12, 7),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
-            BorderThickness = new Thickness(0)
-        };
-        addSnippetButton.Click += (_, _) => EditSnippet(null, null);
-        SettingsPanel.Children.Add(addSnippetButton);
-        RenderSnippetSettings();
 
         var note = new TextBlock
         {
@@ -354,72 +352,6 @@ public partial class MainWindow : Window
         };
         SettingsPanel.Children.Add(delimiterPicker);
 
-        var testCard = new Border
-        {
-            Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(14),
-            Margin = new Thickness(0, 16, 0, 8)
-        };
-        var testPanel = new StackPanel();
-        testPanel.Children.Add(new TextBlock { Text = "Testar conversão SQL IN", Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, FontSize = 13 });
-        _testInput = new TextBox
-        {
-            Text = "abc,def,jeg",
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            Height = 58,
-            Padding = new Thickness(9),
-            Margin = new Thickness(0, 10, 0, 8),
-            Foreground = Brushes.White,
-            Background = new SolidColorBrush(Color.FromRgb(24, 26, 32)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(65, 70, 81))
-        };
-        testPanel.Children.Add(_testInput);
-        var testButton = new Button
-        {
-            Content = "Testar conversão",
-            FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
-            Padding = new Thickness(12, 7, 12, 7),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
-            BorderThickness = new Thickness(0)
-        };
-        testButton.Click += TestButton_Click;
-        testPanel.Children.Add(testButton);
-        _testOutput = new TextBlock
-        {
-            Text = "O resultado será exibido aqui sem alterar o clipboard.",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            FontSize = 12,
-            Margin = new Thickness(0, 9, 0, 0)
-        };
-        testPanel.Children.Add(_testOutput);
-        testCard.Child = testPanel;
-        SettingsPanel.Children.Add(testCard);
-
-        var retryButton = new Button
-        {
-            Content = "Tentar registrar atalhos novamente",
-            Padding = new Thickness(12, 8, 12, 8),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-            Margin = new Thickness(0, 12, 0, 0),
-            Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0)
-        };
-        retryButton.Click += (_, _) =>
-        {
-            RegisterConfiguredShortcuts();
-            RefreshCommandStatuses();
-            RefreshShortcutStatuses();
-            SetStatus("Estado dos atalhos atualizado.", true);
-        };
-        SettingsPanel.Children.Add(retryButton);
         foreach (var row in _shortcutRows)
         {
             if (!existingStatuses.TryGetValue(row.Id, out var status)) continue;
@@ -427,34 +359,6 @@ public partial class MainWindow : Window
             row.StatusBrush = status.StatusBrush;
         }
         RefreshShortcutStatuses();
-    }
-
-    private void AddVoiceOnlyCommand(string id, string name, string description)
-    {
-        var card = new Border
-        {
-            Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(9),
-            Padding = new Thickness(14),
-            Margin = new Thickness(0, 0, 0, 9)
-        };
-        var content = new StackPanel();
-        content.Children.Add(new TextBlock { Text = name, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, FontSize = 13 });
-        content.Children.Add(new TextBlock { Text = description, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 11, Margin = new Thickness(0, 4, 0, 8) });
-        content.Children.Add(new TextBlock { Text = "Frases de voz (uma por linha)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(0, 0, 0, 4) });
-        var editor = new TextBox
-        {
-            Text = GetVoicePhrasesText(id), Tag = id, MinHeight = 48, MaxHeight = 96,
-            Padding = new Thickness(8, 6, 8, 6), FontSize = 12, Foreground = Brushes.White,
-            Background = new SolidColorBrush(Color.FromRgb(24, 26, 32)), BorderBrush = new SolidColorBrush(Color.FromRgb(65, 70, 81)),
-            TextWrapping = TextWrapping.Wrap, AcceptsReturn = true, VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-        };
-        editor.TextChanged += VoicePhrasesEditor_TextChanged;
-        content.Children.Add(editor);
-        card.Child = content;
-        SettingsPanel.Children.Add(card);
     }
 
     private void ConfigureDefaultVoiceCommands()
@@ -500,6 +404,7 @@ public partial class MainWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(86) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
         var labels = new StackPanel();
         labels.Children.Add(new TextBlock { Text = name, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, FontSize = 13 });
         labels.Children.Add(new TextBlock { Text = description, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 11, Margin = new Thickness(0, 4, 8, 0), TextWrapping = TextWrapping.Wrap });
@@ -538,6 +443,27 @@ public partial class MainWindow : Window
         enabledToggle.Unchecked += ShortcutEnabled_Changed;
         Grid.SetColumn(enabledToggle, 2);
         grid.Children.Add(enabledToggle);
+        if (id is "clipboard" or "selection" or "snippets" or "saveSnippet")
+        {
+            var toolsButton = new Button
+            {
+                Content = "\uE713",
+                FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+                FontSize = 14,
+                Width = 28,
+                Height = 28,
+                Padding = new Thickness(0),
+                Tag = id,
+                Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
+                Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+                BorderThickness = new Thickness(0),
+                ToolTip = id is "clipboard" or "selection" ? "Abrir ferramentas SQL IN" : "Abrir textos salvos",
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            toolsButton.Click += ShortcutToolsButton_Click;
+            Grid.SetColumn(toolsButton, 3);
+            grid.Children.Add(toolsButton);
+        }
         content.Children.Add(grid);
         content.Children.Add(new TextBlock
         {
@@ -618,17 +544,16 @@ public partial class MainWindow : Window
 
     private string? FindVoiceCommand(string? transcript)
     {
-        var normalizedTranscript = NormalizeVoicePhrase(transcript);
-        if (normalizedTranscript.Length == 0) return null;
+        if (NormalizeVoicePhrase(transcript).Length == 0) return null;
 
         string? matchedCommand = null;
-        foreach (var commandId in ShortcutIds.Concat(["about", "checkUpdates"]).Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
+        foreach (var commandId in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
         {
             if (_settings.DisabledCommands.Contains(commandId) ||
                 !_settings.VoicePhrases.TryGetValue(commandId, out var phrases))
                 continue;
 
-            if (!phrases.Any(phrase => NormalizeVoicePhrase(phrase) == normalizedTranscript)) continue;
+            if (!phrases.Any(phrase => VoicePhrasePolicy.Matches(phrase, transcript))) continue;
             if (matchedCommand is not null)
             {
                 SetStatus("Essa frase está associada a mais de um comando. Deixe-a em apenas um comando para usá-la por voz.", false);
@@ -652,14 +577,15 @@ public partial class MainWindow : Window
 
     private void RenderCustomShortcutSettings()
     {
-        SettingsPanel.Children.Add(new TextBlock
+        _customShortcutsHeader = new TextBlock
         {
             Text = "Atalhos personalizados",
             Foreground = Brushes.White,
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(2, 18, 0, 5)
-        });
+        };
+        SettingsPanel.Children.Add(_customShortcutsHeader);
         SettingsPanel.Children.Add(new TextBlock
         {
             Text = "Crie um comando para abrir um programa ou uma URL. Configure uma combinação de teclas, uma frase do Jey ou ambos.",
@@ -679,10 +605,16 @@ public partial class MainWindow : Window
         var phrasesBox = CreateSettingsTextBox("", 64, multiline: true);
         phrasesBox.ToolTip = "Opcional. Uma frase exclusiva do Jey por linha";
 
-        AddCustomField("Nome do comando", nameBox);
-        AddCustomField("Programa ou URL", targetBox);
-        AddCustomField("Atalho de teclado (opcional)", shortcutBox);
-        AddCustomField("Frases do Jey (opcional, uma por linha)", phrasesBox);
+        var createFields = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        createFields.ColumnDefinitions.Add(new ColumnDefinition());
+        createFields.ColumnDefinitions.Add(new ColumnDefinition());
+        createFields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        createFields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        AddCustomField("Nome do comando", nameBox, 0, 0);
+        AddCustomField("Programa ou URL", targetBox, 1, 0);
+        AddCustomField("Atalho (opcional)", shortcutBox, 0, 1);
+        AddCustomField("Frases do Jey", phrasesBox, 1, 1);
+        SettingsPanel.Children.Add(createFields);
 
         var createButton = new Button
         {
@@ -690,7 +622,7 @@ public partial class MainWindow : Window
             FocusVisualStyle = (Style)FindResource("DarkFocusCue"),
             Padding = new Thickness(12, 7, 12, 7),
             HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-            Margin = new Thickness(0, 4, 0, 10),
+            Margin = new Thickness(0, 2, 0, 10),
             Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
             Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
             BorderThickness = new Thickness(0)
@@ -771,23 +703,24 @@ public partial class MainWindow : Window
                 Padding = new Thickness(12),
                 Margin = new Thickness(0, 0, 0, 7)
             };
-            var details = new StackPanel();
-            var nameEditor = CreateSettingsTextBox(entry.Name, 34);
-            var targetEditor = CreateSettingsTextBox(entry.Target, 34);
-            var shortcutEditor = CreateSettingsTextBox(entry.Shortcut, 34);
+            var details = new Grid();
+            details.ColumnDefinitions.Add(new ColumnDefinition());
+            details.ColumnDefinitions.Add(new ColumnDefinition());
+            details.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            details.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            details.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var nameEditor = CreateSettingsTextBox(entry.Name, 32);
+            var targetEditor = CreateSettingsTextBox(entry.Target, 32);
+            var shortcutEditor = CreateSettingsTextBox(entry.Shortcut, 32);
             shortcutEditor.PreviewKeyDown += CustomShortcutCapture_PreviewKeyDown;
-            var phrasesEditor = CreateSettingsTextBox(GetVoicePhrasesText(entry.Id), 58, multiline: true);
+            var phrasesEditor = CreateSettingsTextBox(GetVoicePhrasesText(entry.Id), 42, multiline: true);
             phrasesEditor.Tag = entry.Id;
             phrasesEditor.TextChanged += CustomVoicePhrasesEditor_TextChanged;
-            details.Children.Add(new TextBlock { Text = "Nome", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10 });
-            details.Children.Add(nameEditor);
-            details.Children.Add(new TextBlock { Text = "Programa ou URL", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(0, 5, 0, 2) });
-            details.Children.Add(targetEditor);
-            details.Children.Add(new TextBlock { Text = "Atalho (opcional)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(0, 5, 0, 2) });
-            details.Children.Add(shortcutEditor);
-            details.Children.Add(new TextBlock { Text = "Frases do Jey (uma por linha)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(0, 5, 0, 2) });
-            details.Children.Add(phrasesEditor);
-            var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+            AddEditorField(details, "Nome", nameEditor, 0, 0);
+            AddEditorField(details, "Programa ou URL", targetEditor, 1, 0);
+            AddEditorField(details, "Atalho", shortcutEditor, 0, 1);
+            AddEditorField(details, "Frases do Jey", phrasesEditor, 1, 1);
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 7, 0, 0) };
             var saveButton = new Button
             {
                 Content = "Salvar alterações",
@@ -877,21 +810,31 @@ public partial class MainWindow : Window
             removeButton.Click += RemoveCustomShortcut_Click;
             actions.Children.Add(saveButton);
             actions.Children.Add(removeButton);
+            Grid.SetRow(actions, 2);
+            Grid.SetColumnSpan(actions, 2);
             details.Children.Add(actions);
             card.Child = details;
             SettingsPanel.Children.Add(card);
         }
 
-        void AddCustomField(string label, TextBox editor)
+        void AddCustomField(string label, TextBox editor, int column, int row)
         {
-            SettingsPanel.Children.Add(new TextBlock
-            {
-                Text = label,
-                Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
-                FontSize = 10,
-                Margin = new Thickness(2, 5, 2, 3)
-            });
-            SettingsPanel.Children.Add(editor);
+            var field = new StackPanel { Margin = new Thickness(column == 0 ? 0 : 8, 4, 0, 2) };
+            field.Children.Add(new TextBlock { Text = label, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 0, 2, 3) });
+            field.Children.Add(editor);
+            Grid.SetColumn(field, column);
+            Grid.SetRow(field, row);
+            createFields.Children.Add(field);
+        }
+
+        static void AddEditorField(Grid parent, string label, TextBox editor, int column, int row)
+        {
+            var field = new StackPanel { Margin = new Thickness(column == 0 ? 0 : 8, 0, 0, 6) };
+            field.Children.Add(new TextBlock { Text = label, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 0, 2, 3) });
+            field.Children.Add(editor);
+            Grid.SetColumn(field, column);
+            Grid.SetRow(field, row);
+            parent.Children.Add(field);
         }
     }
 
@@ -980,11 +923,21 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RenderSnippetSettings()
+    private void BuildSnippetManagementPage()
+    {
+        SnippetPageTitle.Text = $"Textos salvos ({_settings.Snippets.Count})";
+        SnippetManagementPanel.Children.Clear();
+        RenderSnippetSettings(SnippetManagementPanel);
+    }
+
+    private void AddSnippetButton_Click(object sender, RoutedEventArgs e)
+        => EditSnippet(null, null);
+
+    private void RenderSnippetSettings(System.Windows.Controls.Panel targetPanel)
     {
         if (_settings.Snippets.Count == 0)
         {
-            SettingsPanel.Children.Add(new TextBlock
+            targetPanel.Children.Add(new TextBlock
             {
                 Text = "Nenhum texto salvo ainda. Você também pode selecionar um texto e usar o atalho de cadastro rápido.",
                 Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
@@ -1018,7 +971,7 @@ public partial class MainWindow : Window
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
             row.Children.Add(description);
-            SettingsPanel.Children.Add(new Border
+            targetPanel.Children.Add(new Border
             {
                 Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)),
@@ -1068,7 +1021,7 @@ public partial class MainWindow : Window
         try
         {
             _settingsStore.Save(_settings);
-            BuildSettingsPanel();
+            BuildSnippetManagementPage();
             SetStatus("Textos salvos atualizados.", true);
             return true;
         }
@@ -1127,7 +1080,7 @@ public partial class MainWindow : Window
             _settingsStore.Save(_settings);
             RecordActionHistory($"Salvar texto: {snippet.Title}", string.Empty, snippet.Text, voiceCommand);
             Notify("JMD", $"Texto salvo: {snippet.Title}", true);
-            if (_navigation.CurrentPage == AppPage.ShortcutSettings) BuildSettingsPanel();
+            if (_navigation.CurrentPage == AppPage.ShortcutSettings) BuildSnippetManagementPage();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -1186,7 +1139,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore"];
+    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "about", "checkUpdates"];
+
+    private static bool IsJeyAction(string id) => id is "about" or "checkUpdates";
 
     private string GetShortcut(string id)
     {
@@ -1225,11 +1180,12 @@ public partial class MainWindow : Window
     {
         foreach (var command in _commands)
         {
-            var voiceOnly = command.Id is "about" or "checkUpdates";
-            command.Shortcut = voiceOnly ? "Jey" : GetShortcut(command.Id);
+            var isVoiceAction = IsJeyAction(command.Id);
+            var shortcut = GetShortcut(command.Id);
+            command.Shortcut = isVoiceAction && string.IsNullOrWhiteSpace(shortcut) ? "Sem atalho" : shortcut;
             command.VoicePhrasesDisplay = GetVoicePhrasesDisplay(command.Id);
             var shortcutRow = _shortcutRows.FirstOrDefault(row => row.Id == command.Id);
-            command.Status = shortcutRow?.Status ?? (voiceOnly ? "Comando por voz" : "Atalho configurável");
+            command.Status = shortcutRow?.Status ?? (isVoiceAction ? "Comando por voz" : "Atalho configurável");
             command.StatusBrush = shortcutRow?.StatusBrush ?? new SolidColorBrush(Color.FromRgb(150, 155, 167));
         }
     }
@@ -1476,6 +1432,12 @@ public partial class MainWindow : Window
                 row.Status = "Ativado ao sair das configurações";
                 row.StatusBrush = new SolidColorBrush(Color.FromRgb(180, 243, 106));
             }
+            else if (IsJeyAction(row.Id) && string.IsNullOrWhiteSpace(GetShortcut(row.Id)))
+            {
+                _hotkeys?.Unregister(row.Id);
+                row.Status = "Ativo por voz";
+                row.StatusBrush = new SolidColorBrush(Color.FromRgb(180, 243, 106));
+            }
             else if (!ShortcutParser.TryParse(GetShortcut(row.Id), out var binding, out activationError))
             {
                 row.Status = activationError ?? "Atalho inválido.";
@@ -1519,9 +1481,13 @@ public partial class MainWindow : Window
         CommandsList.Visibility = Visibility.Visible;
         SettingsTabs.Visibility = Visibility.Collapsed;
         SettingsPage.Visibility = Visibility.Collapsed;
+        SqlInTestPage.Visibility = Visibility.Collapsed;
+        SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
         AboutPage.Visibility = Visibility.Collapsed;
         JeySettingsPage.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Collapsed;
+        FooterHints.Visibility = Visibility.Visible;
         SearchBox.Visibility = Visibility.Visible;
         ManageButton.Content = "Gerenciar atalhos";
         HistoryButton.Content = "Histórico";
@@ -1860,6 +1826,12 @@ public partial class MainWindow : Window
 
     private void ManageButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_navigation.CurrentPage == AppPage.ShortcutSettings &&
+            (SqlInTestPage.Visibility == Visibility.Visible || SnippetManagementPage.Visibility == Visibility.Visible))
+        {
+            ShowShortcutSettings();
+            return;
+        }
         if (_navigation.CurrentPage != AppPage.Palette)
         {
             ShowPalette();
@@ -1874,9 +1846,13 @@ public partial class MainWindow : Window
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Visible;
+        SqlInTestPage.Visibility = Visibility.Collapsed;
+        SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
         AboutPage.Visibility = Visibility.Collapsed;
         JeySettingsPage.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Visible;
+        FooterHints.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Collapsed;
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Gerenciar atalhos";
@@ -1887,6 +1863,53 @@ public partial class MainWindow : Window
         Show();
         WindowState = WindowState.Normal;
         Activate();
+    }
+
+    private void ShortcutToolsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string id }) return;
+        if (id is "clipboard" or "selection") ShowSqlInTestPage();
+        else ShowSnippetManagementPage();
+    }
+
+    private void ShowSqlInTestPage()
+    {
+        SettingsTabs.Visibility = Visibility.Visible;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        SqlInTestPage.Visibility = Visibility.Visible;
+        SnippetManagementPage.Visibility = Visibility.Collapsed;
+        HistoryPage.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Visible;
+        FooterHints.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos atalhos";
+        PageTitle.Text = "Testar conversão SQL IN";
+        PageSubtitle.Text = "Ferramenta vinculada ao comando Formatar clipboard";
+    }
+
+    private void ShowSnippetManagementPage()
+    {
+        BuildSnippetManagementPage();
+        SettingsTabs.Visibility = Visibility.Visible;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        SqlInTestPage.Visibility = Visibility.Collapsed;
+        SnippetManagementPage.Visibility = Visibility.Visible;
+        HistoryPage.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Visible;
+        FooterHints.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos atalhos";
+        PageTitle.Text = "Textos salvos";
+        PageSubtitle.Text = "Gerencie os textos usados pelos comandos de inserção";
+    }
+
+    private void BackToShortcutSettings_Click(object sender, RoutedEventArgs e)
+        => ShowShortcutSettings();
+
+    private void RetryShortcuts_Click(object sender, RoutedEventArgs e)
+    {
+        RegisterConfiguredShortcuts();
+        RefreshCommandStatuses();
+        RefreshShortcutStatuses();
+        SetStatus("Estado dos atalhos atualizado.", true);
     }
 
     private void SetVoiceWakeWordEnabled(bool enabled)
@@ -1941,6 +1964,23 @@ public partial class MainWindow : Window
             _settings.JeyEnglishModel == "whisper");
         _voiceWakeWord = service;
         service.DebugEnabled = _settings.VoiceDebugEnabled;
+        service.WakeWordRecognitionDebugEnabled = _settings.VoiceWakeRecognitionDebugEnabled;
+        service.WakeWordRecognitionDebugUpdated += debugInfo => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!ReferenceEquals(_voiceWakeWord, service) || !_settings.VoiceWakeRecognitionDebugEnabled) return;
+            if (debugInfo.IsFinal)
+            {
+                var heard = string.IsNullOrWhiteSpace(debugInfo.Transcript) ? "(sem transcrição)" : debugInfo.Transcript;
+                var decision = debugInfo.WakeWordDetected == true ? "reconheceu Jey" : "não reconheceu Jey";
+                _wakeRecognitionLastFinal = $"{heard} — {decision}";
+                _wakeRecognitionPartial = string.Empty;
+            }
+            else
+            {
+                _wakeRecognitionPartial = debugInfo.Transcript;
+            }
+            UpdateVoiceRecognitionDebugText();
+        }));
         service.AudioProcessingFailed += exception => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (ReferenceEquals(_voiceWakeWord, service))
@@ -1950,6 +1990,7 @@ public partial class MainWindow : Window
         {
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
             {
+                var wakeWordOnly = NormalizeVoicePhrase(transcript).Length == 0;
                 var voiceCommandId = FindVoiceCommand(transcript);
                 if (voiceCommandId is not null && transcript is not null)
                 {
@@ -1967,7 +2008,7 @@ public partial class MainWindow : Window
                         voiceCutMilliseconds: debugInfo?.CutMilliseconds,
                         voiceTranscriptionAudioWav: debugInfo?.TranscriptionAudioWav);
                     RefreshHistory();
-                    if (string.IsNullOrWhiteSpace(transcript))
+                    if (wakeWordOnly)
                     {
                         Action<string?, byte[], VoiceCaptureDebugInfo?>? followupHandler = null;
                         followupHandler = (followupTranscript, completeAudio, followupDebugInfo) => Dispatcher.BeginInvoke(new Action(() =>
@@ -1993,7 +2034,11 @@ public partial class MainWindow : Window
                 {
                     SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
                 }
-                if (IsVisible)
+                if (wakeWordOnly)
+                {
+                    JeyMenuItem_Click(this, new RoutedEventArgs());
+                }
+                else if (IsVisible)
                 {
                     if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
                     Activate();
@@ -2026,9 +2071,13 @@ public partial class MainWindow : Window
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        SqlInTestPage.Visibility = Visibility.Collapsed;
+        SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Visible;
         AboutPage.Visibility = Visibility.Collapsed;
         JeySettingsPage.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Collapsed;
+        FooterHints.Visibility = Visibility.Visible;
         SearchBox.Visibility = Visibility.Collapsed;
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Histórico";
@@ -2090,7 +2139,7 @@ public partial class MainWindow : Window
         try
         {
             _settingsStore.Save(_settings);
-            SetStatus(_settings.VoiceDebugEnabled ? "Depuração de áudio do Jey ativada." : "Depuração de áudio do Jey desativada.", true);
+            SetStatus(_settings.VoiceDebugEnabled ? "Histórico detalhado de áudio ativado." : "Histórico detalhado de áudio desativado.", true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -2101,6 +2150,43 @@ public partial class MainWindow : Window
             if (_voiceWakeWord is not null) _voiceWakeWord.DebugEnabled = _settings.VoiceDebugEnabled;
             SetStatus($"Não foi possível salvar a opção de depuração do Jey: {exception.Message}", false);
         }
+    }
+
+    private void VoiceRecognitionDebugToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updatingVoiceRecognitionDebugToggle || sender is not CheckBox toggle) return;
+        var enabled = toggle.IsChecked == true;
+        _settings.VoiceWakeRecognitionDebugEnabled = enabled;
+        VoiceRecognitionDebugPanel.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        if (_voiceWakeWord is not null) _voiceWakeWord.WakeWordRecognitionDebugEnabled = enabled;
+        if (enabled)
+        {
+            _wakeRecognitionPartial = string.Empty;
+            _wakeRecognitionLastFinal = "Aguardando fala…";
+            UpdateVoiceRecognitionDebugText();
+        }
+        try
+        {
+            _settingsStore.Save(_settings);
+            SetStatus(enabled ? "Depuração de reconhecimento ativada." : "Depuração de reconhecimento desativada.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _settings.VoiceWakeRecognitionDebugEnabled = !enabled;
+            _updatingVoiceRecognitionDebugToggle = true;
+            toggle.IsChecked = !enabled;
+            _updatingVoiceRecognitionDebugToggle = false;
+            VoiceRecognitionDebugPanel.Visibility = !enabled ? Visibility.Visible : Visibility.Collapsed;
+            if (_voiceWakeWord is not null) _voiceWakeWord.WakeWordRecognitionDebugEnabled = !enabled;
+            SetStatus($"Não foi possível salvar a opção de depuração: {exception.Message}", false);
+        }
+    }
+
+    private void UpdateVoiceRecognitionDebugText()
+    {
+        VoiceRecognitionDebugText.Text = string.IsNullOrWhiteSpace(_wakeRecognitionPartial)
+            ? $"Parcial: (aguardando)\nÚltimo resultado: {_wakeRecognitionLastFinal}"
+            : $"Parcial: {_wakeRecognitionPartial}\nÚltimo resultado: {_wakeRecognitionLastFinal}";
     }
 
     private static void SelectVoiceModel(ComboBox combo, string model)
@@ -2233,6 +2319,8 @@ public partial class MainWindow : Window
         _navigation.ShowJeySettings();
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Collapsed;
+        FooterHints.Visibility = Visibility.Visible;
         AboutPage.Visibility = Visibility.Collapsed;
         JeySettingsPage.Visibility = Visibility.Visible;
         SearchBox.Visibility = Visibility.Collapsed;
@@ -2254,6 +2342,8 @@ public partial class MainWindow : Window
         _navigation.ShowAbout();
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Collapsed;
+        FooterHints.Visibility = Visibility.Visible;
         AboutPage.Visibility = Visibility.Visible;
         JeySettingsPage.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Collapsed;
@@ -2372,13 +2462,44 @@ public partial class MainWindow : Window
             downloadDirectory = Path.Combine(Path.GetTempPath(), $"JMD-Update-{Guid.NewGuid():N}");
             Directory.CreateDirectory(downloadDirectory);
             var installerPath = Path.Combine(downloadDirectory, installerName);
-            await using (var installerStream = await client.GetStreamAsync(installerUri))
-            await using (var output = new FileStream(installerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                             bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            UpdateDownloadProgress.IsIndeterminate = true;
+            UpdateDownloadProgress.Value = 0;
+            UpdateDownloadProgress.Visibility = Visibility.Visible;
+            UpdateProgressText.Text = "Conectando ao servidor para baixar o instalador…";
+            UpdateProgressText.Visibility = Visibility.Visible;
+            CheckUpdatesButton.IsEnabled = false;
+
+            using (var installerResponse = await client.GetAsync(installerUri, HttpCompletionOption.ResponseHeadersRead))
             {
-                await installerStream.CopyToAsync(output);
+                installerResponse.EnsureSuccessStatusCode();
+                var totalBytes = installerResponse.Content.Headers.ContentLength;
+                await using var installerStream = await installerResponse.Content.ReadAsStreamAsync();
+                await using var output = new FileStream(installerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                    bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                var buffer = new byte[81920];
+                long downloadedBytes = 0;
+                int bytesRead;
+                while ((bytesRead = await installerStream.ReadAsync(buffer)) > 0)
+                {
+                    await output.WriteAsync(buffer.AsMemory(0, bytesRead));
+                    downloadedBytes += bytesRead;
+                    if (totalBytes is > 0)
+                    {
+                        var fraction = Math.Clamp((double)downloadedBytes / totalBytes.Value, 0, 1);
+                        UpdateDownloadProgress.IsIndeterminate = false;
+                        UpdateDownloadProgress.Value = fraction * 100;
+                        UpdateProgressText.Text = $"Baixando instalador… {fraction:P0}";
+                    }
+                    else
+                    {
+                        UpdateProgressText.Text = "Baixando instalador…";
+                    }
+                }
             }
 
+            UpdateDownloadProgress.IsIndeterminate = false;
+            UpdateDownloadProgress.Value = 100;
+            UpdateProgressText.Text = "Download concluído. Validando checksum SHA-256…";
             await using (var downloadedInstaller = File.OpenRead(installerPath))
             {
                 var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(downloadedInstaller));
@@ -2395,6 +2516,7 @@ public partial class MainWindow : Window
             if (startedProcess is null)
                 throw new InvalidOperationException("O Windows não iniciou o instalador.");
             installerStarted = true;
+            UpdateProgressText.Text = "Checksum válido. Iniciando o instalador…";
             PrepareForExit();
             System.Windows.Application.Current.Shutdown();
         }
@@ -2405,7 +2527,13 @@ public partial class MainWindow : Window
         finally
         {
             InstallUpdateButton.IsEnabled = true;
+            CheckUpdatesButton.IsEnabled = true;
             _checkingUpdates = false;
+            if (!installerStarted)
+            {
+                UpdateDownloadProgress.Visibility = Visibility.Collapsed;
+                UpdateProgressText.Visibility = Visibility.Collapsed;
+            }
             if (!installerStarted && downloadDirectory is not null)
             {
                 try { Directory.Delete(downloadDirectory, recursive: true); }
@@ -2435,10 +2563,9 @@ public partial class MainWindow : Window
 
     private void TestButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_testInput is null || _testOutput is null) return;
-        var result = FormatText(_testInput.Text);
-        _testOutput.Text = result.Success ? result.Value! : result.Error ?? "Não foi possível converter a entrada.";
-        _testOutput.Foreground = result.Success
+        var result = FormatText(TestInput.Text);
+        TestOutput.Text = result.Success ? result.Value! : result.Error ?? "Não foi possível converter a entrada.";
+        TestOutput.Foreground = result.Success
             ? new SolidColorBrush(Color.FromRgb(180, 243, 106))
             : new SolidColorBrush(Color.FromRgb(255, 145, 135));
     }
