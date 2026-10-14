@@ -2107,11 +2107,15 @@ public partial class MainWindow : Window
     private void UpdateWhisperModelStatus()
     {
         var downloaded = WhisperCppTranscriber.IsModelDownloaded;
-        WhisperModelStatusText.Text = _downloadingWhisperModel
-            ? WhisperModelStatusText.Text
-            : downloaded
-                ? $"Whisper Base baixado. Executável: {(File.Exists(WhisperCppTranscriber.ExecutablePath) ? "disponível" : "não incluído nesta versão do aplicativo")}."
-                : "Whisper não baixado. O download é opcional (142 MB).";
+        WhisperModelStatusText.Text = downloaded
+            ? $"Modelo verificado e instalado. Mecanismo Whisper: {(File.Exists(WhisperCppTranscriber.ExecutablePath) ? "disponível" : "indisponível nesta versão do aplicativo")}."
+            : "Whisper ainda não foi baixado.";
+        UpdateWhisperModelButtons();
+    }
+
+    private void UpdateWhisperModelButtons()
+    {
+        var downloaded = WhisperCppTranscriber.IsModelDownloaded;
         DownloadWhisperButton.IsEnabled = !_downloadingWhisperModel && !downloaded;
         DeleteWhisperButton.IsEnabled = !_downloadingWhisperModel && downloaded;
     }
@@ -2122,7 +2126,7 @@ public partial class MainWindow : Window
         var requestedModel = selected.Tag as string ?? "vosk";
         if (requestedModel == "whisper" && !File.Exists(WhisperCppTranscriber.ExecutablePath))
         {
-            MessageBox.Show("O mecanismo Whisper precisa estar incluído na versão instalada do aplicativo. Atualize o JMD para habilitar esse modelo.", "Atualização necessária", MessageBoxButton.OK, MessageBoxImage.Information);
+            WhisperModelStatusText.Text = "Atualize o JMD para incluir o mecanismo Whisper antes de selecionar este modelo.";
             _loadingJeyModelSettings = true;
             SelectVoiceModel(combo, "vosk");
             _loadingJeyModelSettings = false;
@@ -2130,7 +2134,7 @@ public partial class MainWindow : Window
         }
         if (requestedModel == "whisper" && !WhisperCppTranscriber.IsModelDownloaded)
         {
-            MessageBox.Show("Baixe o modelo Whisper antes de selecioná-lo.", "Modelo Whisper", MessageBoxButton.OK, MessageBoxImage.Information);
+            WhisperModelStatusText.Text = "Baixe o Whisper Base abaixo para habilitar esta opção.";
             _loadingJeyModelSettings = true;
             SelectVoiceModel(combo, "vosk");
             _loadingJeyModelSettings = false;
@@ -2166,22 +2170,38 @@ public partial class MainWindow : Window
     {
         if (_downloadingWhisperModel) return;
         _downloadingWhisperModel = true;
-        DownloadWhisperButton.IsEnabled = false;
-        WhisperModelStatusText.Text = "Baixando Whisper Base…";
-        var progress = new Progress<double>(value => WhisperModelStatusText.Text = $"Baixando Whisper Base… {value:P0}");
+        WhisperDownloadProgress.IsIndeterminate = false;
+        WhisperDownloadProgress.Value = 0;
+        WhisperDownloadProgress.Visibility = Visibility.Visible;
+        WhisperModelStatusText.Text = "Conectando ao repositório do modelo…";
+        UpdateWhisperModelButtons();
+        var progress = new Progress<WhisperDownloadProgress>(value =>
+        {
+            if (!_downloadingWhisperModel) return;
+            WhisperModelStatusText.Text = value.Fraction is { } fraction
+                ? $"{value.Message} · {fraction:P0}"
+                : value.Message;
+            WhisperDownloadProgress.IsIndeterminate = value.Fraction is null;
+            if (value.Fraction is { } current) WhisperDownloadProgress.Value = current * 100;
+        });
         try
         {
             await WhisperCppTranscriber.DownloadBaseModelAsync(progress);
-            WhisperModelStatusText.Text = "Modelo baixado e verificado. Agora você pode selecioná-lo para português ou inglês.";
+            WhisperDownloadProgress.IsIndeterminate = false;
+            WhisperDownloadProgress.Value = 100;
+            WhisperModelStatusText.Text = "Modelo baixado e verificado. Selecione Whisper para português ou inglês.";
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or UnauthorizedAccessException or TaskCanceledException)
+        catch (Exception exception)
         {
-            WhisperModelStatusText.Text = $"Falha ao baixar o modelo: {exception.Message}";
+            WhisperDownloadProgress.Visibility = Visibility.Collapsed;
+            WhisperModelStatusText.Text = exception is InvalidDataException
+                ? $"O arquivo chegou, mas a verificação falhou. O download incompleto foi descartado. Detalhe: {exception.Message}"
+                : $"Não foi possível instalar o modelo Whisper: {exception.Message}";
         }
         finally
         {
             _downloadingWhisperModel = false;
-            UpdateWhisperModelStatus();
+            UpdateWhisperModelButtons();
         }
     }
 
@@ -2189,7 +2209,7 @@ public partial class MainWindow : Window
     {
         if (_settings.JeyPortugueseModel == "whisper" || _settings.JeyEnglishModel == "whisper")
         {
-            MessageBox.Show("Selecione Vosk para português e inglês antes de remover o Whisper.", "Modelo em uso", MessageBoxButton.OK, MessageBoxImage.Information);
+            WhisperModelStatusText.Text = "Selecione Vosk para português e inglês antes de remover o Whisper.";
             return;
         }
         try
@@ -2197,7 +2217,7 @@ public partial class MainWindow : Window
             if (File.Exists(WhisperCppTranscriber.ModelPath)) File.Delete(WhisperCppTranscriber.ModelPath);
             UpdateWhisperModelStatus();
         }
-        catch (IOException exception)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             WhisperModelStatusText.Text = $"Não foi possível remover o modelo: {exception.Message}";
         }

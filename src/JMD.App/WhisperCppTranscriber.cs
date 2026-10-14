@@ -5,6 +5,8 @@ using System.Text.Json;
 
 namespace JMD.App;
 
+internal sealed record WhisperDownloadProgress(double? Fraction, string Message);
+
 internal sealed class WhisperCppTranscriber
 {
     public static string ModelPath => Path.Combine(
@@ -14,10 +16,10 @@ internal sealed class WhisperCppTranscriber
 
     public static bool IsModelDownloaded => File.Exists(ModelPath);
 
-    public static async Task DownloadBaseModelAsync(IProgress<double>? progress = null, CancellationToken cancellationToken = default)
+    public static async Task DownloadBaseModelAsync(IProgress<WhisperDownloadProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         const string url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
-        const string expectedSha256 = "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b";
+        const string expectedSha256 = "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";
         Directory.CreateDirectory(Path.GetDirectoryName(ModelPath)!);
         var temporaryPath = ModelPath + ".download";
         try
@@ -36,20 +38,23 @@ internal sealed class WhisperCppTranscriber
                 {
                     await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                     readTotal += read;
-                    if (totalBytes is > 0) progress?.Report((double)readTotal / totalBytes.Value);
+                    if (totalBytes is > 0)
+                        progress?.Report(new WhisperDownloadProgress(Math.Min(0.99, (double)readTotal / totalBytes.Value * 0.99), "Baixando Whisper Base"));
                 }
             }
 
+            progress?.Report(new WhisperDownloadProgress(null, "Verificando integridade do modelo…"));
             await using var model = File.OpenRead(temporaryPath);
             var actualSha256 = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(model, cancellationToken)).ToLowerInvariant();
             if (!string.Equals(actualSha256, expectedSha256, StringComparison.Ordinal))
-                throw new InvalidDataException("O checksum do modelo Whisper não confere.");
+                throw new InvalidDataException($"O checksum do modelo Whisper não confere (SHA-256 recebido: {actualSha256}).");
             File.Move(temporaryPath, ModelPath, overwrite: true);
-            progress?.Report(1);
         }
         finally
         {
-            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 
