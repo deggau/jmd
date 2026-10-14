@@ -115,6 +115,20 @@
           <StackPanel Margin="14">
             <Button Content="← Gerenciar atalhos" Click="BackToShortcutSettings_Click" HorizontalAlignment="Left"
                     Padding="10,6" Margin="0,0,0,12" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
+            <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,10">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Delimitador da lista" Foreground="White" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <ComboBox x:Name="SqlDelimiterPicker" Grid.Column="1" Height="36" Padding="8,5"
+                          Background="#FF181A20" Foreground="White" BorderBrush="#FF414651">
+                  <ComboBoxItem Content="Automático" Tag="" />
+                  <ComboBoxItem Content="Vírgula (,)" Tag="," />
+                  <ComboBoxItem Content="Pipe (|)" Tag="|" />
+                  <ComboBoxItem Content="Ponto e vírgula (;)" Tag=";" />
+                  <ComboBoxItem Content="Quebra de linha" Tag="newline" />
+                </ComboBox>
+              </Grid>
+            </Border>
             <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14">
               <StackPanel>
                 <TextBlock Text="Testar conversão SQL IN" Foreground="White" FontWeight="SemiBold" FontSize="14" />

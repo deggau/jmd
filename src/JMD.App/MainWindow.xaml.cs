@@ -103,6 +103,11 @@ public partial class MainWindow : Window
             SetStatus("A preferência para manter a tela ativa foi carregada, mas o Windows não aceitou a solicitação.", false);
         if (_settings.PreferredDelimiter is not (null or "," or "|" or ";" or "\r\n" or "\n" or "\r"))
             _settings.PreferredDelimiter = null;
+        SqlDelimiterPicker.SelectedIndex = _settings.PreferredDelimiter switch
+        {
+            "," => 1, "|" => 2, ";" => 3, "\r\n" or "\n" or "\r" => 4, _ => 0
+        };
+        SqlDelimiterPicker.SelectionChanged += SqlDelimiterPicker_SelectionChanged;
         if (_settings.HistoryRetentionDays is < 1 or > 3650)
             _settings.HistoryRetentionDays = 15;
         try
@@ -310,47 +315,6 @@ public partial class MainWindow : Window
             Margin = new Thickness(2, 12, 2, 0)
         };
         SettingsPanel.Children.Add(note);
-
-        SettingsPanel.Children.Add(new TextBlock
-        {
-            Text = "Delimitador da lista",
-            Foreground = Brushes.White,
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(2, 8, 0, 6)
-        });
-        var delimiterPicker = new ComboBox
-        {
-            Height = 36,
-            Padding = new Thickness(8, 5, 8, 5),
-            Background = new SolidColorBrush(Color.FromRgb(24, 26, 32)),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(65, 70, 81))
-        };
-        delimiterPicker.Items.Add(new ComboBoxItem { Content = "Automático", Tag = null });
-        delimiterPicker.Items.Add(new ComboBoxItem { Content = "Vírgula (,) ", Tag = "," });
-        delimiterPicker.Items.Add(new ComboBoxItem { Content = "Pipe (|)", Tag = "|" });
-        delimiterPicker.Items.Add(new ComboBoxItem { Content = "Ponto e vírgula (;)", Tag = ";" });
-        delimiterPicker.Items.Add(new ComboBoxItem { Content = "Quebra de linha", Tag = "\r\n" });
-        delimiterPicker.SelectedIndex = _settings.PreferredDelimiter switch
-        {
-            "," => 1, "|" => 2, ";" => 3, "\r\n" or "\n" or "\r" => 4, _ => 0
-        };
-        delimiterPicker.SelectionChanged += (_, _) =>
-        {
-            if (delimiterPicker.SelectedItem is not ComboBoxItem selected) return;
-            _settings.PreferredDelimiter = selected.Tag as string;
-            try
-            {
-                _settingsStore.Save(_settings);
-                SetStatus(_settings.PreferredDelimiter is null ? "Detecção automática ativada." : "Delimitador preferido salvo.", true);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                SetStatus($"Não foi possível salvar a preferência: {exception.Message}", false);
-            }
-        };
-        SettingsPanel.Children.Add(delimiterPicker);
 
         foreach (var row in _shortcutRows)
         {
@@ -2568,6 +2532,27 @@ public partial class MainWindow : Window
         TestOutput.Foreground = result.Success
             ? new SolidColorBrush(Color.FromRgb(180, 243, 106))
             : new SolidColorBrush(Color.FromRgb(255, 145, 135));
+    }
+
+    private void SqlDelimiterPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (SqlDelimiterPicker.SelectedItem is not ComboBoxItem selected) return;
+        var tag = selected.Tag as string;
+        _settings.PreferredDelimiter = tag switch
+        {
+            "" => null,
+            "newline" => "\r\n",
+            _ => tag
+        };
+        try
+        {
+            _settingsStore.Save(_settings);
+            SetStatus(_settings.PreferredDelimiter is null ? "Detecção automática ativada." : "Delimitador preferido salvo.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"Não foi possível salvar a preferência: {exception.Message}", false);
+        }
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
