@@ -20,6 +20,15 @@ public sealed class AppPresentationStateTests
         Assert.False(AppStartupOptions.StartsInShortcutSettings([]));
     }
 
+    [Theory]
+    [InlineData("--update", true)]
+    [InlineData("--UPDATE", true)]
+    [InlineData("--settings", false)]
+    public void Startup_option_requests_update_only_when_requested(string argument, bool expected)
+    {
+        Assert.Equal(expected, AppStartupOptions.StartsUpdate([argument]));
+    }
+
     [Fact]
     public void Shortcut_defaults_assign_selection_and_clipboard_to_requested_bindings()
     {
@@ -99,6 +108,10 @@ public sealed class AppPresentationStateTests
         navigation.ShowHistory();
         Assert.False(navigation.IsEditingShortcuts);
         Assert.Equal(AppPage.History, navigation.CurrentPage);
+
+        navigation.ShowJeySettings();
+        Assert.False(navigation.IsEditingShortcuts);
+        Assert.Equal(AppPage.JeySettings, navigation.CurrentPage);
     }
 
     [Fact]

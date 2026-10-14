@@ -14,14 +14,21 @@ public partial class App : System.Windows.Application
     private Forms.NotifyIcon? _trayIcon;
     private Icon? _appIcon;
     private MainWindow? _mainWindow;
+    private EventWaitHandle? _updateSignal;
+    private CancellationTokenSource? _updateListenerCancellation;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        var updateOnStartup = AppStartupOptions.StartsUpdate(e.Args);
+        _updateSignal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\JMD.UpdateRequested");
         _instanceMutex = new Mutex(true, @"Local\JMD.SingleInstance", out var isFirstInstance);
         if (!isFirstInstance)
         {
+            if (updateOnStartup) _updateSignal.Set();
             ShowExistingWindow();
+            _updateSignal.Dispose();
+            _updateSignal = null;
             _instanceMutex.Dispose();
             _instanceMutex = null;
             Shutdown();
@@ -55,10 +62,31 @@ public partial class App : System.Windows.Application
         };
         _trayIcon.BalloonTipClicked += (_, _) =>
             _mainWindow.Dispatcher.BeginInvoke(_mainWindow.ShowHistory);
-        if (openSettingsOnStartup)
+        StartUpdateSignalListener();
+        if (updateOnStartup)
+            _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.UpdateFromCommandLineAsync()));
+        else if (openSettingsOnStartup)
             _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowShortcutSettings));
         else
             _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowPalette));
+    }
+
+    private void StartUpdateSignalListener()
+    {
+        if (_updateSignal is null) return;
+        _updateListenerCancellation = new CancellationTokenSource();
+        var signal = _updateSignal;
+        var cancellationToken = _updateListenerCancellation.Token;
+        _ = Task.Run(() =>
+        {
+            var handles = new WaitHandle[] { signal, cancellationToken.WaitHandle };
+            while (WaitHandle.WaitAny(handles) == 0)
+            {
+                var window = _mainWindow;
+                if (window is not null)
+                    window.Dispatcher.BeginInvoke(new Action(async () => await window.UpdateFromCommandLineAsync()));
+            }
+        });
     }
 
     private static void ShowExistingWindow()
@@ -82,6 +110,9 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _updateListenerCancellation?.Cancel();
+        _updateListenerCancellation?.Dispose();
+        _updateSignal?.Dispose();
         if (_mainWindow is not null) _mainWindow.DisposeServices();
         if (_trayIcon is not null)
         {
@@ -104,6 +135,7 @@ internal sealed class UserSettings
     public int HistoryRetentionDays { get; set; } = 15;
     public bool KeepAwakeEnabled { get; set; }
     public bool VoiceWakeWordEnabled { get; set; } = true;
+    public bool VoiceDebugEnabled { get; set; }
     public List<SnippetEntry> Snippets { get; set; } = [];
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
 

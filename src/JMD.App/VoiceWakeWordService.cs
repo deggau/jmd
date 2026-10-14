@@ -7,6 +7,8 @@ using Vosk;
 
 namespace JMD.App;
 
+internal sealed record VoiceCaptureDebugInfo(int DurationMilliseconds, int? CutMilliseconds, byte[]? TranscriptionAudioWav);
+
 internal sealed class VoiceWakeWordService : IDisposable
 {
     private readonly Model _model;
@@ -21,8 +23,12 @@ internal sealed class VoiceWakeWordService : IDisposable
     private bool _awaitingPostWakeSpeech;
     private bool _started;
 
-    public event Action<string?, byte[]>? WakeWordRecognized;
-    public event Action<string?, byte[]>? FollowupSpeechCaptured;
+    private volatile bool _debugEnabled;
+    private VoiceCaptureDebugInfo? _lastDebugInfo;
+
+    public bool DebugEnabled { get => _debugEnabled; set => _debugEnabled = value; }
+    public event Action<string?, byte[], VoiceCaptureDebugInfo?>? WakeWordRecognized;
+    public event Action<string?, byte[], VoiceCaptureDebugInfo?>? FollowupSpeechCaptured;
 
     public VoiceWakeWordService()
     {
@@ -70,10 +76,14 @@ internal sealed class VoiceWakeWordService : IDisposable
             if (!IsWakeWordResult(wakeWordResult)) return;
             var pcmAudio = _utteranceAudio.ToArray();
             string? transcript;
+            _lastDebugInfo = null;
             try { transcript = TranscribeSpeechAfterWakeWord(wakeWordResult, pcmAudio); }
             catch { transcript = null; }
+            var debugInfo = _debugEnabled
+                ? _lastDebugInfo ?? new VoiceCaptureDebugInfo(GetDurationMilliseconds(pcmAudio.Length), null, null)
+                : null;
             if (string.IsNullOrWhiteSpace(transcript)) BeginPostWakeCapture(pcmAudio);
-            WakeWordRecognized?.Invoke(transcript, CreateWaveAudio(pcmAudio));
+            WakeWordRecognized?.Invoke(transcript, CreateWaveAudio(pcmAudio), debugInfo);
         }
         finally
         {
@@ -111,7 +121,7 @@ internal sealed class VoiceWakeWordService : IDisposable
             var transcript = GetPortugueseText(portugueseResult);
             if (HasRecognizedText(wakeRecognizerResult) || transcript is not null)
             {
-                FollowupSpeechCaptured?.Invoke(transcript, CreateCombinedWaveAudio());
+                FollowupSpeechCaptured?.Invoke(transcript, CreateCombinedWaveAudio(), GetFollowupDebugInfo());
                 EndPostWakeCapture();
                 return;
             }
@@ -125,10 +135,21 @@ internal sealed class VoiceWakeWordService : IDisposable
         {
             var portugueseResult = TranscribePortugueseAudio(
                 _followupSegmentAudio.GetBuffer(), checked((int)_followupSegmentAudio.Length));
-            FollowupSpeechCaptured?.Invoke(GetPortugueseText(portugueseResult), CreateCombinedWaveAudio());
+            FollowupSpeechCaptured?.Invoke(GetPortugueseText(portugueseResult), CreateCombinedWaveAudio(), GetFollowupDebugInfo());
         }
         EndPostWakeCapture();
     }
+
+    private VoiceCaptureDebugInfo? GetFollowupDebugInfo()
+    {
+        if (!_debugEnabled) return null;
+        var totalLength = (_wakeWordAudioPrefix?.Length ?? 0) + checked((int)_followupAudio.Length);
+        var prior = _lastDebugInfo;
+        return new VoiceCaptureDebugInfo(GetDurationMilliseconds(totalLength), prior?.CutMilliseconds,
+            prior?.TranscriptionAudioWav);
+    }
+
+    private static int GetDurationMilliseconds(int pcmByteLength) => (int)Math.Round(pcmByteLength * 1000d / 32000d);
 
     private byte[] CreateCombinedWaveAudio()
     {
@@ -184,7 +205,11 @@ internal sealed class VoiceWakeWordService : IDisposable
     {
         using var wakeWord = JsonDocument.Parse(wakeWordJson);
         if (!TryGetWakeWordEnd(wakeWord.RootElement, out var wakeWordEnd)) return null;
+        var cutMilliseconds = (int)Math.Round(wakeWordEnd * 1000d);
         var speechAudio = VoiceAudioSegmenter.AfterBoundary(pcmAudio, wakeWordEnd);
+        if (_debugEnabled)
+            _lastDebugInfo = new VoiceCaptureDebugInfo(GetDurationMilliseconds(pcmAudio.Length), cutMilliseconds,
+                speechAudio.Length == 0 ? null : CreateWaveAudio(speechAudio));
         if (speechAudio.Length == 0) return null;
         var portugueseResult = TranscribePortugueseAudio(speechAudio, speechAudio.Length);
         var transcript = GetPortugueseText(portugueseResult);

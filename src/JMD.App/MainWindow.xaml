@@ -34,6 +34,7 @@
                   Foreground="White" BorderThickness="0" ToolTip="Mais opções">
             <Button.ContextMenu>
               <ContextMenu>
+                <MenuItem Header="Jey" Click="JeyMenuItem_Click" />
                 <MenuItem Header="Sobre" Click="AboutMenuItem_Click" />
               </ContextMenu>
             </Button.ContextMenu>
@@ -177,7 +178,7 @@
                             <DockPanel LastChildFill="False">
                               <TextBlock Text="Transcrição após Jey" Foreground="#FF969BA7" FontSize="11"
                                          VerticalAlignment="Center" />
-                              <Button Tag="{Binding Id}" Click="PlayHistoryAudio_Click" ToolTip="Reproduzir áudio gravado"
+                              <Button Tag="{Binding OriginalAudioRequest}" Click="PlayHistoryAudio_Click" ToolTip="Reproduzir áudio gravado"
                                       Padding="6,3" Margin="8,0,0,0" Background="#FF30343E" Foreground="White"
                                       BorderThickness="0" DockPanel.Dock="Right">
                                 <Button.Style>
@@ -200,6 +201,38 @@
                             </DockPanel>
                             <TextBlock Text="{Binding VoiceTranscript, TargetNullValue=Transcrição indisponível}"
                                        Foreground="White" TextWrapping="Wrap" Margin="0,3,0,0" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,0,8">
+                            <StackPanel.Style>
+                              <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding HasVoiceDebugInfo}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Depuração de áudio" Foreground="#FF969BA7" FontSize="11" />
+                            <TextBlock Text="{Binding VoiceDebugSummary}" Foreground="White" FontSize="11" Margin="0,3,0,0" />
+                            <TextBlock Text="{Binding VoiceCutDisplay}" Foreground="White" FontSize="11" Margin="0,2,0,0" />
+                            <DockPanel LastChildFill="False" Margin="0,4,0,0">
+                              <TextBlock Text="Trecho enviado à transcrição" Foreground="#FF969BA7" FontSize="11" VerticalAlignment="Center" />
+                              <Button Tag="{Binding TranscriptionAudioRequest}" Click="PlayHistoryAudio_Click" ToolTip="Reproduzir trecho enviado à transcrição"
+                                      Padding="6,3" Margin="8,0,0,0" Background="#FF30343E" Foreground="White" BorderThickness="0" DockPanel.Dock="Right">
+                                <Button.Style>
+                                  <Style TargetType="Button">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                      <DataTrigger Binding="{Binding HasVoiceTranscriptionAudio}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                      </DataTrigger>
+                                    </Style.Triggers>
+                                  </Style>
+                                </Button.Style>
+                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                              </Button>
+                            </DockPanel>
                           </StackPanel>
                           <StackPanel>
                             <StackPanel.Style>
@@ -305,6 +338,17 @@
             </StackPanel>
           </StackPanel>
         </Border>
+      </Grid>
+      <Grid x:Name="JeySettingsPage" Grid.Row="2" Visibility="Collapsed" Background="#FF17191F">
+        <StackPanel Margin="18">
+          <TextBlock Text="Configurações do Jey" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+          <CheckBox x:Name="VoiceDebugToggle" Content="Depuração de áudio"
+                    Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,18,0,0"
+                    Checked="VoiceDebugToggle_Changed" Unchecked="VoiceDebugToggle_Changed"
+                    ToolTip="Guarda no histórico a duração, o ponto de corte e o trecho enviado à transcrição em português." />
+          <TextBlock Text="Quando ativada, os detalhes de captura aparecem nos registros de comandos de voz do histórico."
+                     Foreground="#FF969BA7" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
+        </StackPanel>
       </Grid>
       <Grid Grid.Row="3" Margin="0,14,0,0">
         <Grid.ColumnDefinitions>

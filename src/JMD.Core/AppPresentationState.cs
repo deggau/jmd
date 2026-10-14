@@ -8,7 +8,8 @@ public enum AppPage
     Palette,
     ShortcutSettings,
     History,
-    About
+    About,
+    JeySettings
 }
 
 public sealed class AppNavigationState
@@ -20,14 +21,19 @@ public sealed class AppNavigationState
     public void ShowShortcutSettings() => CurrentPage = AppPage.ShortcutSettings;
     public void ShowHistory() => CurrentPage = AppPage.History;
     public void ShowAbout() => CurrentPage = AppPage.About;
+    public void ShowJeySettings() => CurrentPage = AppPage.JeySettings;
 }
 
 public static class AppStartupOptions
 {
     public const string OpenSettingsArgument = "--settings";
+    public const string UpdateArgument = "--update";
 
     public static bool StartsInShortcutSettings(IEnumerable<string> arguments)
         => arguments.Any(argument => string.Equals(argument, OpenSettingsArgument, StringComparison.OrdinalIgnoreCase));
+
+    public static bool StartsUpdate(IEnumerable<string> arguments)
+        => arguments.Any(argument => string.Equals(argument, UpdateArgument, StringComparison.OrdinalIgnoreCase));
 }
 
 public static class ShortcutDefaults

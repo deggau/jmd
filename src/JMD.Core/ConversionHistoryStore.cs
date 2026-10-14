@@ -12,7 +12,10 @@ public sealed record ConversionHistoryEntry(
     string? WindowTitle = null,
     bool IsVoiceTriggered = false,
     string? VoiceTranscript = null,
-    bool HasVoiceAudio = false);
+    bool HasVoiceAudio = false,
+    int? VoiceDurationMilliseconds = null,
+    int? VoiceCutMilliseconds = null,
+    bool HasVoiceTranscriptionAudio = false);
 
 public sealed record ConversionSource(string? ApplicationName, string? WindowTitle);
 
@@ -47,6 +50,9 @@ public sealed class ConversionHistoryStore
         EnsureColumn(connection, "IsVoiceTriggered", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "VoiceTranscript");
         EnsureColumn(connection, "VoiceAudioWav", "BLOB NULL");
+        EnsureColumn(connection, "VoiceDurationMilliseconds", "INTEGER NULL");
+        EnsureColumn(connection, "VoiceCutMilliseconds", "INTEGER NULL");
+        EnsureColumn(connection, "VoiceTranscriptionAudioWav", "BLOB NULL");
     }
 
     public long Add(
@@ -57,13 +63,16 @@ public sealed class ConversionHistoryStore
         ConversionSource? source = null,
         bool isVoiceTriggered = false,
         string? voiceTranscript = null,
-        byte[]? voiceAudioWav = null)
+        byte[]? voiceAudioWav = null,
+        int? voiceDurationMilliseconds = null,
+        int? voiceCutMilliseconds = null,
+        byte[]? voiceTranscriptionAudioWav = null)
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav)
-            VALUES ($occurredAt, $commandName, $beforeValue, $afterValue, $applicationName, $windowTitle, $isVoiceTriggered, $voiceTranscript, $voiceAudioWav);
+            INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav)
+            VALUES ($occurredAt, $commandName, $beforeValue, $afterValue, $applicationName, $windowTitle, $isVoiceTriggered, $voiceTranscript, $voiceAudioWav, $voiceDurationMilliseconds, $voiceCutMilliseconds, $voiceTranscriptionAudioWav);
             """;
         command.Parameters.AddWithValue("$occurredAt", (occurredAtUtc ?? _utcNow()).ToUniversalTime().ToString("O"));
         command.Parameters.AddWithValue("$commandName", commandName);
@@ -74,20 +83,27 @@ public sealed class ConversionHistoryStore
         command.Parameters.AddWithValue("$isVoiceTriggered", isVoiceTriggered ? 1 : 0);
         command.Parameters.AddWithValue("$voiceTranscript", (object?)voiceTranscript ?? DBNull.Value);
         command.Parameters.AddWithValue("$voiceAudioWav", (object?)voiceAudioWav ?? DBNull.Value);
+        command.Parameters.AddWithValue("$voiceDurationMilliseconds", (object?)voiceDurationMilliseconds ?? DBNull.Value);
+        command.Parameters.AddWithValue("$voiceCutMilliseconds", (object?)voiceCutMilliseconds ?? DBNull.Value);
+        command.Parameters.AddWithValue("$voiceTranscriptionAudioWav", (object?)voiceTranscriptionAudioWav ?? DBNull.Value);
         command.ExecuteNonQuery();
         using var idCommand = connection.CreateCommand();
         idCommand.CommandText = "SELECT last_insert_rowid();";
         return (long)idCommand.ExecuteScalar()!;
     }
 
-    public void UpdateVoiceCapture(long id, string? transcript, byte[] audioWav)
+    public void UpdateVoiceCapture(long id, string? transcript, byte[] audioWav,
+        int? voiceDurationMilliseconds = null, int? voiceCutMilliseconds = null, byte[]? voiceTranscriptionAudioWav = null)
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE ConversionHistory SET AfterValue = COALESCE($transcript, AfterValue), VoiceTranscript = COALESCE($transcript, VoiceTranscript), VoiceAudioWav = $audio WHERE Id = $id AND IsVoiceTriggered = 1;";
+        command.CommandText = "UPDATE ConversionHistory SET AfterValue = COALESCE($transcript, AfterValue), VoiceTranscript = COALESCE($transcript, VoiceTranscript), VoiceAudioWav = $audio, VoiceDurationMilliseconds = COALESCE($duration, VoiceDurationMilliseconds), VoiceCutMilliseconds = COALESCE($cut, VoiceCutMilliseconds), VoiceTranscriptionAudioWav = COALESCE($transcriptionAudio, VoiceTranscriptionAudioWav) WHERE Id = $id AND IsVoiceTriggered = 1;";
         command.Parameters.AddWithValue("$id", id);
         command.Parameters.AddWithValue("$transcript", (object?)transcript ?? DBNull.Value);
         command.Parameters.AddWithValue("$audio", audioWav);
+        command.Parameters.AddWithValue("$duration", (object?)voiceDurationMilliseconds ?? DBNull.Value);
+        command.Parameters.AddWithValue("$cut", (object?)voiceCutMilliseconds ?? DBNull.Value);
+        command.Parameters.AddWithValue("$transcriptionAudio", (object?)voiceTranscriptionAudioWav ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -96,7 +112,7 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL
             FROM ConversionHistory
             WHERE $query = '' OR CommandName LIKE $pattern ESCAPE '\'
                 OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
@@ -122,7 +138,7 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL
             FROM ConversionHistory
             ORDER BY OccurredAtUtc DESC, Id DESC
             LIMIT 1;
@@ -141,6 +157,16 @@ public sealed class ConversionHistoryStore
         return value is byte[] bytes ? bytes : null;
     }
 
+    public byte[]? GetVoiceTranscriptionAudio(long id)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT VoiceTranscriptionAudioWav FROM ConversionHistory WHERE Id = $id AND IsVoiceTriggered = 1;";
+        command.Parameters.AddWithValue("$id", id);
+        var value = command.ExecuteScalar();
+        return value is byte[] bytes ? bytes : null;
+    }
+
     private static ConversionHistoryEntry ReadEntry(SqliteDataReader reader) => new(
         reader.GetInt64(0),
         DateTimeOffset.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture),
@@ -151,7 +177,10 @@ public sealed class ConversionHistoryStore
         reader.IsDBNull(6) ? null : reader.GetString(6),
         reader.GetInt32(7) != 0,
         reader.IsDBNull(8) ? null : reader.GetString(8),
-        reader.GetInt32(9) != 0);
+        reader.GetInt32(9) != 0,
+        reader.IsDBNull(10) ? null : reader.GetInt32(10),
+        reader.IsDBNull(11) ? null : reader.GetInt32(11),
+        reader.GetInt32(12) != 0);
 
     private static void EnsureColumn(SqliteConnection connection, string columnName, string declaration = "TEXT NULL")
     {

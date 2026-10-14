@@ -75,6 +75,28 @@ public sealed class ConversionHistoryTests : IDisposable
     }
 
     [Fact]
+    public void Voice_history_keeps_debug_timing_and_transcription_audio()
+    {
+        var store = new ConversionHistoryStore(DatabasePath);
+        byte[] originalAudio = [0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4];
+        byte[] transcriptionAudio = [0x52, 0x49, 0x46, 0x46, 5, 6, 7, 8];
+        var id = store.Add("Ativação por voz (Jey)", string.Empty, string.Empty,
+            isVoiceTriggered: true, voiceAudioWav: originalAudio,
+            voiceDurationMilliseconds: 1800, voiceCutMilliseconds: 640,
+            voiceTranscriptionAudioWav: transcriptionAudio);
+
+        store.UpdateVoiceCapture(id, "formatar", originalAudio,
+            voiceDurationMilliseconds: 2400, voiceCutMilliseconds: 640,
+            voiceTranscriptionAudioWav: transcriptionAudio);
+
+        var entry = Assert.Single(store.Search(string.Empty));
+        Assert.Equal(2400, entry.VoiceDurationMilliseconds);
+        Assert.Equal(640, entry.VoiceCutMilliseconds);
+        Assert.True(entry.HasVoiceTranscriptionAudio);
+        Assert.Equal(transcriptionAudio, store.GetVoiceTranscriptionAudio(id));
+    }
+
+    [Fact]
     public void Retention_removes_entries_older_than_the_configured_days()
     {
         var now = new DateTimeOffset(2026, 10, 5, 12, 0, 0, TimeSpan.Zero);

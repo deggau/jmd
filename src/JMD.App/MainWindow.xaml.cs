@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     private MediaPlayer? _historyAudioPlayer;
     private string? _historyAudioPlaybackPath;
     private bool _updatingVoiceWakeWordToggle;
+    private bool _updatingVoiceDebugToggle;
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
     private readonly AppNavigationState _navigation = new();
@@ -74,12 +75,16 @@ public partial class MainWindow : Window
         InitializeComponent();
         FooterVersionText.Text = $"v{GetInstalledVersion()}";
         _settings = _settingsStore.Load();
+        ConfigureDefaultVoiceCommands();
         _updatingKeepAwakeToggle = true;
         KeepAwakeToggle.IsChecked = _settings.KeepAwakeEnabled;
         _updatingKeepAwakeToggle = false;
         _updatingVoiceWakeWordToggle = true;
         VoiceWakeWordToggle.IsChecked = _settings.VoiceWakeWordEnabled;
         _updatingVoiceWakeWordToggle = false;
+        _updatingVoiceDebugToggle = true;
+        VoiceDebugToggle.IsChecked = _settings.VoiceDebugEnabled;
+        _updatingVoiceDebugToggle = false;
         if (_settings.KeepAwakeEnabled && !_displayAwake.SetEnabled(true))
             SetStatus("A preferência para manter a tela ativa foi carregada, mas o Windows não aceitou a solicitação.", false);
         if (_settings.PreferredDelimiter is not (null or "," or "|" or ";" or "\r\n" or "\n" or "\r"))
@@ -156,6 +161,8 @@ public partial class MainWindow : Window
             "Salva a seleção ou a linha do cursor e limpa o campo.", ShortcutDefaults.ForCommand("draftSave")));
         _commands.Add(new CommandRow("draftRestore", "Usar rascunho",
             "Guarda o conteúdo atual e recupera o último rascunho.", ShortcutDefaults.ForCommand("draftRestore")));
+        _commands.Add(new CommandRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.", "Jey"));
+        _commands.Add(new CommandRow("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.", "Jey"));
         foreach (var shortcut in _settings.CustomShortcuts)
         {
             var row = new CommandRow(shortcut.Id, shortcut.Name, shortcut.Target,
@@ -236,6 +243,25 @@ public partial class MainWindow : Window
         AddShortcutRow("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título.");
         AddShortcutRow("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo.");
         AddShortcutRow("draftRestore", "Usar rascunho", "Guarda o conteúdo atual e recupera o último rascunho.");
+
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Ações do Jey",
+            Foreground = Brushes.White,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(2, 18, 0, 5)
+        });
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Essas ações não precisam de atalho de teclado. Você pode ajustar as frases do Jey aqui.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+            FontSize = 12,
+            Margin = new Thickness(2, 0, 0, 10)
+        });
+        AddVoiceOnlyCommand("about", "Abrir Sobre", "Abre a tela Sobre do JMD.");
+        AddVoiceOnlyCommand("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.");
 
         SettingsPanel.Children.Add(new TextBlock
         {
@@ -396,6 +422,59 @@ public partial class MainWindow : Window
         RefreshShortcutStatuses();
     }
 
+    private void AddVoiceOnlyCommand(string id, string name, string description)
+    {
+        var card = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(9),
+            Padding = new Thickness(14),
+            Margin = new Thickness(0, 0, 0, 9)
+        };
+        var content = new StackPanel();
+        content.Children.Add(new TextBlock { Text = name, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, FontSize = 13 });
+        content.Children.Add(new TextBlock { Text = description, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 11, Margin = new Thickness(0, 4, 0, 8) });
+        content.Children.Add(new TextBlock { Text = "Frases de voz (uma por linha)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(0, 0, 0, 4) });
+        var editor = new TextBox
+        {
+            Text = GetVoicePhrasesText(id), Tag = id, MinHeight = 48, MaxHeight = 96,
+            Padding = new Thickness(8, 6, 8, 6), FontSize = 12, Foreground = Brushes.White,
+            Background = new SolidColorBrush(Color.FromRgb(24, 26, 32)), BorderBrush = new SolidColorBrush(Color.FromRgb(65, 70, 81)),
+            TextWrapping = TextWrapping.Wrap, AcceptsReturn = true, VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        editor.TextChanged += VoicePhrasesEditor_TextChanged;
+        content.Children.Add(editor);
+        card.Child = content;
+        SettingsPanel.Children.Add(card);
+    }
+
+    private void ConfigureDefaultVoiceCommands()
+    {
+        var defaults = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["about"] = ["abrir sobre", "abrir tela sobre"],
+            ["checkUpdates"] = ["verificar atualizações", "verificar atualização", "atualizar jmd"]
+        };
+        var changed = false;
+        foreach (var (commandId, phrases) in defaults)
+        {
+            if (_settings.VoicePhrases.ContainsKey(commandId)) continue;
+            var existing = _settings.VoicePhrases.Where(pair => pair.Key != commandId).SelectMany(pair => pair.Value);
+            _settings.VoicePhrases[commandId] = phrases
+                .Where(phrase => !VoicePhrasePolicy.ConflictsWith([phrase], existing))
+                .ToList();
+            changed = true;
+        }
+        if (!changed) return;
+        try { _settingsStore.Save(_settings); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"As frases padrão do Jey não puderam ser salvas: {exception.Message}", false);
+        }
+    }
+
     private void AddShortcutRow(string id, string name, string description)
     {
         var row = new ShortcutRow(id, name, description, GetShortcut(id), !_settings.DisabledCommands.Contains(id));
@@ -536,7 +615,7 @@ public partial class MainWindow : Window
         if (normalizedTranscript.Length == 0) return null;
 
         string? matchedCommand = null;
-        foreach (var commandId in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
+        foreach (var commandId in ShortcutIds.Concat(["about", "checkUpdates"]).Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
         {
             if (_settings.DisabledCommands.Contains(commandId) ||
                 !_settings.VoicePhrases.TryGetValue(commandId, out var phrases))
@@ -1104,8 +1183,12 @@ public partial class MainWindow : Window
 
     private string GetShortcut(string id)
     {
-        var defaults = ShortcutDefaults.ForCommand(id);
-        return _settings.Shortcuts.TryGetValue(id, out var value) ? value : defaults;
+        if (_settings.Shortcuts.TryGetValue(id, out var value)) return value;
+        var customShortcut = _settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id);
+        if (customShortcut is not null)
+            return string.IsNullOrWhiteSpace(customShortcut.Shortcut) ? "Comando personalizado" : customShortcut.Shortcut;
+        try { return ShortcutDefaults.ForCommand(id); }
+        catch (ArgumentOutOfRangeException) { return string.Empty; }
     }
 
     private void SetShortcutStatus(string id, string status, bool active)
@@ -1135,10 +1218,11 @@ public partial class MainWindow : Window
     {
         foreach (var command in _commands)
         {
-            command.Shortcut = GetShortcut(command.Id);
+            var voiceOnly = command.Id is "about" or "checkUpdates";
+            command.Shortcut = voiceOnly ? "Jey" : GetShortcut(command.Id);
             command.VoicePhrasesDisplay = GetVoicePhrasesDisplay(command.Id);
             var shortcutRow = _shortcutRows.FirstOrDefault(row => row.Id == command.Id);
-            command.Status = shortcutRow?.Status ?? "Atalho configurável";
+            command.Status = shortcutRow?.Status ?? (voiceOnly ? "Comando por voz" : "Atalho configurável");
             command.StatusBrush = shortcutRow?.StatusBrush ?? new SolidColorBrush(Color.FromRgb(150, 155, 167));
         }
     }
@@ -1224,6 +1308,17 @@ public partial class MainWindow : Window
                     ShowPalette();
                     if (voiceCommand is not null)
                         RecordActionHistory("Abrir paleta", string.Empty, string.Empty, voiceCommand);
+                    break;
+                case "about":
+                    ShowAboutPage();
+                    if (voiceCommand is not null)
+                        RecordActionHistory("Abrir Sobre", string.Empty, string.Empty, voiceCommand);
+                    break;
+                case "checkUpdates":
+                    ShowAboutPage();
+                    if (voiceCommand is not null)
+                        RecordActionHistory("Verificar atualizações JMD", string.Empty, string.Empty, voiceCommand);
+                    CheckUpdatesButton_Click(this, new RoutedEventArgs());
                     break;
                 case "clipboard":
                     await TransformClipboardAsync(voiceCommand);
@@ -1419,6 +1514,7 @@ public partial class MainWindow : Window
         SettingsPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
         AboutPage.Visibility = Visibility.Collapsed;
+        JeySettingsPage.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Visible;
         ManageButton.Content = "Gerenciar atalhos";
         HistoryButton.Content = "Histórico";
@@ -1534,7 +1630,10 @@ public partial class MainWindow : Window
             : $"Ativação por voz (Jey) - {voiceCommand.CommandName}";
         _historyStore.Add(historyCommandName, beforeValue, afterValue,
             source: GetConversionSource(), isVoiceTriggered: voiceCommand is not null,
-            voiceTranscript: voiceCommand?.Transcript, voiceAudioWav: voiceCommand?.AudioWav);
+            voiceTranscript: voiceCommand?.Transcript, voiceAudioWav: voiceCommand?.AudioWav,
+            voiceDurationMilliseconds: voiceCommand?.DebugInfo?.DurationMilliseconds,
+            voiceCutMilliseconds: voiceCommand?.DebugInfo?.CutMilliseconds,
+            voiceTranscriptionAudioWav: voiceCommand?.DebugInfo?.TranscriptionAudioWav);
         RefreshHistory();
     }
 
@@ -1555,6 +1654,12 @@ public partial class MainWindow : Window
                     entry.VoiceTranscript ?? "Transcrição indisponível",
                     entry.HasVoiceAudio,
                     entry.IsVoiceTriggered && entry.CommandName.StartsWith("Ativação por voz (Jey) - ", StringComparison.Ordinal),
+                    entry.VoiceDurationMilliseconds is not null || entry.VoiceCutMilliseconds is not null || entry.HasVoiceTranscriptionAudio,
+                    entry.VoiceDurationMilliseconds is { } duration ? $"Duração total: {duration} ms" : "Duração total: indisponível",
+                    entry.VoiceCutMilliseconds is { } cut ? $"Milissegundo do corte: {cut} ms" : "Milissegundo do corte: indisponível",
+                    entry.HasVoiceTranscriptionAudio,
+                    new HistoryAudioPlaybackRequest(entry.Id, false),
+                    new HistoryAudioPlaybackRequest(entry.Id, true),
                     entry.CommandName.EndsWith(DraftStack.SavedCommandName, StringComparison.Ordinal),
                     entry.CommandName.EndsWith(DraftStack.RestoredCommandName, StringComparison.Ordinal)))
                 .ToList();
@@ -1595,10 +1700,12 @@ public partial class MainWindow : Window
 
     private void PlayHistoryAudio_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: long id }) return;
+        if (sender is not Button { Tag: HistoryAudioPlaybackRequest request }) return;
         try
         {
-            var audio = _historyStore?.GetVoiceAudio(id);
+            var audio = request.IsTranscriptionAudio
+                ? _historyStore?.GetVoiceTranscriptionAudio(request.HistoryId)
+                : _historyStore?.GetVoiceAudio(request.HistoryId);
             if (audio is null)
             {
                 SetStatus("O áudio deste registro não está disponível.", false);
@@ -1626,7 +1733,7 @@ public partial class MainWindow : Window
                 StopHistoryAudioPlayback();
             };
             player.Open(new Uri(path, UriKind.Absolute));
-            SetStatus("Reproduzindo áudio do comando de voz.", true);
+            SetStatus(request.IsTranscriptionAudio ? "Reproduzindo o trecho enviado à transcrição." : "Reproduzindo áudio do comando de voz.", true);
         }
         catch (Exception exception)
         {
@@ -1674,7 +1781,8 @@ public partial class MainWindow : Window
         }
     }
 
-    private sealed record VoiceCommandInvocation(string CommandName, string Transcript, byte[] AudioWav);
+    private sealed record VoiceCommandInvocation(string CommandName, string Transcript, byte[] AudioWav, VoiceCaptureDebugInfo? DebugInfo);
+    private sealed record HistoryAudioPlaybackRequest(long HistoryId, bool IsTranscriptionAudio);
 
     private sealed record HistoryDisplayEntry(
         long Id,
@@ -1687,6 +1795,12 @@ public partial class MainWindow : Window
         string VoiceTranscript,
         bool HasVoiceAudio,
         bool IsVoiceCommand,
+        bool HasVoiceDebugInfo,
+        string VoiceDebugSummary,
+        string VoiceCutDisplay,
+        bool HasVoiceTranscriptionAudio,
+        HistoryAudioPlaybackRequest OriginalAudioRequest,
+        HistoryAudioPlaybackRequest TranscriptionAudioRequest,
         bool IsDraftSaved,
         bool IsDraftRestored);
 
@@ -1727,6 +1841,12 @@ public partial class MainWindow : Window
         else if (id == "saveSnippet") await CaptureSnippetAsync();
         else if (id == "draftSave") await SaveDraftAsync();
         else if (id == "draftRestore") await RestoreDraftAsync();
+        else if (id == "about") AboutMenuItem_Click(this, new RoutedEventArgs());
+        else if (id == "checkUpdates")
+        {
+            AboutMenuItem_Click(this, new RoutedEventArgs());
+            CheckUpdatesButton_Click(this, new RoutedEventArgs());
+        }
         else if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
             OpenCustomShortcut(customShortcut);
     }
@@ -1749,6 +1869,7 @@ public partial class MainWindow : Window
         SettingsPage.Visibility = Visibility.Visible;
         HistoryPage.Visibility = Visibility.Collapsed;
         AboutPage.Visibility = Visibility.Collapsed;
+        JeySettingsPage.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Collapsed;
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Gerenciar atalhos";
@@ -1810,7 +1931,8 @@ public partial class MainWindow : Window
         StopVoiceWakeWord();
         var service = new VoiceWakeWordService();
         _voiceWakeWord = service;
-        service.WakeWordRecognized += (transcript, audioWav) => Dispatcher.BeginInvoke(new Action(() =>
+        service.DebugEnabled = _settings.VoiceDebugEnabled;
+        service.WakeWordRecognized += (transcript, audioWav, debugInfo) => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
             {
@@ -1818,7 +1940,7 @@ public partial class MainWindow : Window
                 if (voiceCommandId is not null && transcript is not null)
                 {
                     var commandName = GetVoiceCommandName(voiceCommandId);
-                    HandleHotkeyAsync(voiceCommandId, new VoiceCommandInvocation(commandName, transcript, audioWav));
+                    HandleHotkeyAsync(voiceCommandId, new VoiceCommandInvocation(commandName, transcript, audioWav, debugInfo));
                     return;
                 }
 
@@ -1826,18 +1948,23 @@ public partial class MainWindow : Window
                 {
                     var historyId = _historyStore?.Add("Ativação por voz (Jey)", string.Empty, transcript ?? string.Empty,
                         source: GetConversionSource(), isVoiceTriggered: true, voiceTranscript: transcript,
-                        voiceAudioWav: audioWav);
+                        voiceAudioWav: audioWav,
+                        voiceDurationMilliseconds: debugInfo?.DurationMilliseconds,
+                        voiceCutMilliseconds: debugInfo?.CutMilliseconds,
+                        voiceTranscriptionAudioWav: debugInfo?.TranscriptionAudioWav);
                     RefreshHistory();
                     if (string.IsNullOrWhiteSpace(transcript))
                     {
-                        Action<string?, byte[]>? followupHandler = null;
-                        followupHandler = (followupTranscript, completeAudio) => Dispatcher.BeginInvoke(new Action(() =>
+                        Action<string?, byte[], VoiceCaptureDebugInfo?>? followupHandler = null;
+                        followupHandler = (followupTranscript, completeAudio, followupDebugInfo) => Dispatcher.BeginInvoke(new Action(() =>
                         {
                             service.FollowupSpeechCaptured -= followupHandler;
                             if (!_settings.VoiceWakeWordEnabled || !ReferenceEquals(_voiceWakeWord, service) || historyId is null) return;
                             try
                             {
-                                _historyStore?.UpdateVoiceCapture(historyId.Value, followupTranscript, completeAudio);
+                                _historyStore?.UpdateVoiceCapture(historyId.Value, followupTranscript, completeAudio,
+                                    followupDebugInfo?.DurationMilliseconds, followupDebugInfo?.CutMilliseconds,
+                                    followupDebugInfo?.TranscriptionAudioWav);
                                 RefreshHistory();
                             }
                             catch (Exception exception)
@@ -1887,6 +2014,7 @@ public partial class MainWindow : Window
         SettingsPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Visible;
         AboutPage.Visibility = Visibility.Collapsed;
+        JeySettingsPage.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Collapsed;
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Histórico";
@@ -1940,12 +2068,55 @@ public partial class MainWindow : Window
         SetVoiceWakeWordEnabled(toggle.IsChecked == true);
     }
 
+    private void VoiceDebugToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updatingVoiceDebugToggle || sender is not CheckBox toggle) return;
+        _settings.VoiceDebugEnabled = toggle.IsChecked == true;
+        if (_voiceWakeWord is not null) _voiceWakeWord.DebugEnabled = _settings.VoiceDebugEnabled;
+        try
+        {
+            _settingsStore.Save(_settings);
+            SetStatus(_settings.VoiceDebugEnabled ? "Depuração de áudio do Jey ativada." : "Depuração de áudio do Jey desativada.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _updatingVoiceDebugToggle = true;
+            toggle.IsChecked = !_settings.VoiceDebugEnabled;
+            _settings.VoiceDebugEnabled = toggle.IsChecked == true;
+            _updatingVoiceDebugToggle = false;
+            if (_voiceWakeWord is not null) _voiceWakeWord.DebugEnabled = _settings.VoiceDebugEnabled;
+            SetStatus($"Não foi possível salvar a opção de depuração do Jey: {exception.Message}", false);
+        }
+    }
+
+    private void JeyMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        _navigation.ShowJeySettings();
+        CommandsList.Visibility = Visibility.Collapsed;
+        SettingsTabs.Visibility = Visibility.Collapsed;
+        AboutPage.Visibility = Visibility.Collapsed;
+        JeySettingsPage.Visibility = Visibility.Visible;
+        SearchBox.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos comandos";
+        PageTitle.Text = "Jey";
+        PageSubtitle.Text = "Opções para comandos de voz";
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
     private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        ShowAboutPage();
+    }
+
+    private void ShowAboutPage()
     {
         _navigation.ShowAbout();
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Collapsed;
         AboutPage.Visibility = Visibility.Visible;
+        JeySettingsPage.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Collapsed;
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Sobre";
@@ -1965,9 +2136,19 @@ public partial class MainWindow : Window
            ?? "desconhecida";
 
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+        => await CheckForUpdatesAsync(installWhenAvailable: false);
+
+    public async Task UpdateFromCommandLineAsync()
+    {
+        ShowAboutPage();
+        await CheckForUpdatesAsync(installWhenAvailable: true);
+    }
+
+    private async Task CheckForUpdatesAsync(bool installWhenAvailable)
     {
         if (_checkingUpdates) return;
         _checkingUpdates = true;
+        var shouldInstall = false;
         InstallUpdateButton.Visibility = Visibility.Collapsed;
         UpdateStatusText.Text = "Consultando a versão mais recente no GitHub…";
         try
@@ -1987,7 +2168,10 @@ public partial class MainWindow : Window
             if (ReleaseVersionComparison.IsUpdateAvailable(installed, latestTag))
             {
                 UpdateStatusText.Text = $"Nova versão disponível: {latestVersion} (instalada: {currentVersion}).";
-                InstallUpdateButton.Visibility = Visibility.Visible;
+                if (installWhenAvailable)
+                    shouldInstall = true;
+                else
+                    InstallUpdateButton.Visibility = Visibility.Visible;
             }
             else
             {
@@ -2002,9 +2186,13 @@ public partial class MainWindow : Window
         {
             _checkingUpdates = false;
         }
+        if (shouldInstall) await InstallUpdateAsync();
     }
 
     private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
+        => await InstallUpdateAsync();
+
+    private async Task InstallUpdateAsync()
     {
         if (_checkingUpdates) return;
         _checkingUpdates = true;
