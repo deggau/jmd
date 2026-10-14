@@ -2,7 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.35"
+  !define APP_VERSION "0.1.36"
 !endif
 !ifndef PUBLISH_DIR
   !error "PUBLISH_DIR must point to the published application directory"
@@ -63,7 +63,7 @@ Section "Install" SEC_INSTALL
   WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '$"$INSTDIR\Uninstall.exe$" /S'
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
-  ExecShell "open" "$INSTDIR\${APP_EXE}" "--settings"
+  ExecShell "open" "$INSTDIR\${APP_EXE}"
 SectionEnd
 
 Section "Uninstall" un.Uninstall
