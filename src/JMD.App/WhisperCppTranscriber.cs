@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
+using JMD.Core;
 
 namespace JMD.App;
 
@@ -44,16 +45,8 @@ internal sealed class WhisperCppTranscriber
             }
 
             progress?.Report(new WhisperDownloadProgress(null, "Verificando integridade do modelo…"));
-            string actualSha256;
-            await using (var model = File.OpenRead(temporaryPath))
-            {
-                actualSha256 = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(model, cancellationToken)).ToLowerInvariant();
-            }
-
-            if (!string.Equals(actualSha256, expectedSha256, StringComparison.Ordinal))
-                throw new InvalidDataException($"O checksum do modelo Whisper não confere (SHA-256 recebido: {actualSha256}).");
-
-            File.Move(temporaryPath, ModelPath, overwrite: true);
+            await VerifiedFileInstaller.InstallSha256VerifiedFileAsync(
+                temporaryPath, ModelPath, expectedSha256, cancellationToken);
         }
         finally
         {

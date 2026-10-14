@@ -1941,6 +1941,11 @@ public partial class MainWindow : Window
             _settings.JeyEnglishModel == "whisper");
         _voiceWakeWord = service;
         service.DebugEnabled = _settings.VoiceDebugEnabled;
+        service.AudioProcessingFailed += exception => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (ReferenceEquals(_voiceWakeWord, service))
+                SetStatus($"Falha ao processar áudio do Jey; a escuta continua ativa. {exception.Message}", false, exception.ToString());
+        }));
         service.WakeWordRecognized += (transcript, audioWav, debugInfo) => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))

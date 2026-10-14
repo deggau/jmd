@@ -19,6 +19,8 @@ internal sealed class VoiceWakeWordService : IDisposable
     private readonly bool _useWhisperEnglish;
     private readonly WhisperCppTranscriber _whisper = new();
     private readonly WaveInEvent _microphone;
+    private readonly AudioFrameQueue _audioFrames = new(capacity: 1800);
+    private readonly Task _audioProcessor;
     private readonly MemoryStream _utteranceAudio = new();
     private readonly MemoryStream _followupAudio = new();
     private readonly MemoryStream _followupSegmentAudio = new();
@@ -28,6 +30,8 @@ internal sealed class VoiceWakeWordService : IDisposable
     private DateTimeOffset _followupDeadline;
     private bool _awaitingPostWakeSpeech;
     private bool _started;
+    private int _disposeRequested;
+    private int _resourcesDisposed;
 
     private volatile bool _debugEnabled;
     private VoiceCaptureDebugInfo? _lastDebugInfo;
@@ -35,6 +39,7 @@ internal sealed class VoiceWakeWordService : IDisposable
     public bool DebugEnabled { get => _debugEnabled; set => _debugEnabled = value; }
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? WakeWordRecognized;
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? FollowupSpeechCaptured;
+    public event Action<Exception>? AudioProcessingFailed;
 
     public VoiceWakeWordService(bool useWhisperPortuguese = false, bool useWhisperEnglish = false)
     {
@@ -58,6 +63,7 @@ internal sealed class VoiceWakeWordService : IDisposable
             BufferMilliseconds = 100
         };
         _microphone.DataAvailable += OnDataAvailable;
+        _audioProcessor = Task.Run(ProcessAudioFramesAsync);
     }
 
     public void Start()
@@ -68,15 +74,38 @@ internal sealed class VoiceWakeWordService : IDisposable
 
     private void OnDataAvailable(object? sender, WaveInEventArgs eventArgs)
     {
-        _recognizerAudioBytesFed += eventArgs.BytesRecorded;
+        if (Volatile.Read(ref _disposeRequested) != 0 || eventArgs.BytesRecorded <= 0) return;
+        _audioFrames.TryWrite(eventArgs.Buffer.AsSpan(0, eventArgs.BytesRecorded));
+    }
+
+    private async Task ProcessAudioFramesAsync()
+    {
+        await foreach (var frame in _audioFrames.ReadAllAsync())
+        {
+            if (Volatile.Read(ref _disposeRequested) != 0) break;
+            try
+            {
+                ProcessAudioFrame(frame);
+            }
+            catch (Exception exception)
+            {
+                try { AudioProcessingFailed?.Invoke(exception); }
+                catch { }
+            }
+        }
+    }
+
+    private void ProcessAudioFrame(byte[] buffer)
+    {
+        _recognizerAudioBytesFed += buffer.Length;
         if (_awaitingPostWakeSpeech)
         {
-            CapturePostWakeSpeech(eventArgs);
+            CapturePostWakeSpeech(buffer);
             return;
         }
 
-        _utteranceAudio.Write(eventArgs.Buffer, 0, eventArgs.BytesRecorded);
-        var wakeWordFinalized = _recognizer.AcceptWaveform(eventArgs.Buffer, eventArgs.BytesRecorded);
+        _utteranceAudio.Write(buffer, 0, buffer.Length);
+        var wakeWordFinalized = _recognizer.AcceptWaveform(buffer, buffer.Length);
         if (!wakeWordFinalized) return;
 
         try
@@ -144,11 +173,11 @@ internal sealed class VoiceWakeWordService : IDisposable
         _awaitingPostWakeSpeech = true;
     }
 
-    private void CapturePostWakeSpeech(WaveInEventArgs eventArgs)
+    private void CapturePostWakeSpeech(byte[] buffer)
     {
-        _followupAudio.Write(eventArgs.Buffer, 0, eventArgs.BytesRecorded);
-        _followupSegmentAudio.Write(eventArgs.Buffer, 0, eventArgs.BytesRecorded);
-        var finalized = _recognizer.AcceptWaveform(eventArgs.Buffer, eventArgs.BytesRecorded);
+        _followupAudio.Write(buffer, 0, buffer.Length);
+        _followupSegmentAudio.Write(buffer, 0, buffer.Length);
+        var finalized = _recognizer.AcceptWaveform(buffer, buffer.Length);
         if (finalized)
         {
             var wakeRecognizerResult = _recognizer.Result();
@@ -338,6 +367,7 @@ internal sealed class VoiceWakeWordService : IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposeRequested, 1) != 0) return;
         _microphone.DataAvailable -= OnDataAvailable;
         if (_started)
         {
@@ -345,6 +375,21 @@ internal sealed class VoiceWakeWordService : IDisposable
             catch (InvalidOperationException) { }
         }
         _microphone.Dispose();
+        _audioFrames.Complete();
+        if (_audioProcessor.IsCompleted)
+        {
+            DisposeAudioResources();
+        }
+        else
+        {
+            _ = _audioProcessor.ContinueWith(_ => DisposeAudioResources(), CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+    }
+
+    private void DisposeAudioResources()
+    {
+        if (Interlocked.Exchange(ref _resourcesDisposed, 1) != 0) return;
         _recognizer.Dispose();
         _portugueseModel.Dispose();
         _model.Dispose();
