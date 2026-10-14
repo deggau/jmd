@@ -22,16 +22,26 @@ jobs:
         shell: pwsh
         run: |
           $nsisVersion = '3.12'
-          $nsisArchive = Join-Path $env:RUNNER_TEMP "nsis-$nsisVersion.zip"
+          $nsisPackage = Join-Path $env:RUNNER_TEMP "nsis.install.$nsisVersion.0.nupkg"
+          $nsisPackageDirectory = Join-Path $env:RUNNER_TEMP "nsis.install-$nsisVersion"
+          $nsisInstaller = Join-Path $nsisPackageDirectory "tools/nsis-$nsisVersion-setup.exe"
           $nsisDirectory = Join-Path $env:RUNNER_TEMP "nsis-$nsisVersion"
-          Invoke-WebRequest -Uri "https://downloads.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip" -OutFile $nsisArchive
-          $actualHash = (Get-FileHash -Path $nsisArchive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualHash -ne '56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f') {
-            throw "O checksum SHA-256 do arquivo NSIS não confere: $actualHash"
+          Invoke-WebRequest -Uri "https://community.chocolatey.org/api/v2/package/nsis.install/$nsisVersion.0" -OutFile $nsisPackage
+          $actualPackageHash = [Convert]::ToBase64String([Security.Cryptography.SHA512]::HashData([IO.File]::ReadAllBytes($nsisPackage)))
+          if ($actualPackageHash -ne '5wV68I/5xaZE6XrXEiivOO3Ry3el4r2SEHpjom87WEWQduproVO9AKBwaQJLUvJgdCFy9Uxa0UMMZlIgOPub2w==') {
+            throw "O checksum SHA-512 do pacote NSIS não confere: $actualPackageHash"
           }
-          Expand-Archive -Path $nsisArchive -DestinationPath $env:RUNNER_TEMP -Force
+          Expand-Archive -Path $nsisPackage -DestinationPath $nsisPackageDirectory -Force
+          $actualInstallerHash = (Get-FileHash -Path $nsisInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualInstallerHash -ne '3bc2b06253a7e4957111be152ac6a536e0c7478a706e19da814038db5d706495') {
+            throw "O checksum SHA-256 do instalador NSIS não confere: $actualInstallerHash"
+          }
+          $process = Start-Process -FilePath $nsisInstaller -ArgumentList @('/S', "/D=$nsisDirectory") -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "A instalação silenciosa do NSIS falhou com código $($process.ExitCode)."
+          }
           if (-not (Test-Path (Join-Path $nsisDirectory 'makensis.exe'))) {
-            throw 'O arquivo makensis.exe não foi encontrado na extração do NSIS.'
+            throw 'O arquivo makensis.exe não foi encontrado após instalar o NSIS.'
           }
           Add-Content -Path $env:GITHUB_PATH -Value $nsisDirectory
 
