@@ -6,6 +6,14 @@ public static class VoiceAudioSegmenter
     private const int SampleRate = 16000;
     private const int BytesPerSample = 2;
 
+    public static double ToSegmentOffset(double absoluteBoundarySeconds, double segmentStartSeconds)
+    {
+        if (!double.IsFinite(absoluteBoundarySeconds) || !double.IsFinite(segmentStartSeconds) ||
+            absoluteBoundarySeconds < segmentStartSeconds)
+            return double.NaN;
+        return absoluteBoundarySeconds - segmentStartSeconds;
+    }
+
     public static byte[] AfterBoundary(byte[] pcmAudio, double boundarySeconds)
     {
         ArgumentNullException.ThrowIfNull(pcmAudio);

@@ -18,6 +18,8 @@ internal sealed class VoiceWakeWordService : IDisposable
     private readonly MemoryStream _utteranceAudio = new();
     private readonly MemoryStream _followupAudio = new();
     private readonly MemoryStream _followupSegmentAudio = new();
+    private long _recognizerAudioBytesFed;
+    private double _utteranceStartSeconds;
     private byte[]? _wakeWordAudioPrefix;
     private DateTimeOffset _followupDeadline;
     private bool _awaitingPostWakeSpeech;
@@ -60,6 +62,7 @@ internal sealed class VoiceWakeWordService : IDisposable
 
     private void OnDataAvailable(object? sender, WaveInEventArgs eventArgs)
     {
+        _recognizerAudioBytesFed += eventArgs.BytesRecorded;
         if (_awaitingPostWakeSpeech)
         {
             CapturePostWakeSpeech(eventArgs);
@@ -77,7 +80,7 @@ internal sealed class VoiceWakeWordService : IDisposable
             var pcmAudio = _utteranceAudio.ToArray();
             string? transcript;
             _lastDebugInfo = null;
-            try { transcript = TranscribeSpeechAfterWakeWord(wakeWordResult, pcmAudio); }
+            try { transcript = TranscribeSpeechAfterWakeWord(wakeWordResult, pcmAudio, _utteranceStartSeconds); }
             catch { transcript = null; }
             var debugInfo = _debugEnabled
                 ? _lastDebugInfo ?? new VoiceCaptureDebugInfo(GetDurationMilliseconds(pcmAudio.Length), null, null)
@@ -88,6 +91,7 @@ internal sealed class VoiceWakeWordService : IDisposable
         finally
         {
             _utteranceAudio.SetLength(0);
+            _utteranceStartSeconds = _recognizerAudioBytesFed / 32000d;
         }
     }
 
@@ -164,6 +168,7 @@ internal sealed class VoiceWakeWordService : IDisposable
     private void EndPostWakeCapture()
     {
         _awaitingPostWakeSpeech = false;
+        _utteranceStartSeconds = _recognizerAudioBytesFed / 32000d;
         _wakeWordAudioPrefix = null;
         _followupAudio.SetLength(0);
         _followupSegmentAudio.SetLength(0);
@@ -201,10 +206,17 @@ internal sealed class VoiceWakeWordService : IDisposable
         return string.IsNullOrWhiteSpace(transcript) ? null : transcript;
     }
 
-    private string? TranscribeSpeechAfterWakeWord(string wakeWordJson, byte[] pcmAudio)
+    private string? TranscribeSpeechAfterWakeWord(string wakeWordJson, byte[] pcmAudio, double segmentStartSeconds)
     {
         using var wakeWord = JsonDocument.Parse(wakeWordJson);
         if (!TryGetWakeWordEnd(wakeWord.RootElement, out var wakeWordEnd)) return null;
+        wakeWordEnd = VoiceAudioSegmenter.ToSegmentOffset(wakeWordEnd, segmentStartSeconds);
+        if (!double.IsFinite(wakeWordEnd) || wakeWordEnd > pcmAudio.Length / 32000d)
+        {
+            if (_debugEnabled)
+                _lastDebugInfo = new VoiceCaptureDebugInfo(GetDurationMilliseconds(pcmAudio.Length), null, null);
+            return null;
+        }
         var cutMilliseconds = (int)Math.Round(wakeWordEnd * 1000d);
         var speechAudio = VoiceAudioSegmenter.AfterBoundary(pcmAudio, wakeWordEnd);
         if (_debugEnabled)
