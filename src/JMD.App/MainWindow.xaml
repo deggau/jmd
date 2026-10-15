@@ -495,8 +495,8 @@
               <Slider x:Name="WakeWordMinimumConfidenceSlider" Minimum="0" Maximum="100" Value="0"
                       TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="10"
                       Margin="0,5,0,0" ValueChanged="WakeWordMinimumConfidenceSlider_Changed"
-                      ToolTip="Rejeita uma ativação quando a confiança da primeira palavra fica abaixo deste valor. Zero desativa o limite." />
-              <TextBlock Text="O limite afeta apenas a aceitação da palavra de ativação. Português e inglês continuam usando o vocabulário normal para transcrever."
+                      ToolTip="Rejeita uma ativação abaixo deste valor e, ao combinar Vosk com Whisper, só escolhe a transcrição Vosk quando ela alcança este limite. Zero desativa o limite." />
+              <TextBlock Text="O limite filtra a palavra de ativação e ajuda a escolher o Vosk quando ele é combinado com o Whisper. Com dois Vosk, a transcrição de maior confiança é escolhida; com dois Whisper, é feita uma única transcrição em modo automático."
                          Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,2,2,0" />
             </StackPanel>
           </Border>

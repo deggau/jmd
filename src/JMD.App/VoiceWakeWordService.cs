@@ -13,7 +13,7 @@ internal sealed record VoiceTranscriptionAttemptDebugInfo(
     string Language, string Engine, string? Transcript, double? Confidence, string? Error, bool Selected);
 internal sealed record VoiceTranscriptionDebugInfo(
     DateTimeOffset AudioCapturedAt, int AudioDurationMilliseconds, int? CutMilliseconds,
-    VoiceTranscriptionAttemptDebugInfo Portuguese, VoiceTranscriptionAttemptDebugInfo English);
+    IReadOnlyList<VoiceTranscriptionAttemptDebugInfo> Attempts);
 internal sealed record WakeWordRecognitionDebugInfo(
     DateTimeOffset AudioCapturedAt, string Transcript, bool IsFinal, bool? WakeWordDetected, double? Confidence,
     bool ConfidenceAccepted, int MinimumConfidencePercent, bool ClosedGrammarEnabled);
@@ -48,6 +48,7 @@ internal sealed class VoiceWakeWordService : IDisposable
     private volatile bool _debugEnabled;
     private volatile bool _wakeWordDebugEnabled;
     private volatile int _minimumWakeWordConfidencePercent;
+    private string[] _voiceCommandPhrases = [];
     private VoiceCaptureDebugInfo? _lastDebugInfo;
     private string _lastWakeWordDebugPartial = string.Empty;
 
@@ -58,6 +59,8 @@ internal sealed class VoiceWakeWordService : IDisposable
         get => _minimumWakeWordConfidencePercent;
         set => _minimumWakeWordConfidencePercent = Math.Clamp(value, 0, 100);
     }
+    public void SetVoiceCommandPhrases(string[] phrases)
+        => Volatile.Write(ref _voiceCommandPhrases, phrases);
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? WakeWordRecognized;
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? FollowupSpeechCaptured;
     public event Action<Exception>? AudioProcessingFailed;
@@ -211,15 +214,32 @@ internal sealed class VoiceWakeWordService : IDisposable
         VoiceTranscriptionCandidate? english = null;
         string? portugueseError = null;
         string? englishError = null;
-        try { portuguese = _useWhisperPortuguese
-            ? _whisper.Transcribe(audio, length, "pt")
-            : CreateTranscriptionCandidate(TranscribePortugueseAudio(audio, length)); }
-        catch (Exception exception) { portugueseError = exception.Message; }
-        try { english = _useWhisperEnglish
-            ? _whisper.Transcribe(audio, length, "en")
-            : CreateTranscriptionCandidate(TranscribeEnglishAudio(audio, length)); }
-        catch (Exception exception) { englishError = exception.Message; }
-        var best = ChooseBestTranscription(portuguese, english);
+        var attempts = new List<VoiceTranscriptionAttemptDebugInfo>();
+        VoiceTranscriptionCandidate? best;
+        if (_useWhisperPortuguese && _useWhisperEnglish)
+        {
+            try { best = _whisper.Transcribe(audio, length, "auto"); }
+            catch (Exception exception)
+            {
+                best = null;
+                portugueseError = exception.Message;
+            }
+            attempts.Add(CreateAttemptDebugInfo("Automático", "Whisper", best, portugueseError, best));
+        }
+        else
+        {
+            try { portuguese = _useWhisperPortuguese
+                ? _whisper.Transcribe(audio, length, "pt")
+                : CreateTranscriptionCandidate(TranscribePortugueseAudio(audio, length)); }
+            catch (Exception exception) { portugueseError = exception.Message; }
+            try { english = _useWhisperEnglish
+                ? _whisper.Transcribe(audio, length, "en")
+                : CreateTranscriptionCandidate(TranscribeEnglishAudio(audio, length)); }
+            catch (Exception exception) { englishError = exception.Message; }
+            best = ChooseBestTranscription(portuguese, english);
+            attempts.Add(CreateAttemptDebugInfo("Português", _useWhisperPortuguese ? "Whisper" : "Vosk", portuguese, portugueseError, best));
+            attempts.Add(CreateAttemptDebugInfo("Inglês", _useWhisperEnglish ? "Whisper" : "Vosk", english, englishError, best));
+        }
         if (_debugEnabled)
         {
             var audioWav = length > 0 ? CreateWaveAudio(audio.AsSpan(0, length).ToArray()) : null;
@@ -233,8 +253,7 @@ internal sealed class VoiceWakeWordService : IDisposable
             {
                 WakeWordTranscriptionDebugUpdated?.Invoke(new VoiceTranscriptionDebugInfo(
                     audioCapturedAt ?? DateTimeOffset.Now, GetDurationMilliseconds(length), cutMilliseconds,
-                    CreateAttemptDebugInfo("Português", _useWhisperPortuguese ? "Whisper" : "Vosk", portuguese, portugueseError, best),
-                    CreateAttemptDebugInfo("Inglês", _useWhisperEnglish ? "Whisper" : "Vosk", english, englishError, best)));
+                    attempts));
             }
             catch { }
         }
@@ -388,24 +407,40 @@ internal sealed class VoiceWakeWordService : IDisposable
         return TranscribeBestAudio(speechAudio, speechAudio.Length, cutMilliseconds, capturedAt);
     }
 
-    private static VoiceTranscriptionCandidate? ChooseBestTranscription(
+    private VoiceTranscriptionCandidate? ChooseBestTranscription(
         VoiceTranscriptionCandidate? portuguese,
         VoiceTranscriptionCandidate? english)
     {
+        if (_useWhisperPortuguese != _useWhisperEnglish)
+        {
+            var whisper = _useWhisperPortuguese ? portuguese : english;
+            var vosk = _useWhisperPortuguese ? english : portuguese;
+            if (whisper is not null && MatchesConfiguredVoiceCommand(whisper)) return whisper;
+            if (vosk is null) return whisper;
+            var minimum = MinimumWakeWordConfidencePercent;
+            if (minimum == 0 || vosk.Confidence is { } confidence && confidence * 100 >= minimum)
+                return vosk;
+            return whisper;
+        }
+
         if (portuguese is null) return english;
         if (english is null) return portuguese;
-        if (portuguese.Confidence is null || english.Confidence is null) return portuguese;
+        if (portuguese.Confidence is null) return english.Confidence is null ? portuguese : english;
+        if (english.Confidence is null) return portuguese;
+        return english.Confidence > portuguese.Confidence ? english : portuguese;
+    }
 
-        // Keep Portuguese on close scores to preserve current behavior unless English is clearly stronger.
-        return english.Confidence.Value > portuguese.Confidence.Value + 0.03
-            ? english
-            : portuguese;
+    private bool MatchesConfiguredVoiceCommand(VoiceTranscriptionCandidate candidate)
+    {
+        var transcript = RemoveActivationWord(candidate.Text);
+        var phrases = Volatile.Read(ref _voiceCommandPhrases);
+        return phrases.Any(phrase => VoicePhrasePolicy.Matches(phrase, transcript));
     }
 
     private static string RemoveActivationWord(string transcript)
     {
         var words = transcript.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length > 0 && IsActivationWord(words[0]))
+        if (words.Length > 0 && IsActivationWord(VoicePhrasePolicy.Normalize(words[0])))
             return string.Join(' ', words.Skip(1));
         return transcript;
     }

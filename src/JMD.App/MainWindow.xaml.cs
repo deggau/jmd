@@ -476,6 +476,7 @@ public partial class MainWindow : Window
             return;
         }
         _settings.VoicePhrases[commandId] = phrases;
+        UpdateVoiceCommandPhrases();
         var command = _commands.FirstOrDefault(item => item.Id == commandId);
         if (command is not null) command.VoicePhrasesDisplay = GetVoicePhrasesDisplay(commandId);
         try { _settingsStore.Save(_settings); }
@@ -517,6 +518,16 @@ public partial class MainWindow : Window
         }
         return matchedCommand;
     }
+
+    private string[] GetEnabledVoiceCommandPhrases()
+        => _settings.VoicePhrases
+            .Where(pair => !_settings.DisabledCommands.Contains(pair.Key))
+            .SelectMany(pair => pair.Value)
+            .Where(phrase => !string.IsNullOrWhiteSpace(phrase))
+            .ToArray();
+
+    private void UpdateVoiceCommandPhrases()
+        => _voiceWakeWord?.SetVoiceCommandPhrases(GetEnabledVoiceCommandPhrases());
 
     private static string NormalizeVoicePhrase(string? phrase)
     {
@@ -661,6 +672,7 @@ public partial class MainWindow : Window
             }
             Notify("JMD", $"Não foi possível salvar o atalho: {exception.Message}", false);
         }
+        UpdateVoiceCommandPhrases();
     }
 
     private void EditCustomCommandButton_Click(object sender, RoutedEventArgs e)
@@ -704,6 +716,7 @@ public partial class MainWindow : Window
             });
             SetStatus($"Não foi possível remover o atalho: {exception.Message}", false);
         }
+        UpdateVoiceCommandPhrases();
     }
 
     private void BuildSnippetManagementPage()
@@ -1252,6 +1265,7 @@ public partial class MainWindow : Window
             saved = false;
             SetStatus($"Estado alterado, mas não foi possível salvar: {exception.Message}", false);
         }
+        UpdateVoiceCommandPhrases();
         RefreshCommandStatuses();
         RefreshShortcutStatuses();
         if (saved)
@@ -1750,6 +1764,7 @@ public partial class MainWindow : Window
             _settings.JeyWakeWordClosedGrammarEnabled,
             _settings.JeyWakeWordMinimumConfidencePercent);
         _voiceWakeWord = service;
+        service.SetVoiceCommandPhrases(GetEnabledVoiceCommandPhrases());
         service.DebugEnabled = _settings.VoiceDebugEnabled;
         service.WakeWordRecognitionDebugEnabled = _settings.VoiceWakeRecognitionDebugEnabled;
         service.WakeWordRecognitionDebugUpdated += debugInfo => Dispatcher.BeginInvoke(new Action(() =>
@@ -1784,8 +1799,7 @@ public partial class MainWindow : Window
                 ? $"; corte em {cutMilliseconds} ms"
                 : string.Empty;
             var message = $"Trecho para transcrição ({debugInfo.AudioDurationMilliseconds} ms{cut})\n" +
-                FormatTranscriptionAttempt(debugInfo.Portuguese) + "\n" +
-                FormatTranscriptionAttempt(debugInfo.English);
+                string.Join("\n", debugInfo.Attempts.Select(FormatTranscriptionAttempt));
             AddWakeRecognitionHistoryEntry(message, debugInfo.AudioCapturedAt);
         }));
         service.AudioProcessingFailed += exception => Dispatcher.BeginInvoke(new Action(() =>
@@ -1841,25 +1855,19 @@ public partial class MainWindow : Window
                 {
                     SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
                 }
-                if (wakeWordOnly)
-                {
-                    if (IsVisible)
-                    {
-                        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
-                        Activate();
-                    }
-                    else ShowPalette();
-                }
-                else if (voiceCommandId is null)
-                {
-                    JeyMenuItem_Click(this, new RoutedEventArgs());
-                }
-                else if (IsVisible)
+                if (IsVisible)
                 {
                     if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
                     Activate();
                 }
-                else ShowPalette();
+                else if (wakeWordOnly)
+                {
+                    ShowPalette();
+                }
+                else
+                {
+                    JeyMenuItem_Click(this, new RoutedEventArgs());
+                }
             }
         }));
         service.Start();
