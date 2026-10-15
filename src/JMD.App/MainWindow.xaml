@@ -431,8 +431,23 @@
                   CornerRadius="8" Padding="10" Margin="0,10,0,0" Visibility="Collapsed">
             <StackPanel>
               <TextBlock Text="Reconhecimento de ativação · Vosk" Foreground="#FFB4F36A" FontSize="11" FontWeight="SemiBold" />
-              <TextBlock x:Name="VoiceRecognitionDebugText" Text="Aguardando fala…" Foreground="White" FontSize="12"
-                         TextWrapping="Wrap" Margin="0,5,0,0" />
+              <TextBlock x:Name="VoiceRecognitionDebugText" Text="Parcial: (aguardando)" Foreground="White" FontSize="12"
+                         TextWrapping="Wrap" Margin="0,5,0,8" />
+              <TextBlock Text="Histórico de reconhecimento" Foreground="#FF969BA7" FontSize="10" Margin="0,0,0,4" />
+              <ScrollViewer x:Name="VoiceRecognitionDebugScrollViewer" Height="160" VerticalScrollBarVisibility="Auto"
+                            Background="#FF191B21">
+                <ItemsControl x:Name="VoiceRecognitionDebugHistory">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="4,3">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="64"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding Time}" Foreground="#FF969BA7" FontFamily="Consolas" FontSize="10" />
+                        <TextBlock Grid.Column="1" Text="{Binding Message}" Foreground="White" FontSize="11" TextWrapping="Wrap" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
             </StackPanel>
           </Border>
           <TextBlock Text="Modelos de transcrição" Foreground="White" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,8" />

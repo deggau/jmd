@@ -69,13 +69,14 @@ public partial class MainWindow : Window
     private bool _showingDialog;
     private bool _checkingUpdates;
     private string _wakeRecognitionPartial = string.Empty;
-    private string _wakeRecognitionLastFinal = "Nenhuma fala finalizada ainda.";
+    private readonly ObservableCollection<WakeRecognitionHistoryRow> _wakeRecognitionHistory = [];
 
     public event Action<string, string>? TrayNotification;
 
     public MainWindow()
     {
         InitializeComponent();
+        VoiceRecognitionDebugHistory.ItemsSource = _wakeRecognitionHistory;
         FooterVersionText.Text = $"v{GetInstalledVersion()}";
         _settings = _settingsStore.Load();
         ConfigureDefaultVoiceCommands();
@@ -1533,6 +1534,7 @@ public partial class MainWindow : Window
     }
 
     private sealed record VoiceCommandInvocation(string CommandName, string Transcript, byte[] AudioWav, VoiceCaptureDebugInfo? DebugInfo);
+    private sealed record WakeRecognitionHistoryRow(string Time, string Message);
     private sealed record HistoryAudioPlaybackRequest(long HistoryId, bool IsTranscriptionAudio);
 
     private sealed record HistoryDisplayEntry(
@@ -1751,8 +1753,10 @@ public partial class MainWindow : Window
             {
                 var heard = string.IsNullOrWhiteSpace(debugInfo.Transcript) ? "(sem transcrição)" : debugInfo.Transcript;
                 var decision = debugInfo.WakeWordDetected == true ? "reconheceu Jey" : "não reconheceu Jey";
-                _wakeRecognitionLastFinal = $"{heard} — {decision}";
+                _wakeRecognitionHistory.Add(new WakeRecognitionHistoryRow(DateTime.Now.ToString("HH:mm:ss"), $"{heard} — {decision}"));
                 _wakeRecognitionPartial = string.Empty;
+                VoiceRecognitionDebugHistory.UpdateLayout();
+                VoiceRecognitionDebugScrollViewer.ScrollToEnd();
             }
             else
             {
@@ -1813,7 +1817,7 @@ public partial class MainWindow : Window
                 {
                     SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
                 }
-                if (wakeWordOnly)
+                if (wakeWordOnly || voiceCommandId is null)
                 {
                     JeyMenuItem_Click(this, new RoutedEventArgs());
                 }
@@ -1940,8 +1944,8 @@ public partial class MainWindow : Window
         if (_voiceWakeWord is not null) _voiceWakeWord.WakeWordRecognitionDebugEnabled = enabled;
         if (enabled)
         {
+            _wakeRecognitionHistory.Clear();
             _wakeRecognitionPartial = string.Empty;
-            _wakeRecognitionLastFinal = "Aguardando fala…";
             UpdateVoiceRecognitionDebugText();
         }
         try
@@ -1964,8 +1968,8 @@ public partial class MainWindow : Window
     private void UpdateVoiceRecognitionDebugText()
     {
         VoiceRecognitionDebugText.Text = string.IsNullOrWhiteSpace(_wakeRecognitionPartial)
-            ? $"Parcial: (aguardando)\nÚltimo resultado: {_wakeRecognitionLastFinal}"
-            : $"Parcial: {_wakeRecognitionPartial}\nÚltimo resultado: {_wakeRecognitionLastFinal}";
+            ? "Parcial: (aguardando)"
+            : $"Parcial: {_wakeRecognitionPartial}";
     }
 
     private static void SelectVoiceModel(ComboBox combo, string model)
