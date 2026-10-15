@@ -199,8 +199,8 @@ internal sealed class SettingsStore
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];
                     loaded.CustomShortcuts ??= [];
-                    if (loaded.JeyPortugueseModel is not ("vosk" or "whisper")) loaded.JeyPortugueseModel = "vosk";
-                    if (loaded.JeyEnglishModel is not ("vosk" or "whisper")) loaded.JeyEnglishModel = "vosk";
+                    loaded.JeyPortugueseModel = VoiceModelOptions.NormalizePersisted(loaded.JeyPortugueseModel);
+                    loaded.JeyEnglishModel = VoiceModelOptions.NormalizePersisted(loaded.JeyEnglishModel);
                     loaded.JeyWakeWordMinimumConfidencePercent = Math.Clamp(loaded.JeyWakeWordMinimumConfidencePercent, 0, 100);
                     ShortcutDefaults.MigratePreviousDefaults(loaded.Shortcuts);
                     return loaded;
@@ -217,4 +217,5 @@ internal sealed class SettingsStore
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         File.WriteAllText(_path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
     }
+
 }

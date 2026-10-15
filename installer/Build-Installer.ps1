@@ -1,12 +1,13 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$')]
-    [string] $Version = '0.1.45',
+    [string] $Version = '0.1.46',
     [ValidateSet('win-x64')]
     [string] $Runtime = 'win-x64',
     [string] $Configuration = 'Release',
     [string] $Makensis = 'makensis',
-    [string] $WhisperRuntimeDirectory
+    [string] $WhisperRuntimeDirectory,
+    [string] $LlamaRuntimeDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +42,18 @@ if ($WhisperRuntimeDirectory) {
     $whisperLicense = Join-Path $WhisperRuntimeDirectory 'LICENSE-whisper.cpp.txt'
     if (-not (Test-Path $whisperLicense)) { throw "Licença do whisper.cpp não encontrada: $whisperLicense" }
     Copy-Item $whisperLicense $whisperOutput -Force
+}
+
+if ($LlamaRuntimeDirectory) {
+    $llamaCli = Join-Path $LlamaRuntimeDirectory 'llama-mtmd-cli.exe'
+    if (-not (Test-Path $llamaCli)) { throw "Executável llama-mtmd-cli.exe não encontrado em: $LlamaRuntimeDirectory" }
+    $llamaOutput = Join-Path $publishDir 'llama'
+    New-Item $llamaOutput -ItemType Directory -Force | Out-Null
+    Copy-Item $llamaCli $llamaOutput -Force
+    Get-ChildItem -Path $LlamaRuntimeDirectory -Filter '*.dll' -File | Copy-Item -Destination $llamaOutput -Force
+    $llamaLicense = Join-Path $LlamaRuntimeDirectory 'LICENSE'
+    if (-not (Test-Path $llamaLicense)) { throw "Licença do llama.cpp não encontrada: $llamaLicense" }
+    Copy-Item $llamaLicense (Join-Path $llamaOutput 'LICENSE-llama.cpp.txt') -Force
 }
 
 $voiceModel = 'vosk-model-small-en-us-0.15'

@@ -72,11 +72,29 @@ jobs:
           Copy-Item whisper.cpp/LICENSE (Join-Path $whisperCli.DirectoryName 'LICENSE-whisper.cpp.txt')
           "WHISPER_RUNTIME_DIRECTORY=$($whisperCli.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Download llama.cpp runtime for Gemma audio
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'llama-b11429-bin-win-cpu-x64.zip'
+          $runtime = Join-Path $env:RUNNER_TEMP 'llama-runtime'
+          Invoke-WebRequest -Uri 'https://github.com/ggml-org/llama.cpp/releases/download/b11429/llama-b11429-bin-win-cpu-x64.zip' -OutFile $archive
+          $actualHash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne '1283323272b04cd07905816a597a0da810918102de958f4ff6f7bbaa70ed2efe') {
+            throw "Checksum SHA-256 do runtime llama.cpp inválido: $actualHash"
+          }
+          Expand-Archive -Path $archive -DestinationPath $runtime -Force
+          $llamaCli = Get-ChildItem $runtime -Filter 'llama-mtmd-cli.exe' -Recurse -File | Select-Object -First 1
+          if (-not $llamaCli) { throw 'llama-mtmd-cli.exe não encontrado no runtime oficial.' }
+          $license = Get-ChildItem $runtime -Filter 'LICENSE' -Recurse -File | Select-Object -First 1
+          if (-not $license) { throw 'Licença não encontrada no runtime oficial do llama.cpp.' }
+          Copy-Item $license.FullName (Join-Path $llamaCli.DirectoryName 'LICENSE') -Force
+          "LLAMA_RUNTIME_DIRECTORY=$($llamaCli.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build installer
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          ./installer/Build-Installer.ps1 -Version $version -Runtime win-x64 -WhisperRuntimeDirectory $env:WHISPER_RUNTIME_DIRECTORY
+          ./installer/Build-Installer.ps1 -Version $version -Runtime win-x64 -WhisperRuntimeDirectory $env:WHISPER_RUNTIME_DIRECTORY -LlamaRuntimeDirectory $env:LLAMA_RUNTIME_DIRECTORY
 
       - name: Create checksum
         shell: pwsh

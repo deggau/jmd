@@ -10,19 +10,31 @@ internal sealed record WhisperDownloadProgress(double? Fraction, string Message)
 
 internal sealed class WhisperCppTranscriber
 {
-    public static string ModelPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JMD", "models", "whisper", "ggml-base.bin");
+    private static readonly string ModelDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JMD", "models", "whisper");
+
+    public static string ModelPath(string model) => Path.Combine(ModelDirectory, model switch
+    {
+        "whisperTiny" => "ggml-tiny-q5_1.bin",
+        "whisperBase" => "ggml-base.bin",
+        _ => throw new ArgumentOutOfRangeException(nameof(model), model, "Modelo Whisper inválido.")
+    });
 
     public static string ExecutablePath => Path.Combine(AppContext.BaseDirectory, "whisper", "whisper-cli.exe");
 
-    public static bool IsModelDownloaded => File.Exists(ModelPath);
+    public static bool IsModelDownloaded(string model) => File.Exists(ModelPath(model));
 
-    public static async Task DownloadBaseModelAsync(IProgress<WhisperDownloadProgress>? progress = null, CancellationToken cancellationToken = default)
+    public static async Task DownloadModelAsync(string model, IProgress<WhisperDownloadProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        const string url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
-        const string expectedSha256 = "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";
-        Directory.CreateDirectory(Path.GetDirectoryName(ModelPath)!);
-        var temporaryPath = ModelPath + ".download";
+        var (fileName, url, expectedSha256, label) = model switch
+        {
+            "whisperTiny" => ("ggml-tiny-q5_1.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin", "c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b", "Whisper Tiny Q5 · 32 MiB"),
+            "whisperBase" => ("ggml-base.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin", "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe", "Whisper Base · 142 MiB"),
+            _ => throw new ArgumentOutOfRangeException(nameof(model), model, "Modelo Whisper inválido.")
+        };
+        var destinationPath = ModelPath(model);
+        Directory.CreateDirectory(ModelDirectory);
+        var temporaryPath = destinationPath + ".download";
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
@@ -40,13 +52,13 @@ internal sealed class WhisperCppTranscriber
                     await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                     readTotal += read;
                     if (totalBytes is > 0)
-                        progress?.Report(new WhisperDownloadProgress(Math.Min(0.99, (double)readTotal / totalBytes.Value * 0.99), "Baixando Whisper Base"));
+                        progress?.Report(new WhisperDownloadProgress(Math.Min(0.99, (double)readTotal / totalBytes.Value * 0.99), $"Baixando {label}"));
                 }
             }
 
             progress?.Report(new WhisperDownloadProgress(null, "Verificando integridade do modelo…"));
             await VerifiedFileInstaller.InstallSha256VerifiedFileAsync(
-                temporaryPath, ModelPath, expectedSha256, cancellationToken);
+                temporaryPath, destinationPath, expectedSha256, cancellationToken);
         }
         finally
         {
@@ -56,10 +68,11 @@ internal sealed class WhisperCppTranscriber
         }
     }
 
-    public VoiceTranscriptionCandidate? Transcribe(byte[] pcmAudio, int length, string language)
+    public VoiceTranscriptionCandidate? Transcribe(byte[] pcmAudio, int length, string language, string model)
     {
         if (!File.Exists(ExecutablePath)) throw new FileNotFoundException("O mecanismo Whisper não está instalado nesta versão do Jey.", ExecutablePath);
-        if (!IsModelDownloaded) throw new FileNotFoundException("Baixe o modelo Whisper nas configurações do Jey.", ModelPath);
+        var modelPath = ModelPath(model);
+        if (!File.Exists(modelPath)) throw new FileNotFoundException("Baixe o modelo Whisper nas configurações do Jey.", modelPath);
         var tempDirectory = Path.Combine(Path.GetTempPath(), "JMD-Whisper", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
         var inputPath = Path.Combine(tempDirectory, "audio.wav");
@@ -74,19 +87,28 @@ internal sealed class WhisperCppTranscriber
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            start.ArgumentList.Add("-m"); start.ArgumentList.Add(ModelPath);
+            start.ArgumentList.Add("-m"); start.ArgumentList.Add(modelPath);
             start.ArgumentList.Add("-l"); start.ArgumentList.Add(language);
             start.ArgumentList.Add("-nt"); start.ArgumentList.Add("-np"); start.ArgumentList.Add("-ojf");
             start.ArgumentList.Add("-of"); start.ArgumentList.Add(outputBasePath);
             start.ArgumentList.Add("-f"); start.ArgumentList.Add(inputPath);
+            using var activity = TranscriptionMemoryStatus.BeginExternalModel();
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Não foi possível iniciar o Whisper.");
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(45000))
+            var timer = Stopwatch.StartNew();
+            while (!process.WaitForExit(200))
             {
-                process.Kill(entireProcessTree: true);
-                throw new TimeoutException("A transcrição Whisper excedeu 45 segundos.");
+                try { TranscriptionMemoryStatus.ReportExternalModelWorkingSet(process.WorkingSet64); }
+                catch (InvalidOperationException) { }
+                if (timer.Elapsed > TimeSpan.FromSeconds(45))
+                {
+                    process.Kill(entireProcessTree: true);
+                    throw new TimeoutException("A transcrição Whisper excedeu 45 segundos.");
+                }
             }
+            try { TranscriptionMemoryStatus.ReportExternalModelWorkingSet(process.WorkingSet64); }
+            catch (InvalidOperationException) { }
             Task.WaitAll(stdout, stderr);
             if (process.ExitCode != 0) throw new InvalidOperationException($"Whisper terminou com erro: {stderr.Result}");
             var jsonPath = outputBasePath + ".json";

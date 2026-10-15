@@ -26,10 +26,11 @@ internal sealed class VoiceWakeWordService : IDisposable
     private readonly VoskRecognizer _recognizer;
     private readonly VoskRecognizer? _followupRecognizer;
     private readonly Model _portugueseModel;
-    private readonly bool _useWhisperPortuguese;
-    private readonly bool _useWhisperEnglish;
+    private readonly string _portugueseModelId;
+    private readonly string _englishModelId;
     private readonly bool _closedWakeWordGrammarEnabled;
     private readonly WhisperCppTranscriber _whisper = new();
+    private readonly Gemma4Transcriber _gemma = new();
     private readonly WaveInEvent _microphone;
     private readonly AudioFrameQueue _audioFrames = new(capacity: 1800);
     private readonly Task _audioProcessor;
@@ -70,13 +71,13 @@ internal sealed class VoiceWakeWordService : IDisposable
     public event Action<VoiceTranscriptionDebugInfo>? WakeWordTranscriptionDebugUpdated;
 
     public VoiceWakeWordService(
-        bool useWhisperPortuguese = false,
-        bool useWhisperEnglish = false,
+        string portugueseModelId = "vosk",
+        string englishModelId = "vosk",
         bool closedWakeWordGrammarEnabled = false,
         int minimumWakeWordConfidencePercent = 0)
     {
-        _useWhisperPortuguese = useWhisperPortuguese;
-        _useWhisperEnglish = useWhisperEnglish;
+        _portugueseModelId = portugueseModelId;
+        _englishModelId = englishModelId;
         _closedWakeWordGrammarEnabled = closedWakeWordGrammarEnabled;
         MinimumWakeWordConfidencePercent = minimumWakeWordConfidencePercent;
         var wakeWordModelPath = Path.Combine(AppContext.BaseDirectory, "vosk-model-small-en-us-0.15");
@@ -218,22 +219,18 @@ internal sealed class VoiceWakeWordService : IDisposable
         string? englishError = null;
         var attempts = new List<VoiceTranscriptionAttemptDebugInfo>();
         var portugueseTimer = _debugEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
-        try { portuguese = _useWhisperPortuguese
-            ? _whisper.Transcribe(audio, length, "pt")
-            : CreateTranscriptionCandidate(TranscribePortugueseAudio(audio, length)); }
+        try { portuguese = TranscribeConfiguredModel(audio, length, "pt", _portugueseModelId); }
         catch (Exception exception) { portugueseError = exception.Message; }
         if (portugueseTimer is not null) portugueseTimer.Stop();
         var portugueseElapsedMilliseconds = portugueseTimer is null ? null : (int?)portugueseTimer.ElapsedMilliseconds;
         var englishTimer = _debugEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
-        try { english = _useWhisperEnglish
-            ? _whisper.Transcribe(audio, length, "en")
-            : CreateTranscriptionCandidate(TranscribeEnglishAudio(audio, length)); }
+        try { english = TranscribeConfiguredModel(audio, length, "en", _englishModelId); }
         catch (Exception exception) { englishError = exception.Message; }
         if (englishTimer is not null) englishTimer.Stop();
         var englishElapsedMilliseconds = englishTimer is null ? null : (int?)englishTimer.ElapsedMilliseconds;
         var best = ChooseBestTranscription(portuguese, english);
-        attempts.Add(CreateAttemptDebugInfo("Português", _useWhisperPortuguese ? "Whisper" : "Vosk", portuguese, portugueseError, best, portugueseElapsedMilliseconds));
-        attempts.Add(CreateAttemptDebugInfo("Inglês", _useWhisperEnglish ? "Whisper" : "Vosk", english, englishError, best, englishElapsedMilliseconds));
+        attempts.Add(CreateAttemptDebugInfo("Português", GetModelDisplayName(_portugueseModelId), portuguese, portugueseError, best, portugueseElapsedMilliseconds));
+        attempts.Add(CreateAttemptDebugInfo("Inglês", GetModelDisplayName(_englishModelId), english, englishError, best, englishElapsedMilliseconds));
         if (_debugEnabled)
         {
             var audioWav = length > 0 ? CreateWaveAudio(audio.AsSpan(0, length).ToArray()) : null;
@@ -256,6 +253,28 @@ internal sealed class VoiceWakeWordService : IDisposable
         }
         return best is null ? null : RemoveActivationWord(best.Text);
     }
+
+    private VoiceTranscriptionCandidate? TranscribeConfiguredModel(byte[] audio, int length, string language, string modelId)
+        => modelId switch
+        {
+            "vosk" => CreateTranscriptionCandidate(language == "pt"
+                ? TranscribePortugueseAudio(audio, length)
+                : TranscribeEnglishAudio(audio, length)),
+            "whisperTiny" or "whisperBase" => _whisper.Transcribe(audio, length, language, modelId),
+            "gemma4E2B" => _gemma.Transcribe(audio, length, language),
+            _ => throw new InvalidOperationException($"Modelo de transcrição desconhecido: {modelId}")
+        };
+
+    private static bool IsVosk(string modelId) => modelId == "vosk";
+
+    private static string GetModelDisplayName(string modelId) => modelId switch
+    {
+        "vosk" => "Vosk",
+        "whisperTiny" => "Whisper Tiny",
+        "whisperBase" => "Whisper Base",
+        "gemma4E2B" => "Gemma E2B experimental",
+        _ => modelId
+    };
 
     private static VoiceTranscriptionAttemptDebugInfo CreateAttemptDebugInfo(
         string language, string engine, VoiceTranscriptionCandidate? candidate, string? error,
@@ -415,15 +434,15 @@ internal sealed class VoiceWakeWordService : IDisposable
         if (portugueseMatchesCommand != englishMatchesCommand)
             return portugueseMatchesCommand ? portuguese : english;
 
-        if (_useWhisperPortuguese != _useWhisperEnglish)
+        if (IsVosk(_portugueseModelId) != IsVosk(_englishModelId))
         {
-            var whisper = _useWhisperPortuguese ? portuguese : english;
-            var vosk = _useWhisperPortuguese ? english : portuguese;
-            if (vosk is null) return whisper;
+            var nonVosk = IsVosk(_portugueseModelId) ? english : portuguese;
+            var vosk = IsVosk(_portugueseModelId) ? portuguese : english;
+            if (vosk is null) return nonVosk;
             var minimum = MinimumWakeWordConfidencePercent;
             if (minimum == 0 || vosk.Confidence is { } confidence && confidence * 100 >= minimum)
                 return vosk;
-            return whisper;
+            return nonVosk;
         }
 
         if (portuguese is null) return english;

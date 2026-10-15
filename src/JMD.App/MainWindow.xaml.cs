@@ -54,7 +54,10 @@ public partial class MainWindow : Window
     private bool _updatingVoiceDebugToggle;
     private bool _updatingVoiceRecognitionDebugToggle;
     private bool _loadingJeyModelSettings;
-    private bool _downloadingWhisperModel;
+    private string? _downloadingVoiceModel;
+    private string? _benchmarkAudioPath;
+    private bool _benchmarkRunning;
+    private readonly System.Windows.Threading.DispatcherTimer _memoryRefreshTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
     private readonly AppNavigationState _navigation = new();
@@ -102,7 +105,7 @@ public partial class MainWindow : Window
         SelectVoiceModel(PortugueseModelCombo, _settings.JeyPortugueseModel);
         SelectVoiceModel(EnglishModelCombo, _settings.JeyEnglishModel);
         _loadingJeyModelSettings = false;
-        UpdateWhisperModelStatus();
+        UpdateVoiceModelStatuses();
         if (_settings.KeepAwakeEnabled && !_displayAwake.SetEnabled(true))
             SetStatus("A preferência para manter a tela ativa foi carregada, mas o Windows não aceitou a solicitação.", false);
         if (_settings.PreferredDelimiter is not (null or "," or "|" or ";" or "\r\n" or "\n" or "\r"))
@@ -154,6 +157,9 @@ public partial class MainWindow : Window
         HistoryRetentionBox.Text = _settings.HistoryRetentionDays.ToString(CultureInfo.InvariantCulture);
         RefreshHistory();
         SourceInitialized += MainWindow_SourceInitialized;
+        _memoryRefreshTimer.Tick += (_, _) => RefreshMemoryStatus();
+        _memoryRefreshTimer.Start();
+        RefreshMemoryStatus();
         Closing += MainWindow_Closing;
     }
 
@@ -1868,8 +1874,8 @@ public partial class MainWindow : Window
     {
         StopVoiceWakeWord();
         var service = new VoiceWakeWordService(
-            _settings.JeyPortugueseModel == "whisper",
-            _settings.JeyEnglishModel == "whisper",
+            _settings.JeyPortugueseModel,
+            _settings.JeyEnglishModel,
             _settings.JeyWakeWordClosedGrammarEnabled,
             _settings.JeyWakeWordMinimumConfidencePercent);
         _voiceWakeWord = service;
@@ -2227,37 +2233,56 @@ public partial class MainWindow : Window
             .FirstOrDefault(item => string.Equals(item.Tag as string, model, StringComparison.Ordinal)) ?? combo.Items[0];
     }
 
-    private void UpdateWhisperModelStatus()
+    private void UpdateVoiceModelStatuses()
     {
-        var downloaded = WhisperCppTranscriber.IsModelDownloaded;
-        WhisperModelStatusText.Text = downloaded
-            ? $"Modelo verificado e instalado. Mecanismo Whisper: {(File.Exists(WhisperCppTranscriber.ExecutablePath) ? "disponível" : "indisponível nesta versão do aplicativo")}."
-            : "Whisper ainda não foi baixado.";
-        UpdateWhisperModelButtons();
+        UpdateWhisperModelStatus("whisperTiny", WhisperTinyStatusText, DownloadWhisperTinyButton, DeleteWhisperTinyButton);
+        UpdateWhisperModelStatus("whisperBase", WhisperBaseStatusText, DownloadWhisperBaseButton, DeleteWhisperBaseButton);
+        var gemmaReady = Gemma4Transcriber.IsModelDownloaded;
+        var gemmaFilesExist = File.Exists(Gemma4Transcriber.ModelPath) || File.Exists(Gemma4Transcriber.AudioProjectorPath);
+        GemmaStatusText.Text = gemmaReady
+            ? File.Exists(Gemma4Transcriber.ExecutablePath) ? "Modelo e runtime prontos." : "Modelo baixado; runtime indisponível nesta instalação."
+            : gemmaFilesExist ? "Download parcial detectado; remova e tente novamente." : "Ainda não baixado.";
+        DownloadGemmaButton.IsEnabled = _downloadingVoiceModel is null && !gemmaReady;
+        DeleteGemmaButton.IsEnabled = _downloadingVoiceModel is null && gemmaFilesExist &&
+            _settings.JeyPortugueseModel != "gemma4E2B" && _settings.JeyEnglishModel != "gemma4E2B";
+        DownloadWhisperTinyButton.IsEnabled &= File.Exists(WhisperCppTranscriber.ExecutablePath);
+        DownloadWhisperBaseButton.IsEnabled &= File.Exists(WhisperCppTranscriber.ExecutablePath);
     }
 
-    private void UpdateWhisperModelButtons()
+    private void UpdateWhisperModelStatus(string model, TextBlock status, Button download, Button delete)
     {
-        var downloaded = WhisperCppTranscriber.IsModelDownloaded;
-        DownloadWhisperButton.IsEnabled = !_downloadingWhisperModel && !downloaded;
-        DeleteWhisperButton.IsEnabled = !_downloadingWhisperModel && downloaded;
+        var downloaded = WhisperCppTranscriber.IsModelDownloaded(model);
+        status.Text = downloaded ? "Modelo verificado e instalado." : "Ainda não baixado.";
+        download.IsEnabled = _downloadingVoiceModel is null && !downloaded;
+        delete.IsEnabled = _downloadingVoiceModel is null && downloaded &&
+            _settings.JeyPortugueseModel != model && _settings.JeyEnglishModel != model;
     }
 
     private void JeyTranscriptionModel_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingJeyModelSettings || sender is not ComboBox combo || combo.SelectedItem is not ComboBoxItem selected) return;
         var requestedModel = selected.Tag as string ?? "vosk";
-        if (requestedModel == "whisper" && !File.Exists(WhisperCppTranscriber.ExecutablePath))
+        if (requestedModel is "whisperTiny" or "whisperBase" && !File.Exists(WhisperCppTranscriber.ExecutablePath))
         {
-            WhisperModelStatusText.Text = "Atualize o JMD para incluir o mecanismo Whisper antes de selecionar este modelo.";
+            SetVoiceModelStatus(requestedModel, "Atualize o JMD para incluir o mecanismo Whisper antes de selecionar este modelo.");
             _loadingJeyModelSettings = true;
             SelectVoiceModel(combo, "vosk");
             _loadingJeyModelSettings = false;
             return;
         }
-        if (requestedModel == "whisper" && !WhisperCppTranscriber.IsModelDownloaded)
+        if (requestedModel is "whisperTiny" or "whisperBase" && !WhisperCppTranscriber.IsModelDownloaded(requestedModel))
         {
-            WhisperModelStatusText.Text = "Baixe o Whisper Base abaixo para habilitar esta opção.";
+            SetVoiceModelStatus(requestedModel, $"Baixe {GetVoiceModelName(requestedModel)} para habilitar esta opção.");
+            _loadingJeyModelSettings = true;
+            SelectVoiceModel(combo, "vosk");
+            _loadingJeyModelSettings = false;
+            return;
+        }
+        if (requestedModel == "gemma4E2B" && (!File.Exists(Gemma4Transcriber.ExecutablePath) || !Gemma4Transcriber.IsModelDownloaded))
+        {
+            SetVoiceModelStatus(requestedModel, !File.Exists(Gemma4Transcriber.ExecutablePath)
+                ? "O runtime experimental Gemma não está nesta instalação."
+                : "Baixe Gemma E2B e o codificador de áudio antes de selecioná-lo.");
             _loadingJeyModelSettings = true;
             SelectVoiceModel(combo, "vosk");
             _loadingJeyModelSettings = false;
@@ -2289,60 +2314,167 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void DownloadWhisperButton_Click(object sender, RoutedEventArgs e)
+    private async void DownloadVoiceModel_Click(object sender, RoutedEventArgs e)
     {
-        if (_downloadingWhisperModel) return;
-        _downloadingWhisperModel = true;
-        WhisperDownloadProgress.IsIndeterminate = false;
-        WhisperDownloadProgress.Value = 0;
-        WhisperDownloadProgress.Visibility = Visibility.Visible;
-        WhisperModelStatusText.Text = "Conectando ao repositório do modelo…";
-        UpdateWhisperModelButtons();
+        if (sender is not Button { Tag: string model } || _downloadingVoiceModel is not null) return;
+        _downloadingVoiceModel = model;
+        var (status, progressBar) = GetVoiceModelControls(model);
+        progressBar.Value = 0;
+        progressBar.Visibility = Visibility.Visible;
+        status.Text = "Conectando ao repositório do modelo…";
+        UpdateVoiceModelStatuses();
         var progress = new Progress<WhisperDownloadProgress>(value =>
         {
-            if (!_downloadingWhisperModel) return;
-            WhisperModelStatusText.Text = value.Fraction is { } fraction
+            if (_downloadingVoiceModel != model) return;
+            status.Text = value.Fraction is { } fraction
                 ? $"{value.Message} · {fraction:P0}"
                 : value.Message;
-            WhisperDownloadProgress.IsIndeterminate = value.Fraction is null;
-            if (value.Fraction is { } current) WhisperDownloadProgress.Value = current * 100;
+            progressBar.IsIndeterminate = value.Fraction is null;
+            if (value.Fraction is { } current) progressBar.Value = current * 100;
         });
         try
         {
-            await WhisperCppTranscriber.DownloadBaseModelAsync(progress);
-            WhisperDownloadProgress.IsIndeterminate = false;
-            WhisperDownloadProgress.Value = 100;
-            WhisperModelStatusText.Text = "Modelo baixado e verificado. Selecione Whisper para português ou inglês.";
+            if (model == "gemma4E2B")
+            {
+                var root = Path.GetPathRoot(Gemma4Transcriber.ModelPath);
+                if (root is not null && new DriveInfo(root).AvailableFreeSpace < Gemma4Transcriber.EstimatedDownloadBytes + 256L * 1024 * 1024)
+                    throw new IOException("São necessários pelo menos 3,5 GiB livres para baixar Gemma E2B.");
+                await Gemma4Transcriber.DownloadModelAsync(progress);
+            }
+            else
+            {
+                await WhisperCppTranscriber.DownloadModelAsync(model, progress);
+            }
+            progressBar.IsIndeterminate = false;
+            progressBar.Value = 100;
+            status.Text = $"{GetVoiceModelName(model)} instalado e verificado. Selecione-o para português ou inglês.";
         }
         catch (Exception exception)
         {
-            WhisperDownloadProgress.Visibility = Visibility.Collapsed;
-            WhisperModelStatusText.Text = exception is InvalidDataException
-                ? $"O arquivo chegou, mas a verificação falhou. O download incompleto foi descartado. Detalhe: {exception.Message}"
-                : $"Não foi possível instalar o modelo Whisper: {exception.Message}";
+            progressBar.Visibility = Visibility.Collapsed;
+            status.Text = exception is InvalidDataException
+                ? $"O checksum não confere e o arquivo incompleto foi descartado. {exception.Message}"
+                : $"Não foi possível instalar {GetVoiceModelName(model)}: {exception.Message}";
         }
         finally
         {
-            _downloadingWhisperModel = false;
-            UpdateWhisperModelButtons();
+            _downloadingVoiceModel = null;
+            UpdateVoiceModelStatuses();
         }
     }
 
-    private void DeleteWhisperButton_Click(object sender, RoutedEventArgs e)
+    private void DeleteVoiceModel_Click(object sender, RoutedEventArgs e)
     {
-        if (_settings.JeyPortugueseModel == "whisper" || _settings.JeyEnglishModel == "whisper")
+        if (sender is not Button { Tag: string model }) return;
+        if (_settings.JeyPortugueseModel == model || _settings.JeyEnglishModel == model)
         {
-            WhisperModelStatusText.Text = "Selecione Vosk para português e inglês antes de remover o Whisper.";
+            SetVoiceModelStatus(model, $"Selecione outro modelo para {GetVoiceModelName(model)} antes de removê-lo.");
             return;
         }
         try
         {
-            if (File.Exists(WhisperCppTranscriber.ModelPath)) File.Delete(WhisperCppTranscriber.ModelPath);
-            UpdateWhisperModelStatus();
+            if (model == "gemma4E2B")
+            {
+                if (File.Exists(Gemma4Transcriber.ModelPath)) File.Delete(Gemma4Transcriber.ModelPath);
+                if (File.Exists(Gemma4Transcriber.AudioProjectorPath)) File.Delete(Gemma4Transcriber.AudioProjectorPath);
+            }
+            else if (File.Exists(WhisperCppTranscriber.ModelPath(model)))
+                File.Delete(WhisperCppTranscriber.ModelPath(model));
+            UpdateVoiceModelStatuses();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            WhisperModelStatusText.Text = $"Não foi possível remover o modelo: {exception.Message}";
+            SetVoiceModelStatus(model, $"Não foi possível remover {GetVoiceModelName(model)}: {exception.Message}");
+        }
+    }
+
+    private (TextBlock Status, System.Windows.Controls.ProgressBar Progress) GetVoiceModelControls(string model) => model switch
+    {
+        "whisperTiny" => (WhisperTinyStatusText, WhisperTinyDownloadProgress),
+        "whisperBase" => (WhisperBaseStatusText, WhisperBaseDownloadProgress),
+        "gemma4E2B" => (GemmaStatusText, GemmaDownloadProgress),
+        _ => throw new ArgumentOutOfRangeException(nameof(model), model, "Modelo não pode ser baixado.")
+    };
+
+    private void SetVoiceModelStatus(string model, string message)
+    {
+        if (model == "gemma4E2B") GemmaStatusText.Text = message;
+        else if (model == "whisperTiny") WhisperTinyStatusText.Text = message;
+        else if (model == "whisperBase") WhisperBaseStatusText.Text = message;
+    }
+
+    private static string GetVoiceModelName(string model) => model switch
+    {
+        "whisperTiny" => "Whisper Tiny",
+        "whisperBase" => "Whisper Base",
+        "gemma4E2B" => "Gemma E2B",
+        _ => "Vosk"
+    };
+
+    private void SelectBenchmarkAudio_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Selecionar áudio base para o benchmark",
+            Filter = "Arquivos de áudio|*.wav;*.mp3;*.wma;*.aiff;*.aif|Todos os arquivos|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        _benchmarkAudioPath = dialog.FileName;
+        BenchmarkAudioPathText.Text = Path.GetFileName(dialog.FileName);
+        BenchmarkAudioPathText.ToolTip = dialog.FileName;
+        BenchmarkResultText.Text = "Áudio selecionado. O trecho deve ter até 30 segundos.";
+    }
+
+    private async void RunVoiceBenchmark_Click(object sender, RoutedEventArgs e)
+    {
+        if (_benchmarkRunning) return;
+        if (string.IsNullOrWhiteSpace(_benchmarkAudioPath) || !File.Exists(_benchmarkAudioPath))
+        {
+            BenchmarkResultText.Text = "Escolha primeiro um arquivo de áudio base.";
+            return;
+        }
+        var language = (BenchmarkLanguageCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "pt";
+        _benchmarkRunning = true;
+        RunBenchmarkButton.IsEnabled = false;
+        SelectBenchmarkAudioButton.IsEnabled = false;
+        BenchmarkProgress.Visibility = Visibility.Visible;
+        BenchmarkResultText.Text = "Preparando o áudio…";
+        var progress = new Progress<string>(message => BenchmarkResultText.Text = message);
+        try
+        {
+            var report = await new VoiceModelBenchmark().RunAsync(_benchmarkAudioPath, language, progress);
+            BenchmarkResultText.Text = report;
+        }
+        catch (Exception exception)
+        {
+            BenchmarkResultText.Text = $"O benchmark não pôde ser concluído: {exception.Message}";
+        }
+        finally
+        {
+            _benchmarkRunning = false;
+            BenchmarkProgress.Visibility = Visibility.Collapsed;
+            RunBenchmarkButton.IsEnabled = true;
+            SelectBenchmarkAudioButton.IsEnabled = true;
+        }
+    }
+
+    private void RefreshMemoryStatus()
+    {
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            var appMib = process.WorkingSet64 / (1024d * 1024d);
+            var externalBytes = TranscriptionMemoryStatus.HasActiveExternalModels
+                ? TranscriptionMemoryStatus.CurrentExternalModelBytes
+                : TranscriptionMemoryStatus.LastExternalModelPeakBytes;
+            var label = TranscriptionMemoryStatus.HasActiveExternalModels ? "agora" : "pico externo";
+            FooterMemoryText.Text = $"RAM JMD+Vosk {appMib:N0} MiB · {label} {externalBytes / (1024d * 1024d):N0} MiB";
+        }
+        catch (InvalidOperationException)
+        {
+            FooterMemoryText.Text = "RAM indisponível";
         }
     }
 
@@ -2807,6 +2939,7 @@ public partial class MainWindow : Window
 
     public void DisposeServices()
     {
+        _memoryRefreshTimer.Stop();
         StopVoiceWakeWord();
         StopHistoryAudioPlayback();
         _hotkeys?.Dispose();

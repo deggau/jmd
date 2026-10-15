@@ -464,7 +464,9 @@
                 <TextBlock Text="Português" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
                 <ComboBox x:Name="PortugueseModelCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="JeyTranscriptionModel_Changed">
                   <ComboBoxItem Content="Vosk · incluído" Tag="vosk" />
-                  <ComboBoxItem Content="Whisper Base · opcional" Tag="whisper" />
+                  <ComboBoxItem Content="Whisper Tiny · rápido" Tag="whisperTiny" />
+                  <ComboBoxItem Content="Whisper Base · equilibrado" Tag="whisperBase" />
+                  <ComboBoxItem Content="Gemma E2B · experimental" Tag="gemma4E2B" />
                 </ComboBox>
               </Grid>
               <Grid Margin="0,0,0,8">
@@ -472,7 +474,9 @@
                 <TextBlock Text="Inglês" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
                 <ComboBox x:Name="EnglishModelCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="JeyTranscriptionModel_Changed">
                   <ComboBoxItem Content="Vosk · incluído" Tag="vosk" />
-                  <ComboBoxItem Content="Whisper Base · opcional" Tag="whisper" />
+                  <ComboBoxItem Content="Whisper Tiny · rápido" Tag="whisperTiny" />
+                  <ComboBoxItem Content="Whisper Base · equilibrado" Tag="whisperBase" />
+                  <ComboBoxItem Content="Gemma E2B · experimental" Tag="gemma4E2B" />
                 </ComboBox>
               </Grid>
               <Grid>
@@ -501,24 +505,88 @@
                          Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,2,2,0" />
             </StackPanel>
           </Border>
-          <TextBlock Text="Whisper transcreve após a ativação. O Vosk continua ouvindo a palavra Jey em segundo plano."
-                     Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="2,8,2,16" />
-          <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="12">
-            <StackPanel>
-              <TextBlock Text="Whisper Base" Foreground="White" FontSize="13" FontWeight="SemiBold" />
-              <TextBlock Text="Download opcional · 142 MiB · processamento local" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,0,10" />
-              <StackPanel Orientation="Horizontal">
-                <Button x:Name="DownloadWhisperButton" Content="Baixar modelo" Click="DownloadWhisperButton_Click"
-                        Padding="12,7" Background="{StaticResource AccentBrush}" Foreground="{StaticResource SurfaceBrush}"
-                        FontWeight="SemiBold" BorderThickness="0" />
-                <Button x:Name="DeleteWhisperButton" Content="Remover" Click="DeleteWhisperButton_Click"
-                        Style="{StaticResource JeySecondaryButtonStyle}" Margin="8,0,0,0" />
+          <TextBlock Text="Os quatro modelos usam os mesmos controles. Os arquivos ficam no computador e podem ser baixados ou removidos separadamente."
+                     Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="2,8,2,12" />
+          <UniformGrid Columns="2">
+            <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,8,8">
+              <StackPanel>
+                <TextBlock Text="Vosk" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Mais rápido · modelos incluídos · PT + EN" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,10" />
+                <TextBlock Text="Disponível com o JMD. O Vosk inglês também mantém a escuta da palavra Jey." Foreground="#FFBFC3CC" FontSize="11" TextWrapping="Wrap" />
+                <TextBlock Text="Incluído no aplicativo" Foreground="#FFB4F36A" FontSize="11" Margin="0,10,0,0" />
               </StackPanel>
-              <ProgressBar x:Name="WhisperDownloadProgress" Minimum="0" Maximum="100" Value="0" Height="5"
-                           Margin="0,12,0,0" Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}"
-                           BorderThickness="0" Visibility="Collapsed" />
-              <TextBlock x:Name="WhisperModelStatusText" Text="Whisper ainda não foi baixado."
-                         Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
+            </Border>
+            <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,8">
+              <StackPanel>
+                <TextBlock Text="Whisper Tiny" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Rápido · 32 MiB · local · multilíngue" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,10" />
+                <StackPanel Orientation="Horizontal">
+                  <Button x:Name="DownloadWhisperTinyButton" Tag="whisperTiny" Content="Baixar" Click="DownloadVoiceModel_Click"
+                          Padding="11,6" Background="{StaticResource AccentBrush}" Foreground="{StaticResource SurfaceBrush}" FontWeight="SemiBold" BorderThickness="0" />
+                  <Button x:Name="DeleteWhisperTinyButton" Tag="whisperTiny" Content="Remover" Click="DeleteVoiceModel_Click"
+                          Style="{StaticResource JeySecondaryButtonStyle}" Margin="7,0,0,0" />
+                </StackPanel>
+                <ProgressBar x:Name="WhisperTinyDownloadProgress" Minimum="0" Maximum="100" Height="4" Margin="0,9,0,0"
+                             Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}" BorderThickness="0" Visibility="Collapsed" />
+                <TextBlock x:Name="WhisperTinyStatusText" Text="Ainda não baixado." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+              </StackPanel>
+            </Border>
+            <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,8,8">
+              <StackPanel>
+                <TextBlock Text="Whisper Base" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Equilibrado · 142 MiB · local · multilíngue" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,10" />
+                <StackPanel Orientation="Horizontal">
+                  <Button x:Name="DownloadWhisperBaseButton" Tag="whisperBase" Content="Baixar" Click="DownloadVoiceModel_Click"
+                          Padding="11,6" Background="{StaticResource AccentBrush}" Foreground="{StaticResource SurfaceBrush}" FontWeight="SemiBold" BorderThickness="0" />
+                  <Button x:Name="DeleteWhisperBaseButton" Tag="whisperBase" Content="Remover" Click="DeleteVoiceModel_Click"
+                          Style="{StaticResource JeySecondaryButtonStyle}" Margin="7,0,0,0" />
+                </StackPanel>
+                <ProgressBar x:Name="WhisperBaseDownloadProgress" Minimum="0" Maximum="100" Height="4" Margin="0,9,0,0"
+                             Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}" BorderThickness="0" Visibility="Collapsed" />
+                <TextBlock x:Name="WhisperBaseStatusText" Text="Ainda não baixado." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+              </StackPanel>
+            </Border>
+            <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,8">
+              <StackPanel>
+                <TextBlock Text="Gemma E2B" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Experimental · cerca de 3,4 GiB · local" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,10" />
+                <TextBlock Text="Modelo de áudio generativo; pode responder mais devagar. Requer 3,5 GiB livres para baixar." Foreground="#FFBFC3CC" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,9" />
+                <StackPanel Orientation="Horizontal">
+                  <Button x:Name="DownloadGemmaButton" Tag="gemma4E2B" Content="Baixar Gemma" Click="DownloadVoiceModel_Click"
+                          Padding="11,6" Background="{StaticResource AccentBrush}" Foreground="{StaticResource SurfaceBrush}" FontWeight="SemiBold" BorderThickness="0" />
+                  <Button x:Name="DeleteGemmaButton" Tag="gemma4E2B" Content="Remover" Click="DeleteVoiceModel_Click"
+                          Style="{StaticResource JeySecondaryButtonStyle}" Margin="7,0,0,0" />
+                </StackPanel>
+                <ProgressBar x:Name="GemmaDownloadProgress" Minimum="0" Maximum="100" Height="4" Margin="0,9,0,0"
+                             Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}" BorderThickness="0" Visibility="Collapsed" />
+                <TextBlock x:Name="GemmaStatusText" Text="Ainda não baixado." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+              </StackPanel>
+            </Border>
+          </UniformGrid>
+          <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,8,0,0">
+            <StackPanel>
+              <TextBlock Text="Benchmark de transcrição" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="Escolha o mesmo áudio para comparar os modelos instalados. O tempo inclui inicialização do mecanismo e transcrição." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,10" />
+              <DockPanel LastChildFill="False">
+                <Button x:Name="SelectBenchmarkAudioButton" Content="Escolher áudio base…" Click="SelectBenchmarkAudio_Click"
+                        Padding="11,6" Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                <TextBlock x:Name="BenchmarkAudioPathText" Text="Nenhum áudio selecionado" Foreground="#FFBFC3CC" FontSize="11"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="10,0,0,0" />
+              </DockPanel>
+              <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                <TextBlock Text="Idioma do áudio" Foreground="#FFBFC3CC" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="BenchmarkLanguageCombo" SelectedIndex="0" Width="145" Style="{StaticResource JeyModelComboBoxStyle}">
+                  <ComboBoxItem Content="Português" Tag="pt" />
+                  <ComboBoxItem Content="Inglês" Tag="en" />
+                </ComboBox>
+                <Button x:Name="RunBenchmarkButton" Content="Comparar modelos instalados" Click="RunVoiceBenchmark_Click"
+                        Padding="11,6" Margin="10,0,0,0" Background="{StaticResource AccentBrush}" Foreground="{StaticResource SurfaceBrush}"
+                        FontWeight="SemiBold" BorderThickness="0" />
+              </StackPanel>
+              <ProgressBar x:Name="BenchmarkProgress" IsIndeterminate="True" Height="4" Margin="0,10,0,0"
+                           Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}" BorderThickness="0" Visibility="Collapsed" />
+              <TextBlock x:Name="BenchmarkResultText" Text="Recomendação: até 1,5 s bom · até 4 s satisfatório · acima de 4 s lento (não indicado)."
+                         Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
             </StackPanel>
           </Border>
         </StackPanel>
@@ -536,6 +604,8 @@
                 Visibility="Collapsed" Padding="11,7" Margin="0,0,10,0" Background="#FF30343E" Foreground="White"
                 BorderThickness="0" VerticalAlignment="Center" />
         <StackPanel x:Name="FooterHints" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <TextBlock x:Name="FooterMemoryText" Foreground="#FF969BA7" FontSize="10" Margin="0,0,12,0"
+                     ToolTip="Memória residente do processo JMD, incluindo os modelos Vosk carregados nele, e pico do último processo de transcrição externo." />
           <TextBlock x:Name="FooterVersionText" Foreground="#FF777D89" FontSize="11" Margin="0,0,12,0" />
           <TextBlock Text="↑ ↓ navegar   Enter executar   Esc fechar" Foreground="#FF777D89" FontSize="11" />
         </StackPanel>
