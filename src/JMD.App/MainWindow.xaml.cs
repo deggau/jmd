@@ -28,6 +28,7 @@ using ComboBox = System.Windows.Controls.ComboBox;
 using ComboBoxItem = System.Windows.Controls.ComboBoxItem;
 using Orientation = System.Windows.Controls.Orientation;
 using MessageBox = System.Windows.MessageBox;
+using NAudio.Wave;
 
 namespace JMD.App;
 
@@ -56,7 +57,13 @@ public partial class MainWindow : Window
     private bool _loadingJeyModelSettings;
     private string? _downloadingVoiceModel;
     private string? _benchmarkAudioPath;
+    private string? _benchmarkRecordedAudioPath;
     private bool _benchmarkRunning;
+    private WaveInEvent? _benchmarkRecorder;
+    private MemoryStream? _benchmarkRecordingBuffer;
+    private readonly object _benchmarkRecordingLock = new();
+    private readonly System.Windows.Threading.DispatcherTimer _benchmarkRecordingTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private DateTimeOffset _benchmarkRecordingStartedAt;
     private readonly System.Windows.Threading.DispatcherTimer _memoryRefreshTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
@@ -160,6 +167,7 @@ public partial class MainWindow : Window
         _memoryRefreshTimer.Tick += (_, _) => RefreshMemoryStatus();
         _memoryRefreshTimer.Start();
         RefreshMemoryStatus();
+        _benchmarkRecordingTimer.Tick += BenchmarkRecordingTimer_Tick;
         Closing += MainWindow_Closing;
     }
 
@@ -2413,6 +2421,7 @@ public partial class MainWindow : Window
 
     private void SelectBenchmarkAudio_Click(object sender, RoutedEventArgs e)
     {
+        if (_benchmarkRecorder is not null || _benchmarkRunning) return;
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Selecionar áudio base para o benchmark",
@@ -2420,15 +2429,168 @@ public partial class MainWindow : Window
             CheckFileExists = true,
             Multiselect = false
         };
-        if (dialog.ShowDialog(this) != true) return;
+        bool? accepted;
+        _showingDialog = true;
+        try { accepted = dialog.ShowDialog(this); }
+        finally { _showingDialog = false; }
+        if (accepted != true) return;
         _benchmarkAudioPath = dialog.FileName;
+        DeleteBenchmarkRecordingFile();
         BenchmarkAudioPathText.Text = Path.GetFileName(dialog.FileName);
         BenchmarkAudioPathText.ToolTip = dialog.FileName;
         BenchmarkResultText.Text = "Áudio selecionado. O trecho deve ter até 30 segundos.";
     }
 
+    private void RecordBenchmarkAudio_Click(object sender, RoutedEventArgs e)
+    {
+        if (_benchmarkRecorder is not null)
+        {
+            StopBenchmarkRecording();
+            return;
+        }
+        if (_benchmarkRunning) return;
+
+        try
+        {
+            if (_settings.VoiceWakeWordEnabled) StopVoiceWakeWord();
+            var buffer = new MemoryStream();
+            var recorder = new WaveInEvent
+            {
+                WaveFormat = new WaveFormat(16000, 16, 1),
+                BufferMilliseconds = 100
+            };
+            recorder.DataAvailable += BenchmarkRecording_DataAvailable;
+            recorder.RecordingStopped += BenchmarkRecording_Stopped;
+            _benchmarkRecordingBuffer = buffer;
+            _benchmarkRecorder = recorder;
+            _benchmarkRecordingStartedAt = DateTimeOffset.Now;
+            _benchmarkRecordingTimer.Start();
+            RecordBenchmarkAudioButton.Content = "Parar gravação";
+            SelectBenchmarkAudioButton.IsEnabled = false;
+            RunBenchmarkButton.IsEnabled = false;
+            BenchmarkAudioPathText.Text = "Gravando… 30 s restantes";
+            BenchmarkResultText.Text = _settings.VoiceWakeWordEnabled
+                ? "Gravação em andamento. A escuta de ativação Jey será retomada ao terminar."
+                : "Gravação em andamento.";
+            recorder.StartRecording();
+        }
+        catch (Exception exception)
+        {
+            CleanupBenchmarkRecorder();
+            ResumeVoiceWakeWordAfterBenchmarkRecording();
+            BenchmarkResultText.Text = $"Não foi possível iniciar a gravação: {exception.Message}";
+        }
+    }
+
+    private void BenchmarkRecording_DataAvailable(object? sender, WaveInEventArgs e)
+    {
+        if (e.BytesRecorded <= 0) return;
+        lock (_benchmarkRecordingLock)
+            _benchmarkRecordingBuffer?.Write(e.Buffer, 0, e.BytesRecorded);
+    }
+
+    private void BenchmarkRecordingTimer_Tick(object? sender, EventArgs e)
+    {
+        var elapsed = DateTimeOffset.Now - _benchmarkRecordingStartedAt;
+        var remainingSeconds = Math.Max(0, (int)Math.Ceiling(VoiceModelOptions.GemmaMaximumAudioDuration.TotalSeconds - elapsed.TotalSeconds));
+        BenchmarkAudioPathText.Text = $"Gravando… {remainingSeconds} s restantes";
+        if (remainingSeconds == 0) StopBenchmarkRecording();
+    }
+
+    private void StopBenchmarkRecording()
+    {
+        var recorder = _benchmarkRecorder;
+        if (recorder is null) return;
+        RecordBenchmarkAudioButton.IsEnabled = false;
+        BenchmarkResultText.Text = "Finalizando gravação…";
+        try { recorder.StopRecording(); }
+        catch (Exception exception)
+        {
+            CleanupBenchmarkRecorder();
+            ResumeVoiceWakeWordAfterBenchmarkRecording();
+            BenchmarkResultText.Text = $"A gravação não pôde ser finalizada: {exception.Message}";
+        }
+    }
+
+    private void BenchmarkRecording_Stopped(object? sender, StoppedEventArgs e)
+        => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            byte[] pcm;
+            lock (_benchmarkRecordingLock)
+                pcm = _benchmarkRecordingBuffer?.ToArray() ?? [];
+            CleanupBenchmarkRecorder();
+            ResumeVoiceWakeWordAfterBenchmarkRecording();
+            if (e.Exception is not null)
+            {
+                BenchmarkResultText.Text = $"A gravação falhou: {e.Exception.Message}";
+                return;
+            }
+            if (pcm.Length < VoiceModelOptions.GemmaPcmBytesPerSecond / 2)
+            {
+                BenchmarkResultText.Text = "Gravação muito curta ou sem áudio. Tente novamente.";
+                return;
+            }
+
+            try
+            {
+                DeleteBenchmarkRecordingFile();
+                _benchmarkRecordedAudioPath = VoiceModelBenchmark.WriteTemporaryWave(pcm);
+                _benchmarkAudioPath = _benchmarkRecordedAudioPath;
+                BenchmarkAudioPathText.Text = $"Gravação pronta · {pcm.Length / (double)VoiceModelOptions.GemmaPcmBytesPerSecond:N1} s";
+                BenchmarkAudioPathText.ToolTip = "Áudio gravado para este benchmark";
+                BenchmarkResultText.Text = "Gravação pronta para comparar. Escolha o idioma e inicie o benchmark.";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                BenchmarkResultText.Text = $"Não foi possível salvar a gravação temporária: {exception.Message}";
+            }
+        }));
+
+    private void CleanupBenchmarkRecorder()
+    {
+        _benchmarkRecordingTimer.Stop();
+        if (_benchmarkRecorder is { } recorder)
+        {
+            recorder.DataAvailable -= BenchmarkRecording_DataAvailable;
+            recorder.RecordingStopped -= BenchmarkRecording_Stopped;
+            recorder.Dispose();
+        }
+        _benchmarkRecorder = null;
+        lock (_benchmarkRecordingLock)
+        {
+            _benchmarkRecordingBuffer?.Dispose();
+            _benchmarkRecordingBuffer = null;
+        }
+        RecordBenchmarkAudioButton.Content = "Gravar áudio · até 30 s";
+        RecordBenchmarkAudioButton.IsEnabled = true;
+        SelectBenchmarkAudioButton.IsEnabled = true;
+        RunBenchmarkButton.IsEnabled = true;
+    }
+
+    private void ResumeVoiceWakeWordAfterBenchmarkRecording()
+    {
+        if (!_settings.VoiceWakeWordEnabled || _voiceWakeWord is not null || _closingForExit) return;
+        try { StartVoiceWakeWord(); }
+        catch (Exception exception) { SetStatus($"A gravação terminou, mas a escuta Jey não reiniciou: {exception.Message}", false); }
+    }
+
+    private void DeleteBenchmarkRecordingFile()
+    {
+        if (_benchmarkRecordedAudioPath is null) return;
+        var directory = Path.GetDirectoryName(_benchmarkRecordedAudioPath);
+        try { if (File.Exists(_benchmarkRecordedAudioPath)) File.Delete(_benchmarkRecordedAudioPath); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        try { if (directory is not null && Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        if (_benchmarkAudioPath == _benchmarkRecordedAudioPath) _benchmarkAudioPath = null;
+        _benchmarkRecordedAudioPath = null;
+    }
+
     private async void RunVoiceBenchmark_Click(object sender, RoutedEventArgs e)
     {
+        if (_benchmarkRecorder is not null) return;
         if (_benchmarkRunning) return;
         if (string.IsNullOrWhiteSpace(_benchmarkAudioPath) || !File.Exists(_benchmarkAudioPath))
         {
@@ -2940,6 +3102,21 @@ public partial class MainWindow : Window
     public void DisposeServices()
     {
         _memoryRefreshTimer.Stop();
+        _benchmarkRecordingTimer.Stop();
+        if (_benchmarkRecorder is { } recorder)
+        {
+            recorder.DataAvailable -= BenchmarkRecording_DataAvailable;
+            recorder.RecordingStopped -= BenchmarkRecording_Stopped;
+            try { recorder.StopRecording(); } catch (InvalidOperationException) { }
+            recorder.Dispose();
+            _benchmarkRecorder = null;
+        }
+        lock (_benchmarkRecordingLock)
+        {
+            _benchmarkRecordingBuffer?.Dispose();
+            _benchmarkRecordingBuffer = null;
+        }
+        DeleteBenchmarkRecordingFile();
         StopVoiceWakeWord();
         StopHistoryAudioPlayback();
         _hotkeys?.Dispose();

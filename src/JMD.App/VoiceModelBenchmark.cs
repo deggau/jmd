@@ -125,7 +125,7 @@ internal sealed class VoiceModelBenchmark
         return pcm.ToArray();
     }
 
-    private static string WriteTemporaryWave(byte[] pcm)
+    internal static string WriteTemporaryWave(byte[] pcm)
     {
         var directory = Path.Combine(Path.GetTempPath(), "JMD-Benchmark", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
