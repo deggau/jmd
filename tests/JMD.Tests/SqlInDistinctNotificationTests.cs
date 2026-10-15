@@ -40,9 +40,10 @@ public sealed class SqlInDistinctNotificationTests
             "Lista formatada para SQL IN e pronta para colar.",
             result.InputItemCount,
             result.OutputItemCount);
-        Assert.Equal(
-            $"Lista formatada para SQL IN e pronta para colar. Itens identificados: {expectedIdentified}. Removidos por duplicidade: {duplicatesRemoved}.",
-            notification);
+        var expectedNotification = $"Lista formatada para SQL IN e pronta para colar. Itens identificados: {expectedIdentified}.";
+        if (duplicatesRemoved > 0)
+            expectedNotification += $" Removidos por duplicidade: {duplicatesRemoved}.";
+        Assert.Equal(expectedNotification, notification);
     }
 
     [Fact]

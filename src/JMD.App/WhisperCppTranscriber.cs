@@ -26,19 +26,14 @@ internal sealed class WhisperCppTranscriber
 
     public static async Task DownloadModelAsync(string model, IProgress<WhisperDownloadProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        var (fileName, url, expectedSha256, label) = model switch
-        {
-            "whisperTiny" => ("ggml-tiny-q5_1.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin", "c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b", "Whisper Tiny Q5 · 32 MiB"),
-            "whisperBase" => ("ggml-base.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin", "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe", "Whisper Base · 142 MiB"),
-            _ => throw new ArgumentOutOfRangeException(nameof(model), model, "Modelo Whisper inválido.")
-        };
+        var download = WhisperModelDownloads.Get(model);
         var destinationPath = ModelPath(model);
         Directory.CreateDirectory(ModelDirectory);
         var temporaryPath = destinationPath + ".download";
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
-            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await client.GetAsync(download.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
             var totalBytes = response.Content.Headers.ContentLength;
             await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
@@ -52,13 +47,13 @@ internal sealed class WhisperCppTranscriber
                     await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                     readTotal += read;
                     if (totalBytes is > 0)
-                        progress?.Report(new WhisperDownloadProgress(Math.Min(0.99, (double)readTotal / totalBytes.Value * 0.99), $"Baixando {label}"));
+                        progress?.Report(new WhisperDownloadProgress(Math.Min(0.99, (double)readTotal / totalBytes.Value * 0.99), $"Baixando {download.Label}"));
                 }
             }
 
             progress?.Report(new WhisperDownloadProgress(null, "Verificando integridade do modelo…"));
             await VerifiedFileInstaller.InstallSha256VerifiedFileAsync(
-                temporaryPath, destinationPath, expectedSha256, cancellationToken);
+                temporaryPath, destinationPath, download.Sha256, cancellationToken);
         }
         finally
         {

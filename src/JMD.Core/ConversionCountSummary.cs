@@ -6,6 +6,9 @@ public static class ConversionCountSummary
     {
         if (identified is null || output is null) return message;
         var duplicatesRemoved = identified.Value - output.Value;
-        return $"{message} Itens identificados: {identified.Value}. Removidos por duplicidade: {duplicatesRemoved}.";
+        var summary = $"{message} Itens identificados: {identified.Value}.";
+        return duplicatesRemoved > 0
+            ? $"{summary} Removidos por duplicidade: {duplicatesRemoved}."
+            : summary;
     }
 }

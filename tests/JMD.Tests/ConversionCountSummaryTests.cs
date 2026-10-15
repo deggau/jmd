@@ -14,10 +14,10 @@ public sealed class ConversionCountSummaryTests
     }
 
     [Fact]
-    public void Summary_reports_zero_duplicates_when_all_items_are_unique()
+    public void Summary_omits_removed_duplicates_when_all_items_are_unique()
     {
         Assert.Equal(
-            "Conversão concluída. Itens identificados: 4. Removidos por duplicidade: 0.",
+            "Conversão concluída. Itens identificados: 4.",
             ConversionCountSummary.Append("Conversão concluída.", 4, 4));
     }
 

@@ -2340,6 +2340,7 @@ public partial class MainWindow : Window
             progressBar.IsIndeterminate = value.Fraction is null;
             if (value.Fraction is { } current) progressBar.Value = current * 100;
         });
+        string? downloadErrorMessage = null;
         try
         {
             if (model == "gemma4E2B")
@@ -2360,14 +2361,17 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             progressBar.Visibility = Visibility.Collapsed;
-            status.Text = exception is InvalidDataException
+            downloadErrorMessage = exception is InvalidDataException
                 ? $"O checksum não confere e o arquivo incompleto foi descartado. {exception.Message}"
                 : $"Não foi possível instalar {GetVoiceModelName(model)}: {exception.Message}";
+            status.Text = downloadErrorMessage;
         }
         finally
         {
             _downloadingVoiceModel = null;
             UpdateVoiceModelStatuses();
+            SetVoiceModelStatus(model, VoiceModelDownloadFeedback.AfterStatusRefresh(
+                downloadErrorMessage, status.Text));
         }
     }
 
