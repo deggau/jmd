@@ -424,8 +424,8 @@
           <CheckBox x:Name="VoiceRecognitionDebugToggle" Content="Depuração de áudio"
                     Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,16,0,0"
                     Checked="VoiceRecognitionDebugToggle_Changed" Unchecked="VoiceRecognitionDebugToggle_Changed"
-                    ToolTip="Mostra os resultados parciais e finais do Vosk que escuta a palavra Jey." />
-          <TextBlock Text="Exibe o que o modelo de ativação está ouvindo e se reconheceu a palavra Jey. Isso ajuda a identificar variações de pronúncia."
+                    ToolTip="Mostra os resultados do Vosk de ativação e as tentativas de transcrição em português e inglês." />
+          <TextBlock Text="Exibe o que o Vosk ouviu para ativar o Jey e o texto, a confiança estimada ou o erro de cada modelo usado no trecho após o corte. As confianças ajudam no diagnóstico, mas não são uma medida calibrada para comparar modelos diferentes."
                      Foreground="#FF969BA7" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
           <Border x:Name="VoiceRecognitionDebugPanel" Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1"
                   CornerRadius="8" Padding="10" Margin="0,10,0,0" Visibility="Collapsed">
@@ -433,8 +433,13 @@
               <TextBlock Text="Reconhecimento de ativação · Vosk" Foreground="#FFB4F36A" FontSize="11" FontWeight="SemiBold" />
               <TextBlock x:Name="VoiceRecognitionDebugText" Text="Parcial: (aguardando)" Foreground="White" FontSize="12"
                          TextWrapping="Wrap" Margin="0,5,0,8" />
-              <TextBlock Text="Histórico de reconhecimento" Foreground="#FF969BA7" FontSize="10" Margin="0,0,0,4" />
-              <ScrollViewer x:Name="VoiceRecognitionDebugScrollViewer" Height="160" VerticalScrollBarVisibility="Auto"
+              <DockPanel LastChildFill="False" Margin="0,0,0,4">
+                <TextBlock Text="Eventos mais recentes" Foreground="#FF969BA7" FontSize="10" VerticalAlignment="Center" />
+                <Button Content="Limpar" Click="ClearVoiceRecognitionDebugHistory_Click" DockPanel.Dock="Right"
+                        Padding="7,3" Background="#FF30343E" Foreground="White" BorderThickness="0"
+                        FontSize="10" ToolTip="Limpar os resultados desta sessão de depuração" />
+              </DockPanel>
+              <ScrollViewer x:Name="VoiceRecognitionDebugScrollViewer" Height="240" VerticalScrollBarVisibility="Auto"
                             Background="#FF191B21">
                 <ItemsControl x:Name="VoiceRecognitionDebugHistory">
                   <ItemsControl.ItemTemplate>
@@ -476,6 +481,23 @@
                   <ComboBoxItem Content="Vosk inglês · escuta contínua" />
                 </ComboBox>
               </Grid>
+              <CheckBox x:Name="ClosedWakeWordGrammarToggle" Content="Gramática fechada para a ativação (experimental)"
+                        Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,14,0,0"
+                        Checked="ClosedWakeWordGrammarToggle_Changed" Unchecked="ClosedWakeWordGrammarToggle_Changed"
+                        ToolTip="Restringe somente o Vosk que escuta continuamente a palavra jay. Não altera os modelos de transcrição." />
+              <TextBlock Text="Quando ativada, limita o vocabulário do recognizer de ativação a “jay”. Pode reduzir confusões, mas também causar ativações falsas; teste com a depuração ligada."
+                         Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,5,2,8" />
+              <DockPanel LastChildFill="False">
+                <TextBlock Text="Confiança mínima do Vosk" Foreground="#FFBFC3CC" FontSize="12" VerticalAlignment="Center" />
+                <TextBlock x:Name="WakeWordMinimumConfidenceText" DockPanel.Dock="Right" Text="Desativada"
+                           Foreground="White" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+              </DockPanel>
+              <Slider x:Name="WakeWordMinimumConfidenceSlider" Minimum="0" Maximum="100" Value="0"
+                      TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="10"
+                      Margin="0,5,0,0" ValueChanged="WakeWordMinimumConfidenceSlider_Changed"
+                      ToolTip="Rejeita uma ativação quando a confiança da primeira palavra fica abaixo deste valor. Zero desativa o limite." />
+              <TextBlock Text="O limite afeta apenas a aceitação da palavra de ativação. Português e inglês continuam usando o vocabulário normal para transcrever."
+                         Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,2,2,0" />
             </StackPanel>
           </Border>
           <TextBlock Text="Whisper transcreve após a ativação. O Vosk continua ouvindo a palavra Jey em segundo plano."

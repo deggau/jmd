@@ -33,6 +33,7 @@ namespace JMD.App;
 
 public partial class MainWindow : Window
 {
+    private const int MaxWakeRecognitionHistoryEntries = 100;
     private const int VkLWin = 0x5B;
     private const int VkRWin = 0x5C;
     private readonly SettingsStore _settingsStore = new();
@@ -95,6 +96,9 @@ public partial class MainWindow : Window
         UpdateVoiceRecognitionDebugText();
         _updatingVoiceRecognitionDebugToggle = false;
         _loadingJeyModelSettings = true;
+        ClosedWakeWordGrammarToggle.IsChecked = _settings.JeyWakeWordClosedGrammarEnabled;
+        WakeWordMinimumConfidenceSlider.Value = _settings.JeyWakeWordMinimumConfidencePercent;
+        UpdateWakeWordMinimumConfidenceText(_settings.JeyWakeWordMinimumConfidencePercent);
         SelectVoiceModel(PortugueseModelCombo, _settings.JeyPortugueseModel);
         SelectVoiceModel(EnglishModelCombo, _settings.JeyEnglishModel);
         _loadingJeyModelSettings = false;
@@ -1742,7 +1746,9 @@ public partial class MainWindow : Window
         StopVoiceWakeWord();
         var service = new VoiceWakeWordService(
             _settings.JeyPortugueseModel == "whisper",
-            _settings.JeyEnglishModel == "whisper");
+            _settings.JeyEnglishModel == "whisper",
+            _settings.JeyWakeWordClosedGrammarEnabled,
+            _settings.JeyWakeWordMinimumConfidencePercent);
         _voiceWakeWord = service;
         service.DebugEnabled = _settings.VoiceDebugEnabled;
         service.WakeWordRecognitionDebugEnabled = _settings.VoiceWakeRecognitionDebugEnabled;
@@ -1752,17 +1758,34 @@ public partial class MainWindow : Window
             if (debugInfo.IsFinal)
             {
                 var heard = string.IsNullOrWhiteSpace(debugInfo.Transcript) ? "(sem transcrição)" : debugInfo.Transcript;
-                var decision = debugInfo.WakeWordDetected == true ? "reconheceu Jey" : "não reconheceu Jey";
-                _wakeRecognitionHistory.Add(new WakeRecognitionHistoryRow(DateTime.Now.ToString("HH:mm:ss"), $"{heard} — {decision}"));
+                var confidence = debugInfo.Confidence is { } value
+                    ? value.ToString("P0", CultureInfo.CurrentCulture)
+                    : "indisponível";
+                var decision = debugInfo.WakeWordDetected != true
+                    ? "não reconheceu Jey"
+                    : debugInfo.ConfidenceAccepted
+                        ? "ativação aceita"
+                        : $"rejeitada pelo mínimo de {debugInfo.MinimumConfidencePercent}%";
+                var grammar = debugInfo.ClosedGrammarEnabled ? "gramática fechada" : "vocabulário aberto";
+                AddWakeRecognitionHistoryEntry($"Vosk ativação ({grammar}): {heard} — confiança {confidence} — {decision}");
                 _wakeRecognitionPartial = string.Empty;
-                VoiceRecognitionDebugHistory.UpdateLayout();
-                VoiceRecognitionDebugScrollViewer.ScrollToEnd();
             }
             else
             {
                 _wakeRecognitionPartial = debugInfo.Transcript;
             }
             UpdateVoiceRecognitionDebugText();
+        }));
+        service.WakeWordTranscriptionDebugUpdated += debugInfo => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!ReferenceEquals(_voiceWakeWord, service) || !_settings.VoiceWakeRecognitionDebugEnabled) return;
+            var cut = debugInfo.CutMilliseconds is { } cutMilliseconds
+                ? $"; corte em {cutMilliseconds} ms"
+                : string.Empty;
+            var message = $"Trecho para transcrição ({debugInfo.AudioDurationMilliseconds} ms{cut})\n" +
+                FormatTranscriptionAttempt(debugInfo.Portuguese) + "\n" +
+                FormatTranscriptionAttempt(debugInfo.English);
+            AddWakeRecognitionHistoryEntry(message);
         }));
         service.AudioProcessingFailed += exception => Dispatcher.BeginInvoke(new Action(() =>
         {
@@ -1817,7 +1840,11 @@ public partial class MainWindow : Window
                 {
                     SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
                 }
-                if (wakeWordOnly || voiceCommandId is null)
+                if (wakeWordOnly)
+                {
+                    ShowPalette();
+                }
+                else if (voiceCommandId is null)
                 {
                     JeyMenuItem_Click(this, new RoutedEventArgs());
                 }
@@ -1963,6 +1990,96 @@ public partial class MainWindow : Window
             if (_voiceWakeWord is not null) _voiceWakeWord.WakeWordRecognitionDebugEnabled = !enabled;
             SetStatus($"Não foi possível salvar a opção de depuração: {exception.Message}", false);
         }
+    }
+
+    private void ClosedWakeWordGrammarToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingJeyModelSettings || sender is not CheckBox toggle) return;
+        var enabled = toggle.IsChecked == true;
+        var previous = _settings.JeyWakeWordClosedGrammarEnabled;
+        if (enabled == previous) return;
+
+        _settings.JeyWakeWordClosedGrammarEnabled = enabled;
+        try
+        {
+            if (_settings.VoiceWakeWordEnabled) StartVoiceWakeWord();
+            _settingsStore.Save(_settings);
+            SetStatus(enabled
+                ? "Gramática fechada do Vosk de ativação ativada."
+                : "Gramática fechada do Vosk de ativação desativada.", true);
+        }
+        catch (Exception exception)
+        {
+            _settings.JeyWakeWordClosedGrammarEnabled = previous;
+            _loadingJeyModelSettings = true;
+            toggle.IsChecked = previous;
+            _loadingJeyModelSettings = false;
+            if (_settings.VoiceWakeWordEnabled)
+            {
+                try { StartVoiceWakeWord(); }
+                catch { }
+            }
+            SetStatus($"Não foi possível aplicar a gramática fechada: {exception.Message}", false);
+        }
+    }
+
+    private void WakeWordMinimumConfidenceSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        var value = (int)Math.Round(e.NewValue);
+        UpdateWakeWordMinimumConfidenceText(value);
+        if (_loadingJeyModelSettings || sender is not Slider) return;
+
+        var previous = _settings.JeyWakeWordMinimumConfidencePercent;
+        if (value == previous) return;
+        _settings.JeyWakeWordMinimumConfidencePercent = value;
+        if (_voiceWakeWord is not null) _voiceWakeWord.MinimumWakeWordConfidencePercent = value;
+        try
+        {
+            _settingsStore.Save(_settings);
+            SetStatus(value == 0
+                ? "Limite mínimo de confiança desativado."
+                : $"Confiança mínima da ativação ajustada para {value}%.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _settings.JeyWakeWordMinimumConfidencePercent = previous;
+            if (_voiceWakeWord is not null) _voiceWakeWord.MinimumWakeWordConfidencePercent = previous;
+            _loadingJeyModelSettings = true;
+            WakeWordMinimumConfidenceSlider.Value = previous;
+            _loadingJeyModelSettings = false;
+            SetStatus($"Não foi possível salvar a confiança mínima: {exception.Message}", false);
+        }
+    }
+
+    private void UpdateWakeWordMinimumConfidenceText(int value)
+        => WakeWordMinimumConfidenceText.Text = value == 0 ? "Desativada" : $"{value}%";
+
+    private void ClearVoiceRecognitionDebugHistory_Click(object sender, RoutedEventArgs e)
+    {
+        _wakeRecognitionHistory.Clear();
+        _wakeRecognitionPartial = string.Empty;
+        UpdateVoiceRecognitionDebugText();
+    }
+
+    private void AddWakeRecognitionHistoryEntry(string message)
+    {
+        if (_wakeRecognitionHistory.Count >= MaxWakeRecognitionHistoryEntries)
+            _wakeRecognitionHistory.RemoveAt(_wakeRecognitionHistory.Count - 1);
+        _wakeRecognitionHistory.Insert(0, new WakeRecognitionHistoryRow(DateTime.Now.ToString("HH:mm:ss"), message));
+        VoiceRecognitionDebugHistory.UpdateLayout();
+        VoiceRecognitionDebugScrollViewer.ScrollToTop();
+    }
+
+    private static string FormatTranscriptionAttempt(VoiceTranscriptionAttemptDebugInfo attempt)
+    {
+        var result = !string.IsNullOrWhiteSpace(attempt.Error)
+            ? $"erro: {attempt.Error}"
+            : string.IsNullOrWhiteSpace(attempt.Transcript) ? "sem transcrição" : $"texto: {attempt.Transcript}";
+        var confidence = attempt.Confidence is { } value
+            ? value.ToString("P0", CultureInfo.CurrentCulture)
+            : "indisponível";
+        var selected = attempt.Selected ? " · selecionado" : string.Empty;
+        return $"{attempt.Language} · {attempt.Engine}{selected} · confiança estimada: {confidence} · {result}";
     }
 
     private void UpdateVoiceRecognitionDebugText()

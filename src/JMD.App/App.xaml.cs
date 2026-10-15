@@ -137,6 +137,8 @@ internal sealed class UserSettings
     public bool VoiceWakeWordEnabled { get; set; } = true;
     public bool VoiceDebugEnabled { get; set; }
     public bool VoiceWakeRecognitionDebugEnabled { get; set; }
+    public bool JeyWakeWordClosedGrammarEnabled { get; set; }
+    public int JeyWakeWordMinimumConfidencePercent { get; set; }
     public string JeyPortugueseModel { get; set; } = "vosk";
     public string JeyEnglishModel { get; set; } = "vosk";
     public List<SnippetEntry> Snippets { get; set; } = [];
@@ -198,6 +200,7 @@ internal sealed class SettingsStore
                     loaded.CustomShortcuts ??= [];
                     if (loaded.JeyPortugueseModel is not ("vosk" or "whisper")) loaded.JeyPortugueseModel = "vosk";
                     if (loaded.JeyEnglishModel is not ("vosk" or "whisper")) loaded.JeyEnglishModel = "vosk";
+                    loaded.JeyWakeWordMinimumConfidencePercent = Math.Clamp(loaded.JeyWakeWordMinimumConfidencePercent, 0, 100);
                     ShortcutDefaults.MigratePreviousDefaults(loaded.Shortcuts);
                     return loaded;
                 }
