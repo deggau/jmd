@@ -1120,6 +1120,10 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (voiceCommand is null)
+                ActivationSoundService.PlayShortcutActivated();
+            else
+                ActivationSoundService.PlayVoiceCommandFound();
             _previousWindow = _keyboard.GetForegroundWindow();
             switch (id)
             {
@@ -1504,7 +1508,9 @@ public partial class MainWindow : Window
             voiceTranscript: voiceCommand?.Transcript, voiceAudioWav: voiceCommand?.AudioWav,
             voiceDurationMilliseconds: voiceCommand?.DebugInfo?.DurationMilliseconds,
             voiceCutMilliseconds: voiceCommand?.DebugInfo?.CutMilliseconds,
-            voiceTranscriptionAudioWav: voiceCommand?.DebugInfo?.TranscriptionAudioWav);
+            voiceTranscriptionAudioWav: voiceCommand?.DebugInfo?.TranscriptionAudioWav,
+            portugueseTranscriptionTimeMilliseconds: voiceCommand?.DebugInfo?.PortugueseTranscriptionTimeMilliseconds,
+            englishTranscriptionTimeMilliseconds: voiceCommand?.DebugInfo?.EnglishTranscriptionTimeMilliseconds);
         RefreshHistory();
     }
 
@@ -1525,8 +1531,9 @@ public partial class MainWindow : Window
                     entry.VoiceTranscript ?? "Transcrição indisponível",
                     entry.HasVoiceAudio,
                     entry.IsVoiceTriggered && entry.CommandName.StartsWith("Ativação por voz (Jey) - ", StringComparison.Ordinal),
-                    entry.VoiceDurationMilliseconds is not null || entry.VoiceCutMilliseconds is not null || entry.HasVoiceTranscriptionAudio,
+                    entry.VoiceDurationMilliseconds is not null || entry.VoiceCutMilliseconds is not null || entry.HasVoiceTranscriptionAudio || entry.PortugueseTranscriptionTimeMilliseconds is not null || entry.EnglishTranscriptionTimeMilliseconds is not null,
                     entry.VoiceDurationMilliseconds is { } duration ? $"Duração total: {duration} ms" : "Duração total: indisponível",
+                    $"Tempo por chamada: Português {FormatElapsed(entry.PortugueseTranscriptionTimeMilliseconds)} · Inglês {FormatElapsed(entry.EnglishTranscriptionTimeMilliseconds)}",
                     entry.VoiceCutMilliseconds is { } cut ? $"Milissegundo do corte: {cut} ms" : "Milissegundo do corte: indisponível",
                     entry.HasVoiceTranscriptionAudio,
                     new HistoryAudioPlaybackRequest(entry.Id, false),
@@ -1669,6 +1676,7 @@ public partial class MainWindow : Window
         bool IsVoiceCommand,
         bool HasVoiceDebugInfo,
         string VoiceDebugSummary,
+        string VoiceTranscriptionTimeDisplay,
         string VoiceCutDisplay,
         bool HasVoiceTranscriptionAudio,
         HistoryAudioPlaybackRequest OriginalAudioRequest,
@@ -1928,7 +1936,9 @@ public partial class MainWindow : Window
                         voiceAudioWav: audioWav,
                         voiceDurationMilliseconds: debugInfo?.DurationMilliseconds,
                         voiceCutMilliseconds: debugInfo?.CutMilliseconds,
-                        voiceTranscriptionAudioWav: debugInfo?.TranscriptionAudioWav);
+                        voiceTranscriptionAudioWav: debugInfo?.TranscriptionAudioWav,
+                        portugueseTranscriptionTimeMilliseconds: debugInfo?.PortugueseTranscriptionTimeMilliseconds,
+                        englishTranscriptionTimeMilliseconds: debugInfo?.EnglishTranscriptionTimeMilliseconds);
                     RefreshHistory();
                     if (wakeWordOnly)
                     {
@@ -1941,7 +1951,9 @@ public partial class MainWindow : Window
                             {
                                 _historyStore?.UpdateVoiceCapture(historyId.Value, followupTranscript, completeAudio,
                                     followupDebugInfo?.DurationMilliseconds, followupDebugInfo?.CutMilliseconds,
-                                    followupDebugInfo?.TranscriptionAudioWav);
+                                    followupDebugInfo?.TranscriptionAudioWav,
+                                    followupDebugInfo?.PortugueseTranscriptionTimeMilliseconds,
+                                    followupDebugInfo?.EnglishTranscriptionTimeMilliseconds);
                                 RefreshHistory();
                             }
                             catch (Exception exception)
@@ -2195,8 +2207,12 @@ public partial class MainWindow : Window
             ? value.ToString("P0", CultureInfo.CurrentCulture)
             : "indisponível";
         var selected = attempt.Selected ? " · selecionado" : string.Empty;
-        return $"{attempt.Language} · {attempt.Engine}{selected} · confiança estimada: {confidence} · {result}";
+        var elapsed = attempt.ElapsedMilliseconds is { } milliseconds ? $" · tempo: {milliseconds} ms" : string.Empty;
+        return $"{attempt.Language} · {attempt.Engine}{elapsed}{selected} · confiança estimada: {confidence} · {result}";
     }
+
+    private static string FormatElapsed(int? milliseconds)
+        => milliseconds is { } value ? $"{value} ms" : "indisponível";
 
     private void UpdateVoiceRecognitionDebugText()
     {

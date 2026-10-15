@@ -7,10 +7,12 @@ using Vosk;
 
 namespace JMD.App;
 
-internal sealed record VoiceCaptureDebugInfo(int DurationMilliseconds, int? CutMilliseconds, byte[]? TranscriptionAudioWav);
+internal sealed record VoiceCaptureDebugInfo(int DurationMilliseconds, int? CutMilliseconds, byte[]? TranscriptionAudioWav,
+    int? PortugueseTranscriptionTimeMilliseconds = null, int? EnglishTranscriptionTimeMilliseconds = null);
 internal sealed record VoiceTranscriptionCandidate(string Text, double? Confidence);
 internal sealed record VoiceTranscriptionAttemptDebugInfo(
-    string Language, string Engine, string? Transcript, double? Confidence, string? Error, bool Selected);
+    string Language, string Engine, string? Transcript, double? Confidence, string? Error, bool Selected,
+    int? ElapsedMilliseconds);
 internal sealed record VoiceTranscriptionDebugInfo(
     DateTimeOffset AudioCapturedAt, int AudioDurationMilliseconds, int? CutMilliseconds,
     IReadOnlyList<VoiceTranscriptionAttemptDebugInfo> Attempts);
@@ -215,23 +217,32 @@ internal sealed class VoiceWakeWordService : IDisposable
         string? portugueseError = null;
         string? englishError = null;
         var attempts = new List<VoiceTranscriptionAttemptDebugInfo>();
+        var portugueseTimer = _debugEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
         try { portuguese = _useWhisperPortuguese
             ? _whisper.Transcribe(audio, length, "pt")
             : CreateTranscriptionCandidate(TranscribePortugueseAudio(audio, length)); }
         catch (Exception exception) { portugueseError = exception.Message; }
+        if (portugueseTimer is not null) portugueseTimer.Stop();
+        var portugueseElapsedMilliseconds = portugueseTimer is null ? null : (int?)portugueseTimer.ElapsedMilliseconds;
+        var englishTimer = _debugEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
         try { english = _useWhisperEnglish
             ? _whisper.Transcribe(audio, length, "en")
             : CreateTranscriptionCandidate(TranscribeEnglishAudio(audio, length)); }
         catch (Exception exception) { englishError = exception.Message; }
+        if (englishTimer is not null) englishTimer.Stop();
+        var englishElapsedMilliseconds = englishTimer is null ? null : (int?)englishTimer.ElapsedMilliseconds;
         var best = ChooseBestTranscription(portuguese, english);
-        attempts.Add(CreateAttemptDebugInfo("Português", _useWhisperPortuguese ? "Whisper" : "Vosk", portuguese, portugueseError, best));
-        attempts.Add(CreateAttemptDebugInfo("Inglês", _useWhisperEnglish ? "Whisper" : "Vosk", english, englishError, best));
+        attempts.Add(CreateAttemptDebugInfo("Português", _useWhisperPortuguese ? "Whisper" : "Vosk", portuguese, portugueseError, best, portugueseElapsedMilliseconds));
+        attempts.Add(CreateAttemptDebugInfo("Inglês", _useWhisperEnglish ? "Whisper" : "Vosk", english, englishError, best, englishElapsedMilliseconds));
         if (_debugEnabled)
         {
             var audioWav = length > 0 ? CreateWaveAudio(audio.AsSpan(0, length).ToArray()) : null;
             _lastDebugInfo = _lastDebugInfo is { } prior
-                ? prior with { CutMilliseconds = cutMilliseconds ?? prior.CutMilliseconds, TranscriptionAudioWav = audioWav }
-                : new VoiceCaptureDebugInfo(GetDurationMilliseconds(length), cutMilliseconds, audioWav);
+                ? prior with { CutMilliseconds = cutMilliseconds ?? prior.CutMilliseconds, TranscriptionAudioWav = audioWav,
+                    PortugueseTranscriptionTimeMilliseconds = portugueseElapsedMilliseconds,
+                    EnglishTranscriptionTimeMilliseconds = englishElapsedMilliseconds }
+                : new VoiceCaptureDebugInfo(GetDurationMilliseconds(length), cutMilliseconds, audioWav,
+                    portugueseElapsedMilliseconds, englishElapsedMilliseconds);
         }
         if (_wakeWordDebugEnabled)
         {
@@ -247,8 +258,9 @@ internal sealed class VoiceWakeWordService : IDisposable
     }
 
     private static VoiceTranscriptionAttemptDebugInfo CreateAttemptDebugInfo(
-        string language, string engine, VoiceTranscriptionCandidate? candidate, string? error, VoiceTranscriptionCandidate? selected)
-        => new(language, engine, candidate?.Text, candidate?.Confidence, error, ReferenceEquals(candidate, selected));
+        string language, string engine, VoiceTranscriptionCandidate? candidate, string? error,
+        VoiceTranscriptionCandidate? selected, int? elapsedMilliseconds)
+        => new(language, engine, candidate?.Text, candidate?.Confidence, error, ReferenceEquals(candidate, selected), elapsedMilliseconds);
 
     private void BeginPostWakeCapture(byte[] wakeWordPcm)
     {
@@ -301,7 +313,8 @@ internal sealed class VoiceWakeWordService : IDisposable
         var totalLength = (_wakeWordAudioPrefix?.Length ?? 0) + checked((int)_followupAudio.Length);
         var prior = _lastDebugInfo;
         return new VoiceCaptureDebugInfo(GetDurationMilliseconds(totalLength), prior?.CutMilliseconds,
-            prior?.TranscriptionAudioWav);
+            prior?.TranscriptionAudioWav, prior?.PortugueseTranscriptionTimeMilliseconds,
+            prior?.EnglishTranscriptionTimeMilliseconds);
     }
 
     private static int GetDurationMilliseconds(int pcmByteLength) => (int)Math.Round(pcmByteLength * 1000d / 32000d);
