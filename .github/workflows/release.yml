@@ -85,9 +85,10 @@ jobs:
           Expand-Archive -Path $archive -DestinationPath $runtime -Force
           $llamaCli = Get-ChildItem $runtime -Filter 'llama-mtmd-cli.exe' -Recurse -File | Select-Object -First 1
           if (-not $llamaCli) { throw 'llama-mtmd-cli.exe não encontrado no runtime oficial.' }
-          $license = Get-ChildItem $runtime -Filter 'LICENSE' -Recurse -File | Select-Object -First 1
-          if (-not $license) { throw 'Licença não encontrada no runtime oficial do llama.cpp.' }
-          Copy-Item $license.FullName (Join-Path $llamaCli.DirectoryName 'LICENSE') -Force
+          $license = Join-Path $env:RUNNER_TEMP 'llama.cpp-LICENSE'
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/ggml-org/llama.cpp/b11429/LICENSE' -OutFile $license
+          if ((Get-Item $license).Length -eq 0) { throw 'Licença vazia recebida do repositório oficial do llama.cpp.' }
+          Copy-Item $license (Join-Path $llamaCli.DirectoryName 'LICENSE') -Force
           "LLAMA_RUNTIME_DIRECTORY=$($llamaCli.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build installer
