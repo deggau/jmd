@@ -1767,7 +1767,8 @@ public partial class MainWindow : Window
                         ? "ativação aceita"
                         : $"rejeitada pelo mínimo de {debugInfo.MinimumConfidencePercent}%";
                 var grammar = debugInfo.ClosedGrammarEnabled ? "gramática fechada" : "vocabulário aberto";
-                AddWakeRecognitionHistoryEntry($"Vosk ativação ({grammar}): {heard} — confiança {confidence} — {decision}");
+                AddWakeRecognitionHistoryEntry(
+                    $"Vosk ativação ({grammar}): {heard} — confiança {confidence} — {decision}", debugInfo.AudioCapturedAt);
                 _wakeRecognitionPartial = string.Empty;
             }
             else
@@ -1785,7 +1786,7 @@ public partial class MainWindow : Window
             var message = $"Trecho para transcrição ({debugInfo.AudioDurationMilliseconds} ms{cut})\n" +
                 FormatTranscriptionAttempt(debugInfo.Portuguese) + "\n" +
                 FormatTranscriptionAttempt(debugInfo.English);
-            AddWakeRecognitionHistoryEntry(message);
+            AddWakeRecognitionHistoryEntry(message, debugInfo.AudioCapturedAt);
         }));
         service.AudioProcessingFailed += exception => Dispatcher.BeginInvoke(new Action(() =>
         {
@@ -1842,7 +1843,12 @@ public partial class MainWindow : Window
                 }
                 if (wakeWordOnly)
                 {
-                    ShowPalette();
+                    if (IsVisible)
+                    {
+                        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+                        Activate();
+                    }
+                    else ShowPalette();
                 }
                 else if (voiceCommandId is null)
                 {
@@ -2061,11 +2067,12 @@ public partial class MainWindow : Window
         UpdateVoiceRecognitionDebugText();
     }
 
-    private void AddWakeRecognitionHistoryEntry(string message)
+    private void AddWakeRecognitionHistoryEntry(string message, DateTimeOffset? audioCapturedAt = null)
     {
         if (_wakeRecognitionHistory.Count >= MaxWakeRecognitionHistoryEntries)
             _wakeRecognitionHistory.RemoveAt(_wakeRecognitionHistory.Count - 1);
-        _wakeRecognitionHistory.Insert(0, new WakeRecognitionHistoryRow(DateTime.Now.ToString("HH:mm:ss"), message));
+        var timestamp = (audioCapturedAt ?? DateTimeOffset.Now).ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+        _wakeRecognitionHistory.Insert(0, new WakeRecognitionHistoryRow(timestamp, message));
         VoiceRecognitionDebugHistory.UpdateLayout();
         VoiceRecognitionDebugScrollViewer.ScrollToTop();
     }
