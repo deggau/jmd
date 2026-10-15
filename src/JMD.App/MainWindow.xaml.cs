@@ -288,6 +288,62 @@ public partial class MainWindow : Window
 
         SettingsPanel.Children.Add(new TextBlock
         {
+            Text = "Atalhos personalizados",
+            Foreground = Brushes.White,
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 12, 0, 6)
+        });
+        var addCustomShortcut = new Button
+        {
+            Content = "+ Criar atalho personalizado",
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            Padding = new Thickness(12, 8, 12, 8),
+            Margin = new Thickness(0, 0, 0, 8),
+            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
+            BorderThickness = new Thickness(0)
+        };
+        addCustomShortcut.Click += (_, _) =>
+        {
+            CreateCustomShortcutFromDialog();
+            BuildSettingsPanel();
+        };
+        SettingsPanel.Children.Add(addCustomShortcut);
+        foreach (var customShortcut in _settings.CustomShortcuts)
+        {
+            var customRow = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            customRow.ColumnDefinitions.Add(new ColumnDefinition());
+            customRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            customRow.Children.Add(new TextBlock
+            {
+                Text = $"{customShortcut.Name} · {customShortcut.Target}",
+                Foreground = new SolidColorBrush(Color.FromRgb(220, 223, 230)),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                ToolTip = customShortcut.Target
+            });
+            var editCustomShortcut = new Button
+            {
+                Content = "Editar",
+                Tag = customShortcut.Id,
+                Padding = new Thickness(10, 5, 10, 5),
+                Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(0)
+            };
+            editCustomShortcut.Click += (_, _) =>
+            {
+                CreateCustomShortcutFromDialog(customShortcut);
+                BuildSettingsPanel();
+            };
+            Grid.SetColumn(editCustomShortcut, 1);
+            customRow.Children.Add(editCustomShortcut);
+            SettingsPanel.Children.Add(customRow);
+        }
+
+        SettingsPanel.Children.Add(new TextBlock
+        {
             Text = "A pilha de rascunhos usa os atalhos configurados acima. Os rascunhos ficam disponíveis no Histórico.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
@@ -600,7 +656,8 @@ public partial class MainWindow : Window
 
     private void CreateCustomShortcutFromDialog(CustomShortcutEntry? existing = null)
     {
-        (string Name, string Target, string Shortcut)? previous = existing is null ? null : (existing.Name, existing.Target, existing.Shortcut);
+        (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen)? previous = existing is null
+            ? null : (existing.Name, existing.Target, existing.Shortcut, existing.FocusIfAlreadyOpen);
         var previousPhrases = existing is not null && _settings.VoicePhrases.TryGetValue(existing.Id, out var savedPhrases)
             ? savedPhrases.ToList() : [];
         var dialog = new CustomShortcutEditorWindow(existing, previousPhrases);
@@ -613,6 +670,7 @@ public partial class MainWindow : Window
         var name = dialog.CommandName;
         var target = dialog.Target;
         var shortcutText = dialog.Shortcut;
+        var focusIfAlreadyOpen = dialog.FocusIfAlreadyOpen;
         var phrases = dialog.VoicePhrases.ToList();
         string? error = null;
         if (name.Length == 0 || target.Length == 0) error = "Informe o nome e o programa ou URL do atalho.";
@@ -633,6 +691,7 @@ public partial class MainWindow : Window
         entry.Name = name;
         entry.Target = target;
         entry.Shortcut = shortcutText;
+        entry.FocusIfAlreadyOpen = focusIfAlreadyOpen;
         if (existing is null) _settings.CustomShortcuts.Add(entry);
         _settings.VoicePhrases[entry.Id] = phrases;
         try
@@ -668,6 +727,7 @@ public partial class MainWindow : Window
                 entry.Name = previous.Value.Name;
                 entry.Target = previous.Value.Target;
                 entry.Shortcut = previous.Value.Shortcut;
+                entry.FocusIfAlreadyOpen = previous.Value.FocusIfAlreadyOpen;
                 _settings.VoicePhrases[entry.Id] = previousPhrases;
             }
             Notify("JMD", $"Não foi possível salvar o atalho: {exception.Message}", false);
@@ -1155,6 +1215,12 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (shortcut.FocusIfAlreadyOpen && TryFocusExistingTarget(shortcut.Target))
+            {
+                if (voiceCommand is not null)
+                    RecordActionHistory($"Focar {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
+                return;
+            }
             Process.Start(new ProcessStartInfo { FileName = shortcut.Target, UseShellExecute = true });
             if (voiceCommand is not null)
                 RecordActionHistory($"Abrir {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
@@ -1164,6 +1230,41 @@ public partial class MainWindow : Window
             SetStatus($"Não foi possível abrir {shortcut.Name}: {exception.Message}", false);
         }
     }
+
+    private static bool TryFocusExistingTarget(string target)
+    {
+        var isUrl = Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+        var processName = Path.GetFileNameWithoutExtension(target);
+        var processNames = isUrl
+            ? new HashSet<string>(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"], StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>([processName], StringComparer.OrdinalIgnoreCase);
+        var domain = isUrl ? uri!.Host : string.Empty;
+        var targetMatches = false;
+        EnumWindows((window, parameter) =>
+        {
+            if (!IsWindowVisible(window)) return true;
+            var details = ForegroundWindowDetails.Read(window);
+            if (details is null) return true;
+            var processMatches = details.ApplicationName is not null && processNames.Contains(details.ApplicationName);
+            var titleMatches = details.WindowTitle is not null &&
+                (details.WindowTitle.Contains(target, StringComparison.OrdinalIgnoreCase) ||
+                 (domain.Length > 0 && details.WindowTitle.Contains(domain, StringComparison.OrdinalIgnoreCase)));
+            if (!(isUrl ? processMatches && titleMatches : processMatches)) return true;
+            ShowWindow(window, 9);
+            targetMatches = SetForegroundWindowNative(window);
+            return false;
+        }, IntPtr.Zero);
+        return targetMatches;
+    }
+
+    private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll", EntryPoint = "ShowWindow")]
+    private static extern bool ShowWindow(IntPtr window, int command);
 
     private async Task RestoreDraftAsync(VoiceCommandInvocation? voiceCommand = null)
     {

@@ -5,6 +5,7 @@ using System.Windows.Media;
 using JMD.Core;
 using JMD.Windows;
 using Button = System.Windows.Controls.Button;
+using CheckBox = System.Windows.Controls.CheckBox;
 using Panel = System.Windows.Controls.Panel;
 using TextBox = System.Windows.Controls.TextBox;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
@@ -20,11 +21,13 @@ internal sealed class CustomShortcutEditorWindow : Window
     private readonly TextBox _target = CreateBox(36);
     private readonly TextBox _shortcut = CreateBox(36);
     private readonly TextBox _phrases = CreateBox(72, multiline: true);
+    private readonly CheckBox _focusIfAlreadyOpen = new() { Content = "Se já estiver aberto, trazer para frente", Foreground = Brushes.White, FontSize = 12, Margin = new Thickness(2, 10, 0, 0) };
 
     public string CommandName => _name.Text.Trim();
     public string Target => _target.Text.Trim();
     public string Shortcut => _shortcut.Text.Trim();
     public string[] VoicePhrases => _phrases.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    public bool FocusIfAlreadyOpen => _focusIfAlreadyOpen.IsChecked == true;
 
     public CustomShortcutEditorWindow(CustomShortcutEntry? existing = null, IEnumerable<string>? existingPhrases = null)
     {
@@ -33,12 +36,13 @@ internal sealed class CustomShortcutEditorWindow : Window
             _name.Text = existing.Name;
             _target.Text = existing.Target;
             _shortcut.Text = existing.Shortcut;
+            _focusIfAlreadyOpen.IsChecked = existing.FocusIfAlreadyOpen;
             _phrases.Text = string.Join(Environment.NewLine, existingPhrases ?? []);
         }
         Title = existing is null ? "Criar atalho personalizado" : "Editar atalho personalizado";
-        Width = 500;
-        Height = 440;
-        MinWidth = 440;
+        Width = 460;
+        Height = 500;
+        MinWidth = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
@@ -51,7 +55,7 @@ internal sealed class CustomShortcutEditorWindow : Window
             BorderBrush = new SolidColorBrush(Color.FromRgb(58, 62, 72)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(16),
-            Padding = new Thickness(20)
+            Padding = new Thickness(16)
         };
         Content = outer;
         var layout = new DockPanel();
@@ -73,7 +77,9 @@ internal sealed class CustomShortcutEditorWindow : Window
         DockPanel.SetDock(heading, Dock.Top);
         layout.Children.Add(heading);
         AddField(form, "Nome do comando", _name, "Nome exibido na lista de comandos");
-        AddField(form, "Programa ou URL", _target, "Ex.: notepad.exe ou https://... ");
+        AddField(form, "Programa ou URL", _target, "Ex.: notepad.exe ou https://example.com");
+        form.Children.Add(new TextBlock { Text = "Exemplos: notepad.exe · https://example.com · C:\\Apps\\MinhaApp.exe", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 4, 2, 0) });
+        form.Children.Add(_focusIfAlreadyOpen);
         AddField(form, "Atalho de teclado (opcional)", _shortcut, "Clique no campo e pressione Ctrl, Alt, Shift ou Win + outra tecla");
         AddField(form, "Frases do Jey (opcional)", _phrases, "Uma frase por linha");
         _shortcut.PreviewKeyDown += CaptureShortcut;

@@ -215,31 +215,17 @@ internal sealed class VoiceWakeWordService : IDisposable
         string? portugueseError = null;
         string? englishError = null;
         var attempts = new List<VoiceTranscriptionAttemptDebugInfo>();
-        VoiceTranscriptionCandidate? best;
-        if (_useWhisperPortuguese && _useWhisperEnglish)
-        {
-            try { best = _whisper.Transcribe(audio, length, "auto"); }
-            catch (Exception exception)
-            {
-                best = null;
-                portugueseError = exception.Message;
-            }
-            attempts.Add(CreateAttemptDebugInfo("Automático", "Whisper", best, portugueseError, best));
-        }
-        else
-        {
-            try { portuguese = _useWhisperPortuguese
-                ? _whisper.Transcribe(audio, length, "pt")
-                : CreateTranscriptionCandidate(TranscribePortugueseAudio(audio, length)); }
-            catch (Exception exception) { portugueseError = exception.Message; }
-            try { english = _useWhisperEnglish
-                ? _whisper.Transcribe(audio, length, "en")
-                : CreateTranscriptionCandidate(TranscribeEnglishAudio(audio, length)); }
-            catch (Exception exception) { englishError = exception.Message; }
-            best = ChooseBestTranscription(portuguese, english);
-            attempts.Add(CreateAttemptDebugInfo("Português", _useWhisperPortuguese ? "Whisper" : "Vosk", portuguese, portugueseError, best));
-            attempts.Add(CreateAttemptDebugInfo("Inglês", _useWhisperEnglish ? "Whisper" : "Vosk", english, englishError, best));
-        }
+        try { portuguese = _useWhisperPortuguese
+            ? _whisper.Transcribe(audio, length, "pt")
+            : CreateTranscriptionCandidate(TranscribePortugueseAudio(audio, length)); }
+        catch (Exception exception) { portugueseError = exception.Message; }
+        try { english = _useWhisperEnglish
+            ? _whisper.Transcribe(audio, length, "en")
+            : CreateTranscriptionCandidate(TranscribeEnglishAudio(audio, length)); }
+        catch (Exception exception) { englishError = exception.Message; }
+        var best = ChooseBestTranscription(portuguese, english);
+        attempts.Add(CreateAttemptDebugInfo("Português", _useWhisperPortuguese ? "Whisper" : "Vosk", portuguese, portugueseError, best));
+        attempts.Add(CreateAttemptDebugInfo("Inglês", _useWhisperEnglish ? "Whisper" : "Vosk", english, englishError, best));
         if (_debugEnabled)
         {
             var audioWav = length > 0 ? CreateWaveAudio(audio.AsSpan(0, length).ToArray()) : null;
@@ -411,11 +397,15 @@ internal sealed class VoiceWakeWordService : IDisposable
         VoiceTranscriptionCandidate? portuguese,
         VoiceTranscriptionCandidate? english)
     {
+        var portugueseMatchesCommand = portuguese is not null && MatchesConfiguredVoiceCommand(portuguese);
+        var englishMatchesCommand = english is not null && MatchesConfiguredVoiceCommand(english);
+        if (portugueseMatchesCommand != englishMatchesCommand)
+            return portugueseMatchesCommand ? portuguese : english;
+
         if (_useWhisperPortuguese != _useWhisperEnglish)
         {
             var whisper = _useWhisperPortuguese ? portuguese : english;
             var vosk = _useWhisperPortuguese ? english : portuguese;
-            if (whisper is not null && MatchesConfiguredVoiceCommand(whisper)) return whisper;
             if (vosk is null) return whisper;
             var minimum = MinimumWakeWordConfidencePercent;
             if (minimum == 0 || vosk.Confidence is { } confidence && confidence * 100 >= minimum)

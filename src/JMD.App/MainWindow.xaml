@@ -496,7 +496,7 @@
                       TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="10"
                       Margin="0,5,0,0" ValueChanged="WakeWordMinimumConfidenceSlider_Changed"
                       ToolTip="Rejeita uma ativação abaixo deste valor e, ao combinar Vosk com Whisper, só escolhe a transcrição Vosk quando ela alcança este limite. Zero desativa o limite." />
-              <TextBlock Text="O limite filtra a palavra de ativação e ajuda a escolher o Vosk quando ele é combinado com o Whisper. Com dois Vosk, a transcrição de maior confiança é escolhida; com dois Whisper, é feita uma única transcrição em modo automático."
+              <TextBlock Text="O limite filtra a palavra de ativação e ajuda a escolher o Vosk quando ele é combinado com o Whisper. Com dois Vosk ou dois Whisper, são feitas transcrições em português e inglês e a de maior confiança é escolhida."
                          Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,2,2,0" />
             </StackPanel>
           </Border>
