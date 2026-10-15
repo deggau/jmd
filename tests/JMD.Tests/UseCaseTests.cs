@@ -10,15 +10,15 @@ public sealed class UseCaseTests
 
     // UC-006: delimiters, escaping, whitespace, edge separators and ambiguous input.
     [Theory]
-    [InlineData("abc,def,jeg", "'abc',\r\n'def',\r\n'jeg'")]
-    [InlineData("1233456;asdasdas;asdsadas", "'1233456',\r\n'asdasdas',\r\n'asdsadas'")]
-    [InlineData("abc|def", "'abc',\r\n'def'")]
-    [InlineData("abc\r\ndef", "'abc',\r\n'def'")]
-    [InlineData("abc\ndef", "'abc',\r\n'def'")]
-    [InlineData("abc\rdef", "'abc',\r\n'def'")]
-    [InlineData("  abc , def  ", "'abc',\r\n'def'")]
-    [InlineData(",abc,def,", "'abc',\r\n'def'")]
-    [InlineData("O'Brien, x", "'O''Brien',\r\n'x'")]
+    [InlineData("abc,def,jeg", "'abc','def','jeg'")]
+    [InlineData("1233456;asdasdas;asdsadas", "'1233456','asdasdas','asdsadas'")]
+    [InlineData("abc|def", "'abc','def'")]
+    [InlineData("abc\r\ndef", "'abc','def'")]
+    [InlineData("abc\ndef", "'abc','def'")]
+    [InlineData("abc\rdef", "'abc','def'")]
+    [InlineData("  abc , def  ", "'abc','def'")]
+    [InlineData(",abc,def,", "'abc','def'")]
+    [InlineData("O'Brien, x", "'O''Brien','x'")]
     [InlineData("one", "'one'")]
     public void SqlTransformation_formats_supported_cases(string input, string expected)
     {
@@ -42,7 +42,7 @@ public sealed class UseCaseTests
     [Fact]
     public void SqlTransformation_honors_preferred_delimiter_and_rejects_unknown_one()
     {
-        Assert.Equal("'a,b',\r\n'c'", _sql.Transform("a,b;c", ";").Value);
+        Assert.Equal("'a,b','c'", _sql.Transform("a,b;c", ";").Value);
         Assert.False(_sql.Transform("a,b", "~").Success);
     }
 
@@ -52,7 +52,7 @@ public sealed class UseCaseTests
         var result = _sql.Transform("beta,alpha,beta,ALPHA,alpha");
 
         Assert.True(result.Success, result.Error);
-        Assert.Equal("'beta',\r\n'alpha',\r\n'ALPHA'", result.Value);
+        Assert.Equal("'beta','alpha','ALPHA'", result.Value);
         Assert.Equal(5, result.InputItemCount);
         Assert.Equal(3, result.OutputItemCount);
     }
@@ -78,8 +78,30 @@ public sealed class UseCaseTests
 
         Assert.True(result.Success, result.Error);
         var lineSizes = result.Value!.Split("\r\n").Select(line => line.Split("','", StringSplitOptions.None).Length);
-        Assert.Equal(new[] { 6, 6, 6, 6, 6, 1 }, lineSizes);
+        Assert.Equal(new[] { 27, 4 }, lineSizes);
         Assert.False(result.Value.EndsWith(",", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SqlTransformation_under_200_items_uses_fewer_lines_between_table_and_character_limit()
+    {
+        var compact = _sql.Transform(string.Join(',', Enumerable.Range(1, 11)));
+        Assert.Equal("'1','2','3','4','5','6','7','8','9','10','11'", compact.Value);
+
+        var longValues = string.Join(',', Enumerable.Range(1, 11).Select(index => $"{index:D2}{new string('x', 18)}"));
+        var longResult = _sql.Transform(longValues);
+        Assert.True(longResult.Success, longResult.Error);
+        Assert.Equal(3, longResult.Value!.Split("\r\n").Length);
+        Assert.All(longResult.Value.Split("\r\n"), line => Assert.True(line.Length <= 126));
+    }
+
+    [Fact]
+    public void SqlTransformation_uses_existing_table_rule_at_200_items()
+    {
+        var result = _sql.Transform(string.Join(',', Enumerable.Range(1, 200)));
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(17, result.Value!.Split("\r\n").Length);
     }
 
     [Theory]
@@ -120,7 +142,7 @@ public sealed class UseCaseTests
         var clipboard = new FakeClipboard { Text = "alpha,beta" };
         var result = await new ClipboardTransformationService(clipboard).ExecuteAsync(_sql.Transform);
         Assert.True(result.Success, result.Error);
-        Assert.Equal("'alpha',\r\n'beta'", clipboard.Text);
+        Assert.Equal("'alpha','beta'", clipboard.Text);
     }
 
     [Fact]
@@ -180,8 +202,8 @@ public sealed class UseCaseTests
         var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
         Assert.True(result.Success, result.Message);
         Assert.Equal("abc,def", result.BeforeValue);
-        Assert.Equal("'abc',\r\n'def'", keyboard.PastedText);
-        Assert.Equal("'abc',\r\n'def'", result.AfterValue);
+        Assert.Equal("'abc','def'", keyboard.PastedText);
+        Assert.Equal("'abc','def'", result.AfterValue);
         Assert.Equal(2, result.InputItemCount);
         Assert.Equal(2, result.OutputItemCount);
         Assert.Equal(new[] { "cut", "paste" }, keyboard.Events);
@@ -246,8 +268,8 @@ public sealed class UseCaseTests
         Assert.True(result.Success, result.Message);
         Assert.True(result.UsedClipboardFallback);
         Assert.Equal("alpha,beta", result.BeforeValue);
-        Assert.Equal("'alpha',\r\n'beta'", result.AfterValue);
-        Assert.Equal("'alpha',\r\n'beta'", clipboard.Text);
+        Assert.Equal("'alpha','beta'", result.AfterValue);
+        Assert.Equal("'alpha','beta'", clipboard.Text);
         Assert.Null(keyboard.PastedText);
         Assert.Equal(new[] { "cut" }, keyboard.Events);
         Assert.Equal(new[] { "wait", "cut" }, keyboard.CallOrder);

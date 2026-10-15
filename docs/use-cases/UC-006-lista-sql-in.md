@@ -53,7 +53,7 @@ Contrato interno sugerido: uma função pura recebe o texto de entrada e um deli
 11. Envolver cada item com `'` e distribuir os itens em linhas, sem vírgula final.
 12. Só substituir o clipboard (e, no modo seleção, colar) quando toda a conversão for bem-sucedida.
 
-Itens por linha, conforme a quantidade original de entradas: até 5 → 1; 6–10 → 3; 11–30 → 4; 31–60 → 6; 61–100 → 10; 101–200 → 12; 201–500 → 25; 501–1.000 → 50; 1.001–2.000 → 100; 2.001–5.000 → 250; 5.001–10.000 → 500; 10.001–15.000 → 800; 15.001–20.000 → 1.000; acima de 20.000 → 2.000. A deduplicação é aplicada a qualquer quantidade de entrada.
+Para menos de 200 entradas originais, comparar a quebra da tabela com uma quebra gulosa limitada a 126 caracteres por linha. A contagem inclui apóstrofos e vírgulas da saída SQL, sem contar CRLF; usar o método que produzir menos linhas e, em caso de empate, manter a tabela. A quebra por caracteres considera os itens distintos já formatados. A partir de 200 entradas, usar apenas a tabela: até 5 → 1 item por linha; 6–10 → 3; 11–30 → 4; 31–60 → 6; 61–100 → 10; 101–200 → 12; 201–500 → 25; 501–1.000 → 50; 1.001–2.000 → 100; 2.001–5.000 → 250; 5.001–10.000 → 500; 10.001–15.000 → 800; 15.001–20.000 → 1.000; acima de 20.000 → 2.000. A deduplicação é aplicada a qualquer quantidade de entrada.
 
 Na notificação de sucesso, informar a quantidade original de itens identificados e quantos foram removidos por duplicidade.
 

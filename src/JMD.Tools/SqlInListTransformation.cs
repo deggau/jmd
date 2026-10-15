@@ -5,6 +5,7 @@ namespace JMD.Tools;
 public sealed class SqlInListTransformation : ITextTransformation
 {
     private static readonly string[] Delimiters = ["\r\n", "\n", "\r", ",", "|", ";"];
+    private const int MaxCharactersPerLine = 126;
 
     public string Id => "sql-in-list";
     public string Name => "Formatar lista para SQL IN";
@@ -39,13 +40,44 @@ public sealed class SqlInListTransformation : ITextTransformation
         var repetitions = items.Count;
         items = items.Distinct(StringComparer.Ordinal).ToList();
 
-        var itemsPerLine = GetItemsPerLine(repetitions);
-        var lines = items
+        var formattedItems = items
             .Select(item => $"'{item.Replace("'", "''", StringComparison.Ordinal)}'")
-            .Chunk(itemsPerLine)
-            .Select(line => string.Join(",", line));
+            .ToList();
+        var tableLines = formattedItems.Chunk(GetItemsPerLine(repetitions))
+            .Select(line => string.Join(",", line))
+            .ToList();
+        var lines = repetitions < 200
+            ? ChooseFewerLines(tableLines, FormatByCharacterLimit(formattedItems))
+            : tableLines;
         return TransformationResult.Ok(string.Join(",\r\n", lines), repetitions, items.Count);
     }
+
+    private static List<string> FormatByCharacterLimit(IReadOnlyList<string> items)
+    {
+        var lines = new List<string>();
+        var line = new List<string>();
+        var lineLength = 0;
+        foreach (var item in items)
+        {
+            var addedLength = item.Length + (line.Count == 0 ? 0 : 1);
+            if (line.Count > 0 && lineLength + addedLength > MaxCharactersPerLine)
+            {
+                lines.Add(string.Join(",", line));
+                line.Clear();
+                lineLength = 0;
+                addedLength = item.Length;
+            }
+
+            line.Add(item);
+            lineLength += addedLength;
+        }
+
+        if (line.Count > 0) lines.Add(string.Join(",", line));
+        return lines;
+    }
+
+    private static List<string> ChooseFewerLines(List<string> tableLines, List<string> characterLines)
+        => characterLines.Count < tableLines.Count ? characterLines : tableLines;
 
     public static int GetItemsPerLine(int repetitions)
     {

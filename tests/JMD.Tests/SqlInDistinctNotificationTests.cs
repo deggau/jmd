@@ -9,17 +9,17 @@ public sealed class SqlInDistinctNotificationTests
     private readonly SqlInListTransformation _transformation = new();
 
     [Theory]
-    [InlineData("red,blue,red", null, "'red',\r\n'blue'", 3, 2)]
-    [InlineData("red|blue|red", null, "'red',\r\n'blue'", 3, 2)]
-    [InlineData("red;blue;red", null, "'red',\r\n'blue'", 3, 2)]
-    [InlineData("red\r\nblue\r\nred", null, "'red',\r\n'blue'", 3, 2)]
-    [InlineData("red\nblue\nred", null, "'red',\r\n'blue'", 3, 2)]
-    [InlineData("red\rblue\rred", null, "'red',\r\n'blue'", 3, 2)]
-    [InlineData(" red , blue , red ", null, "'red',\r\n'blue'", 3, 2)]
-    [InlineData(",red,blue,red,", null, "'red',\r\n'blue'", 3, 2)]
+    [InlineData("red,blue,red", null, "'red','blue'", 3, 2)]
+    [InlineData("red|blue|red", null, "'red','blue'", 3, 2)]
+    [InlineData("red;blue;red", null, "'red','blue'", 3, 2)]
+    [InlineData("red\r\nblue\r\nred", null, "'red','blue'", 3, 2)]
+    [InlineData("red\nblue\nred", null, "'red','blue'", 3, 2)]
+    [InlineData("red\rblue\rred", null, "'red','blue'", 3, 2)]
+    [InlineData(" red , blue , red ", null, "'red','blue'", 3, 2)]
+    [InlineData(",red,blue,red,", null, "'red','blue'", 3, 2)]
     [InlineData("same;same;same;same", null, "'same'", 4, 1)]
-    [InlineData("red,blue,green", null, "'red',\r\n'blue',\r\n'green'", 3, 3)]
-    [InlineData("A,a,A", null, "'A',\r\n'a'", 3, 2)]
+    [InlineData("red,blue,green", null, "'red','blue','green'", 3, 3)]
+    [InlineData("A,a,A", null, "'A','a'", 3, 2)]
     [InlineData("red,blue;red,blue", ";", "'red,blue'", 2, 1)]
     public void Transformation_and_notification_report_distinct_counts_for_each_supported_delimiter(
         string input,
