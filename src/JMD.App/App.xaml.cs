@@ -155,6 +155,7 @@ internal sealed class UserSettings
     public string? PreferredDelimiter { get; set; }
     public int HistoryRetentionDays { get; set; } = 15;
     public bool KeepAwakeEnabled { get; set; }
+    public bool HideFromScreenCapture { get; set; }
     public bool UseJmdNotifications { get; set; }
     public bool VoiceWakeWordEnabled { get; set; } = true;
     public bool VoiceDebugEnabled { get; set; }

@@ -58,6 +58,10 @@
                     Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,0,12,0"
                     Checked="KeepAwakeToggle_Changed" Unchecked="KeepAwakeToggle_Changed"
                     ToolTip="Solicita ao Windows manter a tela e o sistema ativos. Políticas de segurança ainda podem bloquear a tela." />
+          <CheckBox x:Name="HideFromCaptureToggle" Content="Ocultar na captura"
+                    Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,0,12,0"
+                    Checked="HideFromCaptureToggle_Changed" Unchecked="HideFromCaptureToggle_Changed"
+                    ToolTip="Oculta a janela do JMD em capturas e compartilhamentos que respeitam o recurso do Windows." />
           <CheckBox x:Name="VoiceWakeWordToggle" Content="Ativar Jey"
                     Style="{StaticResource CompactToggleCheckBoxStyle}"
                     Checked="VoiceWakeWordToggle_Changed" Unchecked="VoiceWakeWordToggle_Changed"

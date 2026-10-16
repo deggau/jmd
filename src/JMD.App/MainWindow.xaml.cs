@@ -38,6 +38,8 @@ public partial class MainWindow : Window
     private const int HistoryPageSize = 15;
     private const int VkLWin = 0x5B;
     private const int VkRWin = 0x5C;
+    private const uint WindowDisplayAffinityNone = 0;
+    private const uint WindowDisplayAffinityExcludeFromCapture = 0x11;
     private readonly SettingsStore _settingsStore = new();
     private readonly UserSettings _settings;
     private ConversionHistoryStore? _historyStore;
@@ -79,6 +81,7 @@ public partial class MainWindow : Window
     private bool _closingForExit;
     private bool _conversionRunning;
     private bool _updatingKeepAwakeToggle;
+    private bool _updatingCaptureExclusionToggle;
     private bool _loadingAdvancedNotificationToggle;
     private bool _showingDialog;
     private bool _checkingUpdates;
@@ -109,10 +112,15 @@ public partial class MainWindow : Window
         VoiceRecognitionDebugHistory.ItemsSource = _wakeRecognitionHistory;
         FooterVersionText.Text = $"v{GetInstalledVersion()}";
         _settings = _settingsStore.Load();
+        HideFromCaptureToggle.Visibility = ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version)
+            ? Visibility.Visible : Visibility.Collapsed;
         ConfigureDefaultVoiceCommands();
         _updatingKeepAwakeToggle = true;
         KeepAwakeToggle.IsChecked = _settings.KeepAwakeEnabled;
         _updatingKeepAwakeToggle = false;
+        _updatingCaptureExclusionToggle = true;
+        HideFromCaptureToggle.IsChecked = _settings.HideFromScreenCapture;
+        _updatingCaptureExclusionToggle = false;
         _updatingVoiceWakeWordToggle = true;
         VoiceWakeWordToggle.IsChecked = _settings.VoiceWakeWordEnabled;
         _updatingVoiceWakeWordToggle = false;
@@ -200,6 +208,9 @@ public partial class MainWindow : Window
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
     {
         var source = (HwndSource)PresentationSource.FromVisual(this)!;
+        if (ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version) &&
+            _settings.HideFromScreenCapture && !TrySetCaptureExcluded(true))
+            SetStatus("A preferência para ocultar o JMD foi carregada, mas o Windows não aceitou a solicitação.", false);
         _hotkeys = new GlobalHotkeyService(source);
         _hotkeys.HotkeyPressed += id => Dispatcher.BeginInvoke(() => HandleHotkeyAsync(id));
         RegisterConfiguredShortcuts();
@@ -762,6 +773,7 @@ public partial class MainWindow : Window
         var previousPhrases = existing is not null && _settings.VoicePhrases.TryGetValue(existing.Id, out var savedPhrases)
             ? savedPhrases.ToList() : [];
         var dialog = new CustomShortcutEditorWindow(existing, previousPhrases);
+        PrepareWindowForCaptureExclusion(dialog);
         _showingDialog = true;
         bool accepted;
         try { accepted = dialog.ShowDialog() == true; }
@@ -943,6 +955,7 @@ public partial class MainWindow : Window
     private void EditSnippet(SnippetEntry? existing, RichClipboardContent? captured)
     {
         var dialog = new SnippetEditorWindow(existing, captured);
+        PrepareWindowForCaptureExclusion(dialog);
         if (IsVisible) dialog.Owner = this;
         _showingDialog = true;
         bool accepted;
@@ -1023,6 +1036,7 @@ public partial class MainWindow : Window
         }
 
         var dialog = new SnippetTitleWindow();
+        PrepareWindowForCaptureExclusion(dialog);
         if (dialog.ShowDialog() != true || dialog.SnippetTitle is not { } title) return;
         var snippet = new SnippetEntry
         {
@@ -1055,6 +1069,7 @@ public partial class MainWindow : Window
         }
         var sourceWindow = _previousWindow;
         var picker = new SnippetPickerWindow(_settings.Snippets);
+        PrepareWindowForCaptureExclusion(picker);
         if (picker.ShowDialog() != true || picker.SelectedSnippet is not { } snippet) return;
         if (!await _keyboard.WaitForModifiersReleasedAsync())
         {
@@ -2341,6 +2356,70 @@ public partial class MainWindow : Window
             : "A solicitação para manter a tela ativa foi removida.", true);
     }
 
+    private void HideFromCaptureToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updatingCaptureExclusionToggle || sender is not CheckBox toggle) return;
+        var enabled = toggle.IsChecked == true;
+        if (!TrySetCaptureExcluded(enabled))
+        {
+            _ = TrySetCaptureExcluded(_settings.HideFromScreenCapture);
+            _updatingCaptureExclusionToggle = true;
+            toggle.IsChecked = _settings.HideFromScreenCapture;
+            _updatingCaptureExclusionToggle = false;
+            SetStatus(OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041) || !enabled
+                ? "O Windows não aceitou a solicitação para ocultar a janela em capturas."
+                : "Ocultar a janela em capturas requer Windows 10 versão 2004 ou posterior.", false);
+            return;
+        }
+
+        _settings.HideFromScreenCapture = enabled;
+        try
+        {
+            _settingsStore.Save(_settings);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"A opção foi alterada, mas não foi possível salvar a preferência: {exception.Message}", false);
+            return;
+        }
+
+        SetStatus(enabled
+            ? "A janela do JMD será omitida das capturas compatíveis com o Windows."
+            : "A janela do JMD voltou a aparecer nas capturas.", true);
+    }
+
+    private bool TrySetCaptureExcluded(bool enabled)
+    {
+        if (enabled && !ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version)) return false;
+        var accepted = true;
+        foreach (Window window in System.Windows.Application.Current.Windows)
+        {
+            var handle = new WindowInteropHelper(window).Handle;
+            if (handle != IntPtr.Zero && !SetWindowDisplayAffinity(handle,
+                    enabled ? WindowDisplayAffinityExcludeFromCapture : WindowDisplayAffinityNone))
+                accepted = false;
+        }
+        return accepted;
+    }
+
+    private void PrepareWindowForCaptureExclusion(Window window)
+    {
+        window.SourceInitialized += (_, _) =>
+        {
+            if (ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version) &&
+                _settings.HideFromScreenCapture && !TrySetCaptureExcluded(window, true))
+                SetStatus("O Windows não aceitou ocultar uma janela do JMD nas capturas.", false);
+        };
+    }
+
+    private static bool TrySetCaptureExcluded(Window window, bool enabled)
+    {
+        if (enabled && !ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version)) return false;
+        var handle = new WindowInteropHelper(window).Handle;
+        return handle != IntPtr.Zero && SetWindowDisplayAffinity(handle,
+            enabled ? WindowDisplayAffinityExcludeFromCapture : WindowDisplayAffinityNone);
+    }
+
     private void VoiceWakeWordToggle_Changed(object sender, RoutedEventArgs e)
     {
         if (_updatingVoiceWakeWordToggle || sender is not CheckBox toggle) return;
@@ -3507,6 +3586,7 @@ public partial class MainWindow : Window
         }
 
         var notification = new JmdNotificationWindow(message, historyId: null, isProcessing: true);
+        PrepareWindowForCaptureExclusion(notification);
         _jeyProcessingNotification = notification;
         notification.Closed += (_, _) =>
         {
@@ -3570,6 +3650,10 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", EntryPoint = "SetForegroundWindow")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindowNative(IntPtr window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowDisplayAffinity(IntPtr window, uint affinity);
 }
 
 internal static class CustomCommandLine
