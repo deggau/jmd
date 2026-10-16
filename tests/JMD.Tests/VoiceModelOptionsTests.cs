@@ -10,6 +10,8 @@ public sealed class VoiceModelOptionsTests
     [InlineData("whisperTiny")]
     [InlineData("whisperBase")]
     [InlineData("gemma4E2B")]
+    [InlineData("sherpaParakeetPtBr")]
+    [InlineData("sherpaZipformerEn")]
     public void All_transcription_models_are_recognized(string modelId)
     {
         Assert.True(VoiceModelOptions.IsSupported(modelId));
@@ -48,5 +50,32 @@ public sealed class VoiceModelOptionsTests
     {
         Assert.Equal(expectedRating, VoiceBenchmarkSpeed.Rate(elapsedMilliseconds));
         Assert.Equal(expectedLabel, VoiceBenchmarkSpeed.GetPortugueseLabel(elapsedMilliseconds));
+    }
+
+    [Theory]
+    [InlineData(0, 9000, 1)]
+    [InlineData(4500, 9000, 6)]
+    [InlineData(9000, 9000, 12)]
+    public void Benchmark_bar_length_scales_with_elapsed_time(long elapsed, long slowest, int expected)
+        => Assert.Equal(expected, VoiceBenchmarkSpeed.GetBarLength(elapsed, slowest));
+
+    [Theory]
+    [InlineData("vosk", "vosk", true)]
+    [InlineData("sherpaParakeetPtBr", "sherpaZipformerEn", true)]
+    [InlineData("whisperTiny", "vosk", false)]
+    [InlineData("gemma4E2B", "vosk", false)]
+    public void Parallel_dual_language_transcription_skips_heavy_process_models(string pt, string en, bool expected)
+        => Assert.Equal(expected, VoiceTranscriptionParallelism.CanRunConcurrently(pt, en));
+
+    [Fact]
+    public void Sherpa_model_download_metadata_pins_portuguese_files_and_models_are_language_specific()
+    {
+        Assert.Equal(4, SherpaModelDownloads.Files.Count);
+        Assert.All(SherpaModelDownloads.Files, file => Assert.Equal(64, file.Sha256.Length));
+        Assert.All(SherpaModelDownloads.EnglishFiles.Where(file => file.FileName != "tokens.txt"),
+            file => Assert.Equal(64, file.Sha256.Length));
+        Assert.Contains("ptBR", SherpaModelDownloads.GetRepository(VoiceModelOptions.SherpaParakeetPtBr));
+        Assert.Contains("small-en", SherpaModelDownloads.GetRepository(VoiceModelOptions.SherpaZipformerEn));
+        Assert.Equal(VoiceModelOptions.SherpaParakeetPtBr, VoiceModelOptions.NormalizePersisted(VoiceModelOptions.SherpaParakeetPtBr));
     }
 }

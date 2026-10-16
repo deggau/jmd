@@ -8,14 +8,15 @@ using Vosk;
 namespace JMD.App;
 
 internal sealed record VoiceCaptureDebugInfo(int DurationMilliseconds, int? CutMilliseconds, byte[]? TranscriptionAudioWav,
-    int? PortugueseTranscriptionTimeMilliseconds = null, int? EnglishTranscriptionTimeMilliseconds = null);
+    int? PortugueseTranscriptionTimeMilliseconds = null, int? EnglishTranscriptionTimeMilliseconds = null,
+    int? TotalTranscriptionTimeMilliseconds = null);
 internal sealed record VoiceTranscriptionCandidate(string Text, double? Confidence);
 internal sealed record VoiceTranscriptionAttemptDebugInfo(
     string Language, string Engine, string? Transcript, double? Confidence, string? Error, bool Selected,
     int? ElapsedMilliseconds);
 internal sealed record VoiceTranscriptionDebugInfo(
     DateTimeOffset AudioCapturedAt, int AudioDurationMilliseconds, int? CutMilliseconds,
-    IReadOnlyList<VoiceTranscriptionAttemptDebugInfo> Attempts);
+    IReadOnlyList<VoiceTranscriptionAttemptDebugInfo> Attempts, int? TotalElapsedMilliseconds = null);
 internal sealed record WakeWordRecognitionDebugInfo(
     DateTimeOffset AudioCapturedAt, string Transcript, bool IsFinal, bool? WakeWordDetected, double? Confidence,
     bool ConfidenceAccepted, int MinimumConfidencePercent, bool ClosedGrammarEnabled);
@@ -29,8 +30,11 @@ internal sealed class VoiceWakeWordService : IDisposable
     private readonly string _portugueseModelId;
     private readonly string _englishModelId;
     private readonly bool _closedWakeWordGrammarEnabled;
+    private readonly bool _closedCommandGrammarEnabled;
     private readonly WhisperCppTranscriber _whisper = new();
     private readonly Gemma4Transcriber _gemma = new();
+    private readonly SherpaParakeetTranscriber _sherpaPortuguese = new();
+    private readonly SherpaParakeetTranscriber _sherpaEnglish = new();
     private readonly WaveInEvent _microphone;
     private readonly AudioFrameQueue _audioFrames = new(capacity: 1800);
     private readonly Task _audioProcessor;
@@ -51,6 +55,7 @@ internal sealed class VoiceWakeWordService : IDisposable
     private volatile bool _debugEnabled;
     private volatile bool _wakeWordDebugEnabled;
     private volatile int _minimumWakeWordConfidencePercent;
+    private volatile int _minimumCommandConfidencePercent;
     private string[] _voiceCommandPhrases = [];
     private VoiceCaptureDebugInfo? _lastDebugInfo;
     private string _lastWakeWordDebugPartial = string.Empty;
@@ -61,6 +66,11 @@ internal sealed class VoiceWakeWordService : IDisposable
     {
         get => _minimumWakeWordConfidencePercent;
         set => _minimumWakeWordConfidencePercent = Math.Clamp(value, 0, 100);
+    }
+    public int MinimumCommandConfidencePercent
+    {
+        get => _minimumCommandConfidencePercent;
+        set => _minimumCommandConfidencePercent = Math.Clamp(value, 0, 100);
     }
     public void SetVoiceCommandPhrases(string[] phrases)
         => Volatile.Write(ref _voiceCommandPhrases, phrases);
@@ -74,12 +84,16 @@ internal sealed class VoiceWakeWordService : IDisposable
         string portugueseModelId = "vosk",
         string englishModelId = "vosk",
         bool closedWakeWordGrammarEnabled = false,
-        int minimumWakeWordConfidencePercent = 0)
+        int minimumWakeWordConfidencePercent = 0,
+        bool closedCommandGrammarEnabled = false,
+        int minimumCommandConfidencePercent = 0)
     {
         _portugueseModelId = portugueseModelId;
         _englishModelId = englishModelId;
         _closedWakeWordGrammarEnabled = closedWakeWordGrammarEnabled;
+        _closedCommandGrammarEnabled = closedCommandGrammarEnabled;
         MinimumWakeWordConfidencePercent = minimumWakeWordConfidencePercent;
+        MinimumCommandConfidencePercent = minimumCommandConfidencePercent;
         var wakeWordModelPath = Path.Combine(AppContext.BaseDirectory, "vosk-model-small-en-us-0.15");
         var portugueseModelPath = Path.Combine(AppContext.BaseDirectory, "vosk-model-small-pt-0.3");
         if (!Directory.Exists(wakeWordModelPath))
@@ -192,19 +206,21 @@ internal sealed class VoiceWakeWordService : IDisposable
         }
     }
 
-    private string TranscribePortugueseAudio(byte[] audio, int length)
+    private string TranscribePortugueseAudio(byte[] audio, int length, string? grammar)
     {
-        return TranscribeAudio(_portugueseModel, audio, length);
+        return TranscribeAudio(_portugueseModel, audio, length, grammar);
     }
 
-    private string TranscribeEnglishAudio(byte[] audio, int length)
+    private string TranscribeEnglishAudio(byte[] audio, int length, string? grammar)
     {
-        return TranscribeAudio(_model, audio, length);
+        return TranscribeAudio(_model, audio, length, grammar);
     }
 
-    private static string TranscribeAudio(Model model, byte[] audio, int length)
+    private static string TranscribeAudio(Model model, byte[] audio, int length, string? grammar)
     {
-        using var recognizer = new VoskRecognizer(model, 16000.0f);
+        using var recognizer = grammar is null
+            ? new VoskRecognizer(model, 16000.0f)
+            : new VoskRecognizer(model, 16000.0f, grammar);
         recognizer.SetWords(true);
         var isFinalized = recognizer.AcceptWaveform(audio, length);
         return isFinalized ? recognizer.Result() : recognizer.FinalResult();
@@ -213,22 +229,30 @@ internal sealed class VoiceWakeWordService : IDisposable
     private string? TranscribeBestAudio(
         byte[] audio, int length, int? cutMilliseconds = null, DateTimeOffset? audioCapturedAt = null)
     {
+        var measure = _debugEnabled || _wakeWordDebugEnabled;
+        var totalTimer = measure ? System.Diagnostics.Stopwatch.StartNew() : null;
         VoiceTranscriptionCandidate? portuguese = null;
         VoiceTranscriptionCandidate? english = null;
         string? portugueseError = null;
         string? englishError = null;
         var attempts = new List<VoiceTranscriptionAttemptDebugInfo>();
-        var portugueseTimer = _debugEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
-        try { portuguese = TranscribeConfiguredModel(audio, length, "pt", _portugueseModelId); }
-        catch (Exception exception) { portugueseError = exception.Message; }
-        if (portugueseTimer is not null) portugueseTimer.Stop();
-        var portugueseElapsedMilliseconds = portugueseTimer is null ? null : (int?)portugueseTimer.ElapsedMilliseconds;
-        var englishTimer = _debugEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
-        try { english = TranscribeConfiguredModel(audio, length, "en", _englishModelId); }
-        catch (Exception exception) { englishError = exception.Message; }
-        if (englishTimer is not null) englishTimer.Stop();
-        var englishElapsedMilliseconds = englishTimer is null ? null : (int?)englishTimer.ElapsedMilliseconds;
+        int? portugueseElapsedMilliseconds;
+        int? englishElapsedMilliseconds;
+        if (VoiceTranscriptionParallelism.CanRunConcurrently(_portugueseModelId, _englishModelId))
+        {
+            var portugueseTask = Task.Run(() => RunTranscriptionAttempt(audio, length, "pt", _portugueseModelId, measure));
+            var englishTask = Task.Run(() => RunTranscriptionAttempt(audio, length, "en", _englishModelId, measure));
+            Task.WaitAll(portugueseTask, englishTask);
+            (portuguese, portugueseError, portugueseElapsedMilliseconds) = portugueseTask.Result;
+            (english, englishError, englishElapsedMilliseconds) = englishTask.Result;
+        }
+        else
+        {
+            (portuguese, portugueseError, portugueseElapsedMilliseconds) = RunTranscriptionAttempt(audio, length, "pt", _portugueseModelId, measure);
+            (english, englishError, englishElapsedMilliseconds) = RunTranscriptionAttempt(audio, length, "en", _englishModelId, measure);
+        }
         var best = ChooseBestTranscription(portuguese, english);
+        totalTimer?.Stop();
         attempts.Add(CreateAttemptDebugInfo("Português", GetModelDisplayName(_portugueseModelId), portuguese, portugueseError, best, portugueseElapsedMilliseconds));
         attempts.Add(CreateAttemptDebugInfo("Inglês", GetModelDisplayName(_englishModelId), english, englishError, best, englishElapsedMilliseconds));
         if (_debugEnabled)
@@ -237,9 +261,11 @@ internal sealed class VoiceWakeWordService : IDisposable
             _lastDebugInfo = _lastDebugInfo is { } prior
                 ? prior with { CutMilliseconds = cutMilliseconds ?? prior.CutMilliseconds, TranscriptionAudioWav = audioWav,
                     PortugueseTranscriptionTimeMilliseconds = portugueseElapsedMilliseconds,
-                    EnglishTranscriptionTimeMilliseconds = englishElapsedMilliseconds }
+                    EnglishTranscriptionTimeMilliseconds = englishElapsedMilliseconds,
+                    TotalTranscriptionTimeMilliseconds = totalTimer is null ? null : (int?)totalTimer.ElapsedMilliseconds }
                 : new VoiceCaptureDebugInfo(GetDurationMilliseconds(length), cutMilliseconds, audioWav,
-                    portugueseElapsedMilliseconds, englishElapsedMilliseconds);
+                    portugueseElapsedMilliseconds, englishElapsedMilliseconds,
+                    totalTimer is null ? null : (int?)totalTimer.ElapsedMilliseconds);
         }
         if (_wakeWordDebugEnabled)
         {
@@ -247,7 +273,7 @@ internal sealed class VoiceWakeWordService : IDisposable
             {
                 WakeWordTranscriptionDebugUpdated?.Invoke(new VoiceTranscriptionDebugInfo(
                     audioCapturedAt ?? DateTimeOffset.Now, GetDurationMilliseconds(length), cutMilliseconds,
-                    attempts));
+                    attempts, totalTimer is null ? null : (int?)totalTimer.ElapsedMilliseconds));
             }
             catch { }
         }
@@ -255,15 +281,30 @@ internal sealed class VoiceWakeWordService : IDisposable
     }
 
     private VoiceTranscriptionCandidate? TranscribeConfiguredModel(byte[] audio, int length, string language, string modelId)
-        => modelId switch
+    {
+        var candidate = modelId switch
         {
             "vosk" => CreateTranscriptionCandidate(language == "pt"
-                ? TranscribePortugueseAudio(audio, length)
-                : TranscribeEnglishAudio(audio, length)),
+                ? TranscribePortugueseAudio(audio, length, CreateVoskCommandGrammar(modelId))
+                : TranscribeEnglishAudio(audio, length, CreateVoskCommandGrammar(modelId))),
             "whisperTiny" or "whisperBase" => _whisper.Transcribe(audio, length, language, modelId),
             "gemma4E2B" => _gemma.Transcribe(audio, length, language),
+            "sherpaParakeetPtBr" => _sherpaPortuguese.Transcribe(audio, length, modelId,
+                VoiceCommandGrammar.CreateSherpaHotwords(_closedCommandGrammarEnabled, modelId, Volatile.Read(ref _voiceCommandPhrases))),
+            "sherpaZipformerEn" => _sherpaEnglish.Transcribe(audio, length, modelId,
+                VoiceCommandGrammar.CreateSherpaHotwords(_closedCommandGrammarEnabled, modelId, Volatile.Read(ref _voiceCommandPhrases))),
             _ => throw new InvalidOperationException($"Modelo de transcrição desconhecido: {modelId}")
         };
+
+        if (_closedCommandGrammarEnabled && modelId == "vosk" &&
+            !VoiceCommandGrammar.IsConfidenceAccepted(MinimumCommandConfidencePercent, candidate?.Confidence))
+            return null;
+        return candidate;
+    }
+
+    private string? CreateVoskCommandGrammar(string modelId)
+        => VoiceCommandGrammar.CreateVoskGrammar(
+            _closedCommandGrammarEnabled, modelId, Volatile.Read(ref _voiceCommandPhrases));
 
     private static bool IsVosk(string modelId) => modelId == "vosk";
 
@@ -273,8 +314,27 @@ internal sealed class VoiceWakeWordService : IDisposable
         "whisperTiny" => "Whisper Tiny",
         "whisperBase" => "Whisper Base",
         "gemma4E2B" => "Gemma E2B experimental",
+        "sherpaParakeetPtBr" => "Sherpa Parakeet pt-BR",
+        "sherpaZipformerEn" => "Sherpa Zipformer inglês",
         _ => modelId
     };
+
+    private (VoiceTranscriptionCandidate? Candidate, string? Error, int? ElapsedMilliseconds) RunTranscriptionAttempt(
+        byte[] audio, int length, string language, string modelId, bool measure)
+    {
+        var timer = measure ? System.Diagnostics.Stopwatch.StartNew() : null;
+        try
+        {
+            var candidate = TranscribeConfiguredModel(audio, length, language, modelId);
+            timer?.Stop();
+            return (candidate, null, timer is null ? null : (int?)timer.ElapsedMilliseconds);
+        }
+        catch (Exception exception)
+        {
+            timer?.Stop();
+            return (null, exception.Message, timer is null ? null : (int?)timer.ElapsedMilliseconds);
+        }
+    }
 
     private static VoiceTranscriptionAttemptDebugInfo CreateAttemptDebugInfo(
         string language, string engine, VoiceTranscriptionCandidate? candidate, string? error,
@@ -578,6 +638,8 @@ internal sealed class VoiceWakeWordService : IDisposable
         _recognizer.Dispose();
         _portugueseModel.Dispose();
         _model.Dispose();
+        _sherpaPortuguese.Dispose();
+        _sherpaEnglish.Dispose();
         _utteranceAudio.Dispose();
         _followupAudio.Dispose();
         _followupSegmentAudio.Dispose();

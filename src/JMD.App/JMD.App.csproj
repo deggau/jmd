@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Assets\JMD.ico</ApplicationIcon>
-    <Version>0.1.49</Version>
+    <Version>0.1.50</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\JMD.Core\JMD.Core.csproj" />
@@ -18,9 +18,11 @@
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Vosk" Version="0.3.38" />
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.8" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="Assets\JMD.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\SHERPA-MODEL-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Resource Include="Assets\JMD.png" />
   </ItemGroup>
 </Project>

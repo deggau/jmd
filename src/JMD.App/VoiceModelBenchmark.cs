@@ -21,6 +21,8 @@ internal sealed class VoiceModelBenchmark
     {
         var pcm = await Task.Run(() => ReadPcm16KhzMono(audioPath), cancellationToken);
         var models = new List<string> { "vosk" };
+        var sherpaModel = language == "pt" ? VoiceModelOptions.SherpaParakeetPtBr : VoiceModelOptions.SherpaZipformerEn;
+        if (SherpaParakeetTranscriber.IsModelDownloaded(sherpaModel)) models.Add(sherpaModel);
         if (WhisperCppTranscriber.IsModelDownloaded("whisperTiny")) models.Add("whisperTiny");
         if (WhisperCppTranscriber.IsModelDownloaded("whisperBase")) models.Add("whisperBase");
         if (Gemma4Transcriber.IsModelDownloaded && File.Exists(Gemma4Transcriber.ExecutablePath)) models.Add("gemma4E2B");
@@ -51,13 +53,19 @@ internal sealed class VoiceModelBenchmark
         var output = new StringBuilder();
         output.AppendLine($"Áudio: {Path.GetFileName(audioPath)} · idioma: {(language == "pt" ? "português" : "inglês")}");
         output.AppendLine("Tempo inclui a inicialização do processo de transcrição quando aplicável.");
+        var slowest = results.MaxBy(result => result.ElapsedMilliseconds)!;
         foreach (var result in results.OrderBy(result => result.ElapsedMilliseconds))
         {
-            output.AppendLine(FormatResult(result));
+            var bar = new string('█', VoiceBenchmarkSpeed.GetBarLength(result.ElapsedMilliseconds, slowest.ElapsedMilliseconds));
+            var isFastest = result.ElapsedMilliseconds == fastest.ElapsedMilliseconds;
+            var isSlowest = result.ElapsedMilliseconds == slowest.ElapsedMilliseconds;
+            var speedMarker = isFastest && isSlowest ? " · MAIS RÁPIDO E LENTO"
+                : isFastest ? " · MAIS RÁPIDO" : isSlowest ? " · MAIS LENTO" : string.Empty;
+            output.AppendLine($"{bar.PadRight(12)} {result.Name.PadRight(24)} {(result.ElapsedMilliseconds / 1000d).ToString("N2", CultureInfo.CurrentCulture)} s{speedMarker}");
             if (!string.IsNullOrWhiteSpace(result.Transcript))
                 output.AppendLine($"  «{TrimTranscript(result.Transcript)}»");
         }
-        output.Append($"Mais rápido: {fastest.Name} · Recomendação de velocidade: {recommendation}.");
+        output.Append($"Mais rápido: {fastest.Name} · Mais lento: {slowest.Name} · Recomendação: {recommendation}.");
         return output.ToString();
     }
 
@@ -82,6 +90,11 @@ internal sealed class VoiceModelBenchmark
         if (modelId is "whisperTiny" or "whisperBase")
         {
             candidate = new WhisperCppTranscriber().Transcribe(pcm, pcm.Length, language, modelId);
+        }
+        else if (modelId is VoiceModelOptions.SherpaParakeetPtBr or VoiceModelOptions.SherpaZipformerEn)
+        {
+            using var transcriber = new SherpaParakeetTranscriber();
+            candidate = transcriber.Transcribe(pcm, pcm.Length, modelId);
         }
         else
         {
@@ -154,13 +167,15 @@ internal sealed class VoiceModelBenchmark
         "whisperTiny" => "Whisper Tiny",
         "whisperBase" => "Whisper Base",
         "gemma4E2B" => "Gemma E2B",
+        "sherpaParakeetPtBr" => "Sherpa Parakeet pt-BR",
+        "sherpaZipformerEn" => "Sherpa Zipformer EN",
         _ => modelId
     };
 
     private static string FormatResult(VoiceModelBenchmarkResult result)
     {
         var recommendation = GetSpeedRecommendation(result.ElapsedMilliseconds);
-        return $"{result.Name}: {result.ElapsedMilliseconds.ToString("N0", CultureInfo.CurrentCulture)} ms · {recommendation}";
+        return $"{result.Name}: {(result.ElapsedMilliseconds / 1000d).ToString("N2", CultureInfo.CurrentCulture)} s · {recommendation}";
     }
 
     private static string GetSpeedRecommendation(long milliseconds) => VoiceBenchmarkSpeed.GetPortugueseLabel(milliseconds);

@@ -144,6 +144,62 @@ public sealed class AppPresentationStateTests
         Assert.False(VoicePhrasePolicy.Matches("abrir sobre", "abrir configurações!"));
     }
 
+    [Fact]
+    public void Closed_vosk_command_grammar_contains_only_distinct_nonempty_configured_phrases()
+    {
+        var grammar = VoiceCommandGrammar.CreateVoskGrammar(
+            true, "vosk", [" Abrir sobre ", "", "Atualizar JMD", "abrir sobre"]);
+
+        Assert.NotNull(grammar);
+        Assert.Equal(["Abrir sobre", "Atualizar JMD"],
+            System.Text.Json.JsonSerializer.Deserialize<string[]>(grammar));
+    }
+
+    [Theory]
+    [InlineData(false, "vosk")]
+    [InlineData(true, "whisperTiny")]
+    public void Closed_command_grammar_is_not_used_when_disabled_or_transcribing_with_another_model(
+        bool enabled, string modelId)
+    {
+        Assert.Null(VoiceCommandGrammar.CreateVoskGrammar(enabled, modelId, ["abrir sobre"]));
+    }
+
+    [Fact]
+    public void Closed_command_grammar_falls_back_to_open_vocabulary_when_no_phrases_are_configured()
+    {
+        Assert.Null(VoiceCommandGrammar.CreateVoskGrammar(true, "vosk", ["", "  "]));
+    }
+
+    [Theory]
+    [InlineData("sherpaParakeetPtBr")]
+    [InlineData("sherpaZipformerEn")]
+    public void Closed_command_grammar_creates_distinct_sherpa_hotwords(string modelId)
+    {
+        var hotwords = VoiceCommandGrammar.CreateSherpaHotwords(true, modelId,
+            ["abrir configurações", "Abrir configurações", "  fechar janela  "]);
+        Assert.Equal(["abrir configurações", "fechar janela"], hotwords);
+    }
+
+    [Fact]
+    public void Closed_command_grammar_does_not_create_sherpa_hotwords_when_disabled_or_using_other_models()
+    {
+        Assert.Empty(VoiceCommandGrammar.CreateSherpaHotwords(false, "sherpaParakeetPtBr", ["abrir configurações"]));
+        Assert.Empty(VoiceCommandGrammar.CreateSherpaHotwords(true, "whisperTiny", ["abrir configurações"]));
+        Assert.Empty(VoiceCommandGrammar.CreateSherpaHotwords(true, "sherpaZipformerEn", ["", "  "]));
+    }
+
+    [Theory]
+    [InlineData(0, null, true)]
+    [InlineData(70, 0.70, true)]
+    [InlineData(70, 0.69, false)]
+    [InlineData(1, null, false)]
+    [InlineData(100, 1.0, true)]
+    public void Command_minimum_confidence_accepts_only_candidates_at_or_above_the_threshold(
+        int minimumPercent, double? confidence, bool expected)
+    {
+        Assert.Equal(expected, VoiceCommandGrammar.IsConfidenceAccepted(minimumPercent, confidence));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("!!!")]

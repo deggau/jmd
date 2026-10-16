@@ -138,6 +138,8 @@ internal sealed class UserSettings
     public bool VoiceDebugEnabled { get; set; }
     public bool VoiceWakeRecognitionDebugEnabled { get; set; }
     public bool JeyWakeWordClosedGrammarEnabled { get; set; }
+    public bool JeyCommandClosedGrammarEnabled { get; set; }
+    public int JeyCommandMinimumConfidencePercent { get; set; }
     public int JeyWakeWordMinimumConfidencePercent { get; set; }
     public string JeyPortugueseModel { get; set; } = "vosk";
     public string JeyEnglishModel { get; set; } = "vosk";
@@ -202,6 +204,7 @@ internal sealed class SettingsStore
                     loaded.JeyPortugueseModel = VoiceModelOptions.NormalizePersisted(loaded.JeyPortugueseModel);
                     loaded.JeyEnglishModel = VoiceModelOptions.NormalizePersisted(loaded.JeyEnglishModel);
                     loaded.JeyWakeWordMinimumConfidencePercent = Math.Clamp(loaded.JeyWakeWordMinimumConfidencePercent, 0, 100);
+                    loaded.JeyCommandMinimumConfidencePercent = Math.Clamp(loaded.JeyCommandMinimumConfidencePercent, 0, 100);
                     ShortcutDefaults.MigratePreviousDefaults(loaded.Shortcuts);
                     return loaded;
                 }

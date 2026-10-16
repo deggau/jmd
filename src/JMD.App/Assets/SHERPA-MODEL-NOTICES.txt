@@ -1,0 +1,16 @@
+Sherpa ONNX
+Copyright 2019-2023 Xiaomi Corporation and Sherpa ONNX contributors.
+Licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+Project: https://github.com/k2-fsa/sherpa-onnx
+
+Parakeet TDT 0.6B v3 pt-BR — sherpa-onnx (int8)
+Model conversion by joaorura. Licensed under CC-BY-4.0:
+https://creativecommons.org/licenses/by/4.0/
+Model: https://huggingface.co/joaorura/parakeet-tdt-0.6b-v3-ptBR-sherpa-onnx-int8
+The conversion derives from NVIDIA's parakeet-tdt-0.6b-v3 and the Brazilian Portuguese fine-tune by alexandreacff (parakeet-tdt-v3-ptBR-30s). The fine-tune used the TAGARELA podcast speech dataset by freds0.
+
+Zipformer small English — sherpa-onnx
+Model by the Sherpa ONNX / k2-fsa contributors. Licensed under Apache-2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+Model: https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-small-en-2023-06-26

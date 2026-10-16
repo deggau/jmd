@@ -107,8 +107,11 @@ public partial class MainWindow : Window
         _updatingVoiceRecognitionDebugToggle = false;
         _loadingJeyModelSettings = true;
         ClosedWakeWordGrammarToggle.IsChecked = _settings.JeyWakeWordClosedGrammarEnabled;
+        ClosedCommandGrammarToggle.IsChecked = _settings.JeyCommandClosedGrammarEnabled;
         WakeWordMinimumConfidenceSlider.Value = _settings.JeyWakeWordMinimumConfidencePercent;
         UpdateWakeWordMinimumConfidenceText(_settings.JeyWakeWordMinimumConfidencePercent);
+        CommandMinimumConfidenceSlider.Value = _settings.JeyCommandMinimumConfidencePercent;
+        UpdateCommandMinimumConfidenceText(_settings.JeyCommandMinimumConfidencePercent);
         SelectVoiceModel(PortugueseModelCombo, _settings.JeyPortugueseModel);
         SelectVoiceModel(EnglishModelCombo, _settings.JeyEnglishModel);
         _loadingJeyModelSettings = false;
@@ -1885,7 +1888,9 @@ public partial class MainWindow : Window
             _settings.JeyPortugueseModel,
             _settings.JeyEnglishModel,
             _settings.JeyWakeWordClosedGrammarEnabled,
-            _settings.JeyWakeWordMinimumConfidencePercent);
+            _settings.JeyWakeWordMinimumConfidencePercent,
+            _settings.JeyCommandClosedGrammarEnabled,
+            _settings.JeyCommandMinimumConfidencePercent);
         _voiceWakeWord = service;
         service.SetVoiceCommandPhrases(GetEnabledVoiceCommandPhrases());
         service.DebugEnabled = _settings.VoiceDebugEnabled;
@@ -1921,7 +1926,8 @@ public partial class MainWindow : Window
             var cut = debugInfo.CutMilliseconds is { } cutMilliseconds
                 ? $"; corte em {cutMilliseconds} ms"
                 : string.Empty;
-            var message = $"Trecho para transcrição ({debugInfo.AudioDurationMilliseconds} ms{cut})\n" +
+            var total = debugInfo.TotalElapsedMilliseconds is { } elapsed ? $" · total real: {elapsed} ms" : string.Empty;
+            var message = $"Trecho para transcrição ({debugInfo.AudioDurationMilliseconds} ms{cut}){total}\n" +
                 string.Join("\n", debugInfo.Attempts.Select(FormatTranscriptionAttempt));
             AddWakeRecognitionHistoryEntry(message, debugInfo.AudioCapturedAt);
         }));
@@ -2164,6 +2170,68 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ClosedCommandGrammarToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingJeyModelSettings || sender is not CheckBox toggle) return;
+        var enabled = toggle.IsChecked == true;
+        var previous = _settings.JeyCommandClosedGrammarEnabled;
+        if (enabled == previous) return;
+
+        _settings.JeyCommandClosedGrammarEnabled = enabled;
+        try
+        {
+            if (_settings.VoiceWakeWordEnabled) StartVoiceWakeWord();
+            _settingsStore.Save(_settings);
+            SetStatus(enabled
+                ? "Gramática de comandos ativada; Sherpa usa hotwords e Vosk usa vocabulário restrito."
+                : "Gramática de comandos desativada.", true);
+        }
+        catch (Exception exception)
+        {
+            _settings.JeyCommandClosedGrammarEnabled = previous;
+            _loadingJeyModelSettings = true;
+            toggle.IsChecked = previous;
+            _loadingJeyModelSettings = false;
+            if (_settings.VoiceWakeWordEnabled)
+            {
+                try { StartVoiceWakeWord(); }
+                catch { }
+            }
+            SetStatus($"Não foi possível aplicar a gramática fechada aos comandos: {exception.Message}", false);
+        }
+    }
+
+    private void CommandMinimumConfidenceSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        var value = (int)Math.Round(e.NewValue);
+        UpdateCommandMinimumConfidenceText(value);
+        if (_loadingJeyModelSettings || sender is not Slider) return;
+
+        var previous = _settings.JeyCommandMinimumConfidencePercent;
+        if (value == previous) return;
+        _settings.JeyCommandMinimumConfidencePercent = value;
+        if (_voiceWakeWord is not null) _voiceWakeWord.MinimumCommandConfidencePercent = value;
+        try
+        {
+            _settingsStore.Save(_settings);
+            SetStatus(value == 0
+                ? "Confiança mínima dos comandos desativada."
+                : $"Confiança mínima dos comandos ajustada para {value}%.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _settings.JeyCommandMinimumConfidencePercent = previous;
+            if (_voiceWakeWord is not null) _voiceWakeWord.MinimumCommandConfidencePercent = previous;
+            _loadingJeyModelSettings = true;
+            CommandMinimumConfidenceSlider.Value = previous;
+            _loadingJeyModelSettings = false;
+            SetStatus($"Não foi possível salvar a confiança mínima dos comandos: {exception.Message}", false);
+        }
+    }
+
+    private void UpdateCommandMinimumConfidenceText(int value)
+        => CommandMinimumConfidenceText.Text = value == 0 ? "Desativada" : $"{value}%";
+
     private void WakeWordMinimumConfidenceSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         var value = (int)Math.Round(e.NewValue);
@@ -2253,8 +2321,19 @@ public partial class MainWindow : Window
         DownloadGemmaButton.IsEnabled = _downloadingVoiceModel is null && !gemmaReady;
         DeleteGemmaButton.IsEnabled = _downloadingVoiceModel is null && gemmaFilesExist &&
             _settings.JeyPortugueseModel != "gemma4E2B" && _settings.JeyEnglishModel != "gemma4E2B";
+        UpdateSherpaModelStatus(VoiceModelOptions.SherpaParakeetPtBr, SherpaPtStatusText, DownloadSherpaPtButton, DeleteSherpaPtButton);
+        UpdateSherpaModelStatus(VoiceModelOptions.SherpaZipformerEn, SherpaEnStatusText, DownloadSherpaEnButton, DeleteSherpaEnButton);
         DownloadWhisperTinyButton.IsEnabled &= File.Exists(WhisperCppTranscriber.ExecutablePath);
         DownloadWhisperBaseButton.IsEnabled &= File.Exists(WhisperCppTranscriber.ExecutablePath);
+    }
+
+    private void UpdateSherpaModelStatus(string model, TextBlock status, Button download, Button delete)
+    {
+        var downloaded = SherpaParakeetTranscriber.IsModelDownloaded(model);
+        status.Text = downloaded ? "Modelo verificado e instalado." : SherpaParakeetTranscriber.HasAnyModelFiles(model) ? "Download parcial detectado." : "Ainda não baixado.";
+        download.IsEnabled = _downloadingVoiceModel is null && !downloaded;
+        delete.IsEnabled = _downloadingVoiceModel is null && SherpaParakeetTranscriber.HasAnyModelFiles(model) &&
+            _settings.JeyPortugueseModel != model && _settings.JeyEnglishModel != model;
     }
 
     private void UpdateWhisperModelStatus(string model, TextBlock status, Button download, Button delete)
@@ -2291,6 +2370,14 @@ public partial class MainWindow : Window
             SetVoiceModelStatus(requestedModel, !File.Exists(Gemma4Transcriber.ExecutablePath)
                 ? "O runtime experimental Gemma não está nesta instalação."
                 : "Baixe Gemma E2B e o codificador de áudio antes de selecioná-lo.");
+            _loadingJeyModelSettings = true;
+            SelectVoiceModel(combo, "vosk");
+            _loadingJeyModelSettings = false;
+            return;
+        }
+        if (requestedModel is VoiceModelOptions.SherpaParakeetPtBr or VoiceModelOptions.SherpaZipformerEn && !SherpaParakeetTranscriber.IsModelDownloaded(requestedModel))
+        {
+            SetVoiceModelStatus(requestedModel, $"Baixe {GetVoiceModelName(requestedModel)} para habilitar esta opção.");
             _loadingJeyModelSettings = true;
             SelectVoiceModel(combo, "vosk");
             _loadingJeyModelSettings = false;
@@ -2350,6 +2437,16 @@ public partial class MainWindow : Window
                     throw new IOException("São necessários pelo menos 3,5 GiB livres para baixar Gemma E2B.");
                 await Gemma4Transcriber.DownloadModelAsync(progress);
             }
+            else if (model is VoiceModelOptions.SherpaParakeetPtBr or VoiceModelOptions.SherpaZipformerEn)
+            {
+                var root = Path.GetPathRoot(SherpaParakeetTranscriber.ModelDirectoryPath(model));
+                var expectedBytes = model == VoiceModelOptions.SherpaParakeetPtBr
+                    ? SherpaModelDownloads.EstimatedDownloadBytes
+                    : SherpaModelDownloads.EnglishEstimatedDownloadBytes;
+                if (root is not null && new DriveInfo(root).AvailableFreeSpace < expectedBytes + 128L * 1024 * 1024)
+                    throw new IOException($"São necessários pelo menos {expectedBytes / (1024 * 1024)} MiB livres para baixar este modelo Sherpa.");
+                await SherpaParakeetTranscriber.DownloadModelAsync(model, progress);
+            }
             else
             {
                 await WhisperCppTranscriber.DownloadModelAsync(model, progress);
@@ -2390,6 +2487,11 @@ public partial class MainWindow : Window
                 if (File.Exists(Gemma4Transcriber.ModelPath)) File.Delete(Gemma4Transcriber.ModelPath);
                 if (File.Exists(Gemma4Transcriber.AudioProjectorPath)) File.Delete(Gemma4Transcriber.AudioProjectorPath);
             }
+            else if (model is VoiceModelOptions.SherpaParakeetPtBr or VoiceModelOptions.SherpaZipformerEn)
+            {
+                var directory = SherpaParakeetTranscriber.ModelDirectoryPath(model);
+                if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            }
             else if (File.Exists(WhisperCppTranscriber.ModelPath(model)))
                 File.Delete(WhisperCppTranscriber.ModelPath(model));
             UpdateVoiceModelStatuses();
@@ -2405,6 +2507,8 @@ public partial class MainWindow : Window
         "whisperTiny" => (WhisperTinyStatusText, WhisperTinyDownloadProgress),
         "whisperBase" => (WhisperBaseStatusText, WhisperBaseDownloadProgress),
         "gemma4E2B" => (GemmaStatusText, GemmaDownloadProgress),
+        "sherpaParakeetPtBr" => (SherpaPtStatusText, SherpaPtDownloadProgress),
+        "sherpaZipformerEn" => (SherpaEnStatusText, SherpaEnDownloadProgress),
         _ => throw new ArgumentOutOfRangeException(nameof(model), model, "Modelo não pode ser baixado.")
     };
 
@@ -2413,6 +2517,8 @@ public partial class MainWindow : Window
         if (model == "gemma4E2B") GemmaStatusText.Text = message;
         else if (model == "whisperTiny") WhisperTinyStatusText.Text = message;
         else if (model == "whisperBase") WhisperBaseStatusText.Text = message;
+        else if (model == VoiceModelOptions.SherpaParakeetPtBr) SherpaPtStatusText.Text = message;
+        else if (model == VoiceModelOptions.SherpaZipformerEn) SherpaEnStatusText.Text = message;
     }
 
     private static string GetVoiceModelName(string model) => model switch
@@ -2420,6 +2526,8 @@ public partial class MainWindow : Window
         "whisperTiny" => "Whisper Tiny",
         "whisperBase" => "Whisper Base",
         "gemma4E2B" => "Gemma E2B",
+        "sherpaParakeetPtBr" => "Sherpa Parakeet pt-BR",
+        "sherpaZipformerEn" => "Sherpa Zipformer inglês",
         _ => "Vosk"
     };
 

@@ -467,6 +467,7 @@
                   <ComboBoxItem Content="Whisper Tiny · rápido" Tag="whisperTiny" />
                   <ComboBoxItem Content="Whisper Base · equilibrado" Tag="whisperBase" />
                   <ComboBoxItem Content="Gemma E2B · experimental" Tag="gemma4E2B" />
+                  <ComboBoxItem Content="Sherpa Parakeet pt-BR · experimental" Tag="sherpaParakeetPtBr" />
                 </ComboBox>
               </Grid>
               <Grid Margin="0,0,0,8">
@@ -477,6 +478,7 @@
                   <ComboBoxItem Content="Whisper Tiny · rápido" Tag="whisperTiny" />
                   <ComboBoxItem Content="Whisper Base · equilibrado" Tag="whisperBase" />
                   <ComboBoxItem Content="Gemma E2B · experimental" Tag="gemma4E2B" />
+                  <ComboBoxItem Content="Sherpa Zipformer · inglês" Tag="sherpaZipformerEn" />
                 </ComboBox>
               </Grid>
               <Grid>
@@ -492,6 +494,23 @@
                         ToolTip="Restringe somente o Vosk que escuta continuamente a palavra jay. Não altera os modelos de transcrição." />
               <TextBlock Text="Quando ativada, limita o vocabulário do recognizer de ativação a “jay”. Pode reduzir confusões, mas também causar ativações falsas; teste com a depuração ligada."
                          Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,5,2,8" />
+              <CheckBox x:Name="ClosedCommandGrammarToggle" Content="Gramática fechada para interpretar comandos (experimental)"
+                        Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,10,0,0"
+                        Checked="ClosedCommandGrammarToggle_Changed" Unchecked="ClosedCommandGrammarToggle_Changed"
+                        ToolTip="Limita o Vosk usado após a ativação às frases dos comandos ativos configurados no Jey." />
+              <TextBlock Text="No Vosk, restringe o reconhecimento às frases dos comandos ativos. Nos modelos Sherpa, usa essas frases como hotwords para favorecer os comandos. Whisper e Gemma continuam com vocabulário aberto. Sem frases configuradas, os mecanismos usam vocabulário aberto."
+                         Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,5,2,8" />
+              <DockPanel LastChildFill="False">
+                <TextBlock Text="Confiança mínima do comando" Foreground="#FFBFC3CC" FontSize="12" VerticalAlignment="Center" />
+                <TextBlock x:Name="CommandMinimumConfidenceText" DockPanel.Dock="Right" Text="Desativada"
+                           Foreground="White" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+              </DockPanel>
+              <Slider x:Name="CommandMinimumConfidenceSlider" Minimum="0" Maximum="100" Value="0"
+                      TickFrequency="5" IsSnapToTickEnabled="True" SmallChange="5" LargeChange="10"
+                      Margin="0,5,0,0" ValueChanged="CommandMinimumConfidenceSlider_Changed"
+                      ToolTip="Rejeita transcrições do Vosk abaixo deste limite quando a gramática fechada de comandos está ativa. Zero desativa o filtro." />
+              <TextBlock Text="Use o histórico de depuração para ajustar este valor. Ele filtra somente a confiança do Vosk nos comandos; zero aceita qualquer confiança disponível."
+                         Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,2,2,0" />
               <DockPanel LastChildFill="False">
                 <TextBlock Text="Confiança mínima do Vosk" Foreground="#FFBFC3CC" FontSize="12" VerticalAlignment="Center" />
                 <TextBlock x:Name="WakeWordMinimumConfidenceText" DockPanel.Dock="Right" Text="Desativada"
@@ -505,7 +524,7 @@
                          Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,2,2,0" />
             </StackPanel>
           </Border>
-          <TextBlock Text="Os quatro modelos usam os mesmos controles. Os arquivos ficam no computador e podem ser baixados ou removidos separadamente."
+          <TextBlock Text="Os modelos opcionais são baixados para este computador e podem ser removidos separadamente."
                      Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" Margin="2,8,2,12" />
           <UniformGrid Columns="2">
             <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,8,8">
@@ -561,12 +580,38 @@
                              Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}" BorderThickness="0" Visibility="Collapsed" />
                 <TextBlock x:Name="GemmaStatusText" Text="Ainda não baixado." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
               </StackPanel>
+          </Border>
+            <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,8,8">
+              <StackPanel>
+                <TextBlock Text="Sherpa Parakeet pt-BR" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Experimental · 640 MiB · transdutor ONNX local" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,10" />
+                <TextBlock Text="Ajustado para português brasileiro. A gramática usa hotwords para dar preferência aos comandos; não limita totalmente as frases reconhecidas." Foreground="#FFBFC3CC" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,9" />
+                <StackPanel Orientation="Horizontal">
+                  <Button x:Name="DownloadSherpaPtButton" Tag="sherpaParakeetPtBr" Content="Baixar Sherpa PT" Click="DownloadVoiceModel_Click" Padding="11,6" Background="{StaticResource AccentBrush}" Foreground="{StaticResource SurfaceBrush}" FontWeight="SemiBold" BorderThickness="0" />
+                  <Button x:Name="DeleteSherpaPtButton" Tag="sherpaParakeetPtBr" Content="Remover" Click="DeleteVoiceModel_Click" Style="{StaticResource JeySecondaryButtonStyle}" Margin="7,0,0,0" />
+                </StackPanel>
+                <ProgressBar x:Name="SherpaPtDownloadProgress" Minimum="0" Maximum="100" Height="4" Margin="0,9,0,0" Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}" BorderThickness="0" Visibility="Collapsed" />
+                <TextBlock x:Name="SherpaPtStatusText" Text="Ainda não baixado." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+              </StackPanel>
+            </Border>
+            <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,8">
+              <StackPanel>
+                <TextBlock Text="Sherpa Zipformer inglês" Foreground="White" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Experimental · cerca de 29 MiB · local" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,10" />
+                <TextBlock Text="Modelo oficial de inglês. A gramática fechada fornece hotwords para priorizar os comandos." Foreground="#FFBFC3CC" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,9" />
+                <StackPanel Orientation="Horizontal">
+                  <Button x:Name="DownloadSherpaEnButton" Tag="sherpaZipformerEn" Content="Baixar Sherpa EN" Click="DownloadVoiceModel_Click" Padding="11,6" Background="{StaticResource AccentBrush}" Foreground="{StaticResource SurfaceBrush}" FontWeight="SemiBold" BorderThickness="0" />
+                  <Button x:Name="DeleteSherpaEnButton" Tag="sherpaZipformerEn" Content="Remover" Click="DeleteVoiceModel_Click" Style="{StaticResource JeySecondaryButtonStyle}" Margin="7,0,0,0" />
+                </StackPanel>
+                <ProgressBar x:Name="SherpaEnDownloadProgress" Minimum="0" Maximum="100" Height="4" Margin="0,9,0,0" Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}" BorderThickness="0" Visibility="Collapsed" />
+                <TextBlock x:Name="SherpaEnStatusText" Text="Ainda não baixado." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+              </StackPanel>
             </Border>
           </UniformGrid>
           <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,8,0,0">
             <StackPanel>
               <TextBlock Text="Benchmark de transcrição" Foreground="White" FontSize="14" FontWeight="SemiBold" />
-              <TextBlock Text="Escolha o mesmo áudio para comparar os modelos instalados. O tempo inclui inicialização do mecanismo e transcrição." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,10" />
+              <TextBlock Text="Escolha o mesmo áudio para comparar os modelos instalados. Vosk já fica carregado no Jey; os outros tempos incluem a inicialização do mecanismo e a transcrição." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,10" />
               <DockPanel LastChildFill="False">
                 <Button x:Name="RecordBenchmarkAudioButton" Content="Gravar áudio · até 30 s" Click="RecordBenchmarkAudio_Click"
                         Padding="11,6" Background="#FF30343E" Foreground="White" BorderThickness="0" Margin="0,0,8,0" />
@@ -588,7 +633,7 @@
               <ProgressBar x:Name="BenchmarkProgress" IsIndeterminate="True" Height="4" Margin="0,10,0,0"
                            Background="#FF3A3E48" Foreground="{StaticResource AccentBrush}" BorderThickness="0" Visibility="Collapsed" />
               <TextBlock x:Name="BenchmarkResultText" Text="Grave até 30 segundos ou escolha um arquivo. Recomendação: até 1,5 s bom · até 4 s satisfatório · acima de 4 s lento (não indicado)."
-                         Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+                         Foreground="{StaticResource MutedBrush}" FontSize="11" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,8,0,0" />
             </StackPanel>
           </Border>
         </StackPanel>
