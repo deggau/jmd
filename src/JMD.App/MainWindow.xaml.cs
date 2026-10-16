@@ -2042,11 +2042,23 @@ public partial class MainWindow : Window
             }
             InsertDictationText(text);
         }));
+        service.DictationPartialRecognized += text => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!ReferenceEquals(_voiceWakeWord, service) || _dictationTargetWindow == IntPtr.Zero) return;
+            if (_keyboard.GetForegroundWindow() != _dictationTargetWindow || !_focusedText.HasEditableTextFocus())
+            {
+                service.StopDictation();
+                SetStatus("Transcrição encerrada porque o foco saiu do campo de texto.", false);
+                return;
+            }
+            ShowJeyProcessingNotification($"Transcrevendo…\n{text}");
+        }));
         service.DictationEnded += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (!ReferenceEquals(_voiceWakeWord, service)) return;
             _dictationTargetWindow = IntPtr.Zero;
             _dictationHasInsertedText = false;
+            CloseJeyProcessingNotification();
             SetStatus("Transcrição encerrada após 3 segundos sem fala.", true);
         }));
         service.WakeWordRecognized += (transcript, audioWav, debugInfo) => Dispatcher.BeginInvoke(new Action(() =>
@@ -2107,10 +2119,14 @@ public partial class MainWindow : Window
                 {
                     SetStatus($"Jey foi reconhecido, mas não foi possível salvar no histórico: {exception.Message}", false);
                 }
-                if (IsVisible)
+                if (voiceCommandId != "transcribe" && IsVisible)
                 {
                     if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
                     Activate();
+                }
+                else if (voiceCommandId == "transcribe")
+                {
+                    // Keep the foreground text editor active while dictation runs.
                 }
                 else if (wakeWordOnly)
                 {
@@ -2147,6 +2163,7 @@ public partial class MainWindow : Window
         var initialText = VoicePhrasePolicy.RemovePrefix(phrase, transcript);
         if (!string.IsNullOrWhiteSpace(initialText)) InsertDictationText(initialText);
         _voiceWakeWord.StartDictation();
+        ShowJeyProcessingNotification("Transcrevendo…");
         SetStatus("Transcrição do Jey iniciada. Uma pausa de 3 segundos encerra o ditado.", true);
     }
 

@@ -91,6 +91,7 @@ internal sealed class VoiceWakeWordService : IDisposable
     public event Action? WakeWordProcessingEnded;
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? FollowupSpeechCaptured;
     public event Action<string>? DictationTextRecognized;
+    public event Action<string>? DictationPartialRecognized;
     public event Action? DictationEnded;
     public event Action<Exception>? AudioProcessingFailed;
     public event Action<WakeWordRecognitionDebugInfo>? WakeWordRecognitionDebugUpdated;
@@ -358,6 +359,7 @@ internal sealed class VoiceWakeWordService : IDisposable
         {
             _dictationLastPartial = partial;
             _dictationSilenceDeadline = capturedAt + VoiceDictationPolicy.SilenceTimeout;
+            DictationPartialRecognized?.Invoke(partial);
         }
 
         if (VoiceDictationPolicy.HasReachedMaximumSegment(checked((int)_dictationAudio.Length)))
