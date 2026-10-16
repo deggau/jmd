@@ -75,6 +75,8 @@ internal sealed class VoiceWakeWordService : IDisposable
     public void SetVoiceCommandPhrases(string[] phrases)
         => Volatile.Write(ref _voiceCommandPhrases, phrases);
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? WakeWordRecognized;
+    public event Action? WakeWordProcessingStarted;
+    public event Action? WakeWordProcessingEnded;
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? FollowupSpeechCaptured;
     public event Action<Exception>? AudioProcessingFailed;
     public event Action<WakeWordRecognitionDebugInfo>? WakeWordRecognitionDebugUpdated;
@@ -186,6 +188,7 @@ internal sealed class VoiceWakeWordService : IDisposable
                     wakeWordConfidence, confidenceAccepted, minimumConfidence, _utteranceCapturedAt ?? capturedAt);
             _lastWakeWordDebugPartial = string.Empty;
             if (!confidenceAccepted) return;
+            WakeWordProcessingStarted?.Invoke();
             var pcmAudio = _utteranceAudio.ToArray();
             string? transcript;
             _lastDebugInfo = null;
@@ -415,6 +418,7 @@ internal sealed class VoiceWakeWordService : IDisposable
         _wakeWordAudioPrefix = null;
         _followupAudio.SetLength(0);
         _followupSegmentAudio.SetLength(0);
+        WakeWordProcessingEnded?.Invoke();
     }
 
     private byte[] CreateWaveAudio(byte[] pcmAudio)

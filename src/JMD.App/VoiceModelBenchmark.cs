@@ -21,8 +21,11 @@ internal sealed class VoiceModelBenchmark
     {
         var pcm = await Task.Run(() => ReadPcm16KhzMono(audioPath), cancellationToken);
         var models = new List<string> { "vosk" };
+        var issues = new List<string>();
         var sherpaModel = language == "pt" ? VoiceModelOptions.SherpaParakeetPtBr : VoiceModelOptions.SherpaZipformerEn;
         if (SherpaParakeetTranscriber.IsModelDownloaded(sherpaModel)) models.Add(sherpaModel);
+        else if (SherpaParakeetTranscriber.HasAnyModelFiles(sherpaModel))
+            issues.Add($"{GetModelName(sherpaModel)} não entrou: os arquivos baixados estão incompletos ou não passaram na verificação.");
         if (WhisperCppTranscriber.IsModelDownloaded("whisperTiny")) models.Add("whisperTiny");
         if (WhisperCppTranscriber.IsModelDownloaded("whisperBase")) models.Add("whisperBase");
         if (Gemma4Transcriber.IsModelDownloaded && File.Exists(Gemma4Transcriber.ExecutablePath)) models.Add("gemma4E2B");
@@ -41,12 +44,14 @@ internal sealed class VoiceModelBenchmark
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                progress?.Report($"{name}: falhou · {exception.Message}");
+                var issue = $"{name}: falhou · {exception.Message}";
+                issues.Add(issue);
+                progress?.Report(issue);
             }
         }
 
         if (results.Count == 0)
-            return "Nenhum modelo concluiu o benchmark.";
+            return AppendIssues("Nenhum modelo concluiu o benchmark.", issues);
 
         var fastest = results.MinBy(result => result.ElapsedMilliseconds)!;
         var recommendation = GetSpeedRecommendation(fastest.ElapsedMilliseconds);
@@ -66,8 +71,11 @@ internal sealed class VoiceModelBenchmark
                 output.AppendLine($"  «{TrimTranscript(result.Transcript)}»");
         }
         output.Append($"Mais rápido: {fastest.Name} · Mais lento: {slowest.Name} · Recomendação: {recommendation}.");
-        return output.ToString();
+        return AppendIssues(output.ToString(), issues);
     }
+
+    private static string AppendIssues(string report, IReadOnlyCollection<string> issues) =>
+        issues.Count == 0 ? report : $"{report}{Environment.NewLine}{Environment.NewLine}Modelos não comparados:{Environment.NewLine}{string.Join(Environment.NewLine, issues.Select(issue => $"• {issue}"))}";
 
     private static VoiceModelBenchmarkResult BenchmarkOne(byte[] pcm, string originalPath, string language, string modelId)
     {

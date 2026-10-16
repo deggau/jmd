@@ -9,28 +9,37 @@ public partial class JmdNotificationWindow : Window
 {
     private readonly DispatcherTimer _dismissTimer = new() { Interval = TimeSpan.FromSeconds(4) };
     private readonly long? _historyId;
+    private readonly bool _isProcessing;
 
     public event Action<long?>? HistoryRequested;
 
-    public JmdNotificationWindow(string message, long? historyId)
+    public JmdNotificationWindow(string message, long? historyId, bool isProcessing = false)
     {
         InitializeComponent();
         _historyId = historyId;
+        _isProcessing = isProcessing;
         NotificationMessage.Text = message;
+        ProcessingProgress.Visibility = isProcessing ? Visibility.Visible : Visibility.Collapsed;
 
         var workArea = SystemParameters.WorkArea;
         Left = workArea.Right - Width - 18;
         Top = workArea.Bottom - Height - 18;
 
         _dismissTimer.Tick += (_, _) => Close();
-        Loaded += (_, _) => _dismissTimer.Start();
+        Loaded += (_, _) => { if (!_isProcessing) _dismissTimer.Start(); };
         Closed += (_, _) => _dismissTimer.Stop();
+    }
+
+    public void UpdateProcessingMessage(string message)
+    {
+        if (_isProcessing) NotificationMessage.Text = message;
     }
 
     private void DismissButton_Click(object sender, RoutedEventArgs e) => Close();
 
     private void NotificationBorder_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
+        if (_isProcessing) return;
         if (IsInsideButton(e.OriginalSource as DependencyObject)) return;
         HistoryRequested?.Invoke(_historyId);
         Close();

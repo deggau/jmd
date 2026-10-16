@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     private readonly FocusedTextAutomation _focusedText;
     private readonly WindowsDisplayAwakeService _displayAwake = new();
     private VoiceWakeWordService? _voiceWakeWord;
+    private JmdNotificationWindow? _jeyProcessingNotification;
     private MediaPlayer? _historyAudioPlayer;
     private string? _historyAudioPlaybackPath;
     private bool _updatingVoiceWakeWordToggle;
@@ -1920,6 +1921,16 @@ public partial class MainWindow : Window
         service.SetVoiceCommandPhrases(GetEnabledVoiceCommandPhrases());
         service.DebugEnabled = _settings.VoiceDebugEnabled;
         service.WakeWordRecognitionDebugEnabled = _settings.VoiceWakeRecognitionDebugEnabled;
+        service.WakeWordProcessingStarted += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!ReferenceEquals(_voiceWakeWord, service) || !_settings.VoiceWakeWordEnabled) return;
+            ShowJeyProcessingNotification("Jey reconhecido · identificando o comando…");
+            ActivationSoundService.PlayJeyRecognized();
+        }));
+        service.WakeWordProcessingEnded += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (ReferenceEquals(_voiceWakeWord, service)) CloseJeyProcessingNotification();
+        }));
         service.WakeWordRecognitionDebugUpdated += debugInfo => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (!ReferenceEquals(_voiceWakeWord, service) || !_settings.VoiceWakeRecognitionDebugEnabled) return;
@@ -1969,10 +1980,16 @@ public partial class MainWindow : Window
                 var voiceCommandId = FindVoiceCommand(transcript);
                 if (voiceCommandId is not null && transcript is not null)
                 {
+                    CloseJeyProcessingNotification();
                     var commandName = GetVoiceCommandName(voiceCommandId);
                     HandleHotkeyAsync(voiceCommandId, new VoiceCommandInvocation(commandName, transcript, audioWav, debugInfo));
                     return;
                 }
+
+                if (wakeWordOnly)
+                    ShowJeyProcessingNotification("Jey reconhecido · aguardando o comando…");
+                else
+                    CloseJeyProcessingNotification();
 
                 try
                 {
@@ -2033,6 +2050,7 @@ public partial class MainWindow : Window
 
     private void StopVoiceWakeWord()
     {
+        CloseJeyProcessingNotification();
         _voiceWakeWord?.Dispose();
         _voiceWakeWord = null;
     }
@@ -3278,6 +3296,30 @@ public partial class MainWindow : Window
     {
         SetStatus(message, success);
         TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications, historyId);
+    }
+
+    private void ShowJeyProcessingNotification(string message)
+    {
+        if (_jeyProcessingNotification is { IsVisible: true } current)
+        {
+            current.UpdateProcessingMessage(message);
+            return;
+        }
+
+        var notification = new JmdNotificationWindow(message, historyId: null, isProcessing: true);
+        _jeyProcessingNotification = notification;
+        notification.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_jeyProcessingNotification, notification)) _jeyProcessingNotification = null;
+        };
+        notification.Show();
+    }
+
+    private void CloseJeyProcessingNotification()
+    {
+        var notification = _jeyProcessingNotification;
+        _jeyProcessingNotification = null;
+        if (notification?.IsVisible == true) notification.Close();
     }
 
     private static string WithConversionCounts(string message, int? identified, int? output)

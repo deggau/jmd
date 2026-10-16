@@ -12,14 +12,16 @@ internal static class ActivationSoundService
 
     public static void PlayVoiceCommandFound() => Play([587, 740, 988]);
 
-    private static void Play(int[] notes)
+    public static void PlayJeyRecognized() => Play([494], 0.10);
+
+    private static void Play(int[] notes, double volume = Volume)
     {
         RawSourceWaveStream? stream = null;
         WaveOutEvent? output = null;
         try
         {
             stream = new RawSourceWaveStream(new MemoryStream(CreatePcm(notes)), new WaveFormat(SampleRate, 16, 1));
-            output = new WaveOutEvent { Volume = (float)Volume };
+            output = new WaveOutEvent { Volume = (float)volume };
             output.PlaybackStopped += (_, _) =>
             {
                 output.Dispose();
