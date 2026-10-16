@@ -77,12 +77,13 @@ public partial class MainWindow : Window
     private bool _closingForExit;
     private bool _conversionRunning;
     private bool _updatingKeepAwakeToggle;
+    private bool _loadingAdvancedNotificationToggle;
     private bool _showingDialog;
     private bool _checkingUpdates;
     private string _wakeRecognitionPartial = string.Empty;
     private readonly ObservableCollection<WakeRecognitionHistoryRow> _wakeRecognitionHistory = [];
 
-    public event Action<string, string>? TrayNotification;
+    public event Action<string, string, bool>? TrayNotification;
 
     public MainWindow()
     {
@@ -125,6 +126,9 @@ public partial class MainWindow : Window
             "," => 1, "|" => 2, ";" => 3, "\r\n" or "\n" or "\r" => 4, _ => 0
         };
         SqlDelimiterPicker.SelectionChanged += SqlDelimiterPicker_SelectionChanged;
+        _loadingAdvancedNotificationToggle = true;
+        AdvancedNotificationsToggle.IsChecked = _settings.UseJmdNotifications;
+        _loadingAdvancedNotificationToggle = false;
         if (_settings.HistoryRetentionDays is < 1 or > 3650)
             _settings.HistoryRetentionDays = 15;
         try
@@ -1405,6 +1409,7 @@ public partial class MainWindow : Window
         HistoryPage.Visibility = Visibility.Collapsed;
         AboutPage.Visibility = Visibility.Collapsed;
         JeySettingsPage.Visibility = Visibility.Collapsed;
+        AdvancedSettingsPage.Visibility = Visibility.Collapsed;
         SettingsRetryButton.Visibility = Visibility.Collapsed;
         FooterHints.Visibility = Visibility.Visible;
         SearchBox.Visibility = Visibility.Visible;
@@ -1776,6 +1781,7 @@ public partial class MainWindow : Window
         HistoryPage.Visibility = Visibility.Collapsed;
         AboutPage.Visibility = Visibility.Collapsed;
         JeySettingsPage.Visibility = Visibility.Collapsed;
+        AdvancedSettingsPage.Visibility = Visibility.Collapsed;
         SettingsRetryButton.Visibility = Visibility.Visible;
         FooterHints.Visibility = Visibility.Collapsed;
         SearchBox.Visibility = Visibility.Collapsed;
@@ -1804,6 +1810,7 @@ public partial class MainWindow : Window
         SqlInTestPage.Visibility = Visibility.Visible;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
+        AdvancedSettingsPage.Visibility = Visibility.Collapsed;
         SettingsRetryButton.Visibility = Visibility.Visible;
         FooterHints.Visibility = Visibility.Collapsed;
         ManageButton.Content = "Voltar aos atalhos";
@@ -2033,6 +2040,7 @@ public partial class MainWindow : Window
         HistoryPage.Visibility = Visibility.Visible;
         AboutPage.Visibility = Visibility.Collapsed;
         JeySettingsPage.Visibility = Visibility.Collapsed;
+        AdvancedSettingsPage.Visibility = Visibility.Collapsed;
         SettingsRetryButton.Visibility = Visibility.Collapsed;
         FooterHints.Visibility = Visibility.Visible;
         SearchBox.Visibility = Visibility.Collapsed;
@@ -2775,6 +2783,43 @@ public partial class MainWindow : Window
         ShowAboutPage();
     }
 
+    private void AdvancedSettingsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsTabs.Visibility = Visibility.Visible;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        SqlInTestPage.Visibility = Visibility.Collapsed;
+        SnippetManagementPage.Visibility = Visibility.Collapsed;
+        HistoryPage.Visibility = Visibility.Collapsed;
+        AdvancedSettingsPage.Visibility = Visibility.Visible;
+        CommandsList.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Collapsed;
+        FooterHints.Visibility = Visibility.Visible;
+        SearchBox.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos comandos";
+        PageTitle.Text = "Configurações avançadas";
+        PageSubtitle.Text = "Ajustes de comportamento do JMD";
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private void AdvancedNotificationsToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingAdvancedNotificationToggle) return;
+        _settings.UseJmdNotifications = AdvancedNotificationsToggle.IsChecked == true;
+        try
+        {
+            _settingsStore.Save(_settings);
+            SetStatus(_settings.UseJmdNotifications
+                ? "Notificações próprias do JMD ativadas."
+                : "Notificações padrão do Windows ativadas.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"Não foi possível salvar a preferência de notificação: {exception.Message}", false);
+        }
+    }
+
     private void ShowAboutPage()
     {
         _navigation.ShowAbout();
@@ -3194,7 +3239,7 @@ public partial class MainWindow : Window
     private void Notify(string title, string message, bool success)
     {
         SetStatus(message, success);
-        TrayNotification?.Invoke(title, message);
+        TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications);
     }
 
     private static string WithConversionCounts(string message, int? identified, int? output)

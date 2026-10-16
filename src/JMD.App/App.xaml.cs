@@ -54,8 +54,16 @@ public partial class App : System.Windows.Application
             ContextMenuStrip = menu,
             Visible = true
         };
-        _mainWindow.TrayNotification += (title, message) =>
+        _mainWindow.TrayNotification += (title, message, useJmdNotification) =>
         {
+            if (useJmdNotification)
+            {
+                var window = _mainWindow;
+                if (window is not null)
+                    window.Dispatcher.BeginInvoke(() => new JmdNotificationWindow(title, message).Show());
+                return;
+            }
+
             _trayIcon.BalloonTipTitle = title;
             _trayIcon.BalloonTipText = message;
             _trayIcon.ShowBalloonTip(2200);
@@ -134,6 +142,7 @@ internal sealed class UserSettings
     public string? PreferredDelimiter { get; set; }
     public int HistoryRetentionDays { get; set; } = 15;
     public bool KeepAwakeEnabled { get; set; }
+    public bool UseJmdNotifications { get; set; }
     public bool VoiceWakeWordEnabled { get; set; } = true;
     public bool VoiceDebugEnabled { get; set; }
     public bool VoiceWakeRecognitionDebugEnabled { get; set; }

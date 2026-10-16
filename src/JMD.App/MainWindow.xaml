@@ -35,6 +35,7 @@
             <Button.ContextMenu>
               <ContextMenu>
                 <MenuItem Header="Jey" Click="JeyMenuItem_Click" />
+                <MenuItem Header="Configurações avançadas" Click="AdvancedSettingsMenuItem_Click" />
                 <MenuItem Header="Sobre" Click="AboutMenuItem_Click" />
               </ContextMenu>
             </Button.ContextMenu>
@@ -386,6 +387,20 @@
               </ScrollViewer>
             </Grid>
           </Grid>
+        </Grid>
+        <Grid x:Name="AdvancedSettingsPage" Visibility="Collapsed" Background="#FF17191F">
+          <StackPanel Margin="14">
+            <TextBlock Text="Notificações" Foreground="White" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
+            <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14">
+              <StackPanel>
+                <CheckBox x:Name="AdvancedNotificationsToggle" Content="Usar notificações próprias do JMD"
+                          Foreground="White" FontSize="13" FontWeight="SemiBold"
+                          Checked="AdvancedNotificationsToggle_Changed" Unchecked="AdvancedNotificationsToggle_Changed" />
+                <TextBlock Text="Substitui o balão e o som padrão do Windows por uma janela discreta do JMD. O som de ativação do JMD continua funcionando."
+                           Foreground="#FF969BA7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
         </Grid>
       </Grid>
       <Grid x:Name="AboutPage" Grid.Row="2" Visibility="Collapsed" Background="#FF17191F">
