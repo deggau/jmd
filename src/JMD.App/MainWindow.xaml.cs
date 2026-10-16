@@ -717,9 +717,10 @@ public partial class MainWindow : Window
 
     private static bool IsValidCustomTarget(string target)
     {
-        if (!target.Contains("://", StringComparison.Ordinal)) return true;
-        return Uri.TryCreate(target, UriKind.Absolute, out var uri) &&
-               uri.Scheme is "http" or "https";
+        if (target.Contains("://", StringComparison.Ordinal))
+            return Uri.TryCreate(target, UriKind.Absolute, out var uri) &&
+                   (uri.Scheme is "http" or "https") && !target.Any(char.IsWhiteSpace);
+        return CustomCommandLine.TryParse(target, out _, out _);
     }
 
     private bool HasShortcutConflict(string shortcutText, string? exceptId)
@@ -800,7 +801,7 @@ public partial class MainWindow : Window
             var oldRow = _commands.FirstOrDefault(command => command.Id == entry.Id);
             if (oldRow is not null) _commands.Remove(oldRow);
             _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target,
-                string.IsNullOrWhiteSpace(entry.Shortcut) ? "Comando personalizado" : entry.Shortcut)
+                string.IsNullOrWhiteSpace(entry.Shortcut) ? "Sem atalho" : entry.Shortcut)
             {
                 IsCustomShortcut = true,
                 VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
@@ -1105,7 +1106,7 @@ public partial class MainWindow : Window
         if (_settings.Shortcuts.TryGetValue(id, out var value)) return value;
         var customShortcut = _settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id);
         if (customShortcut is not null)
-            return string.IsNullOrWhiteSpace(customShortcut.Shortcut) ? "Comando personalizado" : customShortcut.Shortcut;
+            return string.IsNullOrWhiteSpace(customShortcut.Shortcut) ? "Sem atalho" : customShortcut.Shortcut;
         try { return ShortcutDefaults.ForCommand(id); }
         catch (ArgumentOutOfRangeException) { return string.Empty; }
     }
@@ -1332,7 +1333,14 @@ public partial class MainWindow : Window
                     RecordActionHistory($"Focar {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
                 return;
             }
-            Process.Start(new ProcessStartInfo { FileName = shortcut.Target, UseShellExecute = true });
+            if (!CustomCommandLine.TryParse(shortcut.Target, out var executable, out var arguments))
+            {
+                SetStatus($"Não foi possível abrir {shortcut.Name}: comando inválido.", false);
+                return;
+            }
+            var startInfo = new ProcessStartInfo { FileName = executable, UseShellExecute = true };
+            foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+            Process.Start(startInfo);
             if (voiceCommand is not null)
                 RecordActionHistory($"Abrir {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
         }
@@ -1345,7 +1353,9 @@ public partial class MainWindow : Window
     private static bool TryFocusExistingTarget(string target)
     {
         var isUrl = Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
-        var processName = Path.GetFileNameWithoutExtension(target);
+        var processName = string.Empty;
+        if (!isUrl && CustomCommandLine.TryParse(target, out var executable, out _))
+            processName = Path.GetFileNameWithoutExtension(executable);
         var processNames = isUrl
             ? new HashSet<string>(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"], StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>([processName], StringComparer.OrdinalIgnoreCase);
@@ -3560,6 +3570,56 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", EntryPoint = "SetForegroundWindow")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindowNative(IntPtr window);
+}
+
+internal static class CustomCommandLine
+{
+    public static bool TryParse(string commandLine, out string executable, out IReadOnlyList<string> arguments)
+    {
+        var parts = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var quoted = false;
+        var started = false;
+
+        foreach (var character in commandLine)
+        {
+            if (character == '"')
+            {
+                quoted = !quoted;
+                started = true;
+            }
+            else if (char.IsWhiteSpace(character) && !quoted)
+            {
+                if (!started) continue;
+                parts.Add(current.ToString());
+                current.Clear();
+                started = false;
+            }
+            else
+            {
+                current.Append(character);
+                started = true;
+            }
+        }
+
+        if (quoted)
+        {
+            executable = string.Empty;
+            arguments = [];
+            return false;
+        }
+        if (started) parts.Add(current.ToString());
+        if (parts.Count == 0 || string.IsNullOrWhiteSpace(parts[0]))
+        {
+            executable = string.Empty;
+            arguments = [];
+            return false;
+        }
+
+        executable = parts[0];
+        arguments = parts.Skip(1).ToArray();
+        return true;
+    }
 }
 
 internal sealed class CommandRow(string id, string name, string description, string shortcut) : INotifyPropertyChanged

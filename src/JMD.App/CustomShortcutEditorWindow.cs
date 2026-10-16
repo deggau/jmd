@@ -77,8 +77,8 @@ internal sealed class CustomShortcutEditorWindow : Window
         DockPanel.SetDock(heading, Dock.Top);
         layout.Children.Add(heading);
         AddField(form, "Nome do comando", _name, "Nome exibido na lista de comandos");
-        AddField(form, "Programa ou URL", _target, "Ex.: notepad.exe ou https://example.com");
-        form.Children.Add(new TextBlock { Text = "Exemplos: notepad.exe · https://example.com · C:\\Apps\\MinhaApp.exe", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 4, 2, 0) });
+        AddField(form, "Programa, parâmetros ou URL", _target, "Use aspas em caminhos e argumentos com espaços");
+        form.Children.Add(new TextBlock { Text = "Exemplos: notepad.exe · explorer.exe \"C:\\Atalhos\\\" · \"C:\\Apps\\Minha App.exe\" /abrir · https://example.com", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 4, 2, 0) });
         form.Children.Add(_focusIfAlreadyOpen);
         AddField(form, "Atalho de teclado (opcional)", _shortcut, "Clique no campo e pressione Ctrl, Alt, Shift ou Win + outra tecla");
         AddField(form, "Frases do Jey (opcional)", _phrases, "Uma frase por linha");
