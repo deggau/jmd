@@ -81,9 +81,10 @@ public partial class MainWindow : Window
     private bool _showingDialog;
     private bool _checkingUpdates;
     private string _wakeRecognitionPartial = string.Empty;
+    private long? _historyTargetId;
     private readonly ObservableCollection<WakeRecognitionHistoryRow> _wakeRecognitionHistory = [];
 
-    public event Action<string, string, bool>? TrayNotification;
+    public event Action<string, string, bool, long?>? TrayNotification;
 
     public MainWindow()
     {
@@ -955,8 +956,8 @@ public partial class MainWindow : Window
         try
         {
             _settingsStore.Save(_settings);
-            RecordActionHistory($"Salvar texto: {snippet.Title}", string.Empty, snippet.Text, voiceCommand);
-            Notify("JMD", $"Texto salvo: {snippet.Title}", true);
+            var historyId = RecordActionHistory($"Salvar texto: {snippet.Title}", string.Empty, snippet.Text, voiceCommand);
+            Notify("JMD", $"Texto salvo: {snippet.Title}", true, historyId);
             if (_navigation.CurrentPage == AppPage.ShortcutSettings) BuildSnippetManagementPage();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -999,20 +1000,21 @@ public partial class MainWindow : Window
             Notify("JMD", "Não foi possível colar. O texto está disponível no clipboard.", false);
             return;
         }
-        RecordActionHistory($"Inserir texto salvo: {snippet.Title}", snippet.Title, snippet.Text, voiceCommand);
-        Notify("JMD", $"Texto inserido: {snippet.Title}", true);
+        var historyId = RecordActionHistory($"Inserir texto salvo: {snippet.Title}", snippet.Title, snippet.Text, voiceCommand);
+        Notify("JMD", $"Texto inserido: {snippet.Title}", true, historyId);
     }
 
-    private void RecordActionHistory(string commandName, string beforeValue, string afterValue, VoiceCommandInvocation? voiceCommand = null)
+    private long? RecordActionHistory(string commandName, string beforeValue, string afterValue, VoiceCommandInvocation? voiceCommand = null)
     {
-        if (_historyStore is null) return;
+        if (_historyStore is null) return null;
         try
         {
-            RecordCommandHistory(commandName, beforeValue, afterValue, voiceCommand);
+            return RecordCommandHistory(commandName, beforeValue, afterValue, voiceCommand);
         }
         catch (Exception exception)
         {
             SetStatus($"Ação concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+            return null;
         }
     }
 
@@ -1232,8 +1234,8 @@ public partial class MainWindow : Window
             return;
         }
         _draftStack.Push(draft);
-        RecordActionHistory(DraftStack.SavedCommandName, string.Empty, draft, voiceCommand);
-        Notify("JMD", $"Rascunho salvo ({_draftStack.Count} na pilha).", true);
+        var historyId = RecordActionHistory(DraftStack.SavedCommandName, string.Empty, draft, voiceCommand);
+        Notify("JMD", $"Rascunho salvo ({_draftStack.Count} na pilha).", true, historyId);
     }
 
     private void OpenCustomShortcut(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null)
@@ -1318,13 +1320,13 @@ public partial class MainWindow : Window
             Notify("JMD", "Não foi possível inserir o rascunho no campo ativo.", false);
             return;
         }
-        RecordActionHistory(DraftStack.RestoredCommandName, string.Empty, draft, voiceCommand);
+        var historyId = RecordActionHistory(DraftStack.RestoredCommandName, string.Empty, draft, voiceCommand);
         if (!string.IsNullOrWhiteSpace(currentText))
         {
             _draftStack.Push(currentText);
             RecordActionHistory(DraftStack.SavedCommandName, string.Empty, currentText);
         }
-        Notify("JMD", $"Rascunho restaurado ({_draftStack.Count} na pilha).", true);
+        Notify("JMD", $"Rascunho restaurado ({_draftStack.Count} na pilha).", true, historyId);
     }
 
     private async Task<string?> CaptureFocusedSelectionAsync()
@@ -1454,7 +1456,10 @@ public partial class MainWindow : Window
             if (result.Success)
             {
                 _conversionGuard.Remember(input, result.Value!);
-                RecordHistory("Montar SQL IN", input, result, voiceCommand);
+                var historyId = RecordHistory("Montar SQL IN", input, result, voiceCommand);
+                var successMessage = WithConversionCounts("Lista formatada para SQL IN e pronta para colar.", result.InputItemCount, result.OutputItemCount);
+                Notify("JMD", successMessage, true, historyId);
+                return;
             }
             var message = result.Success
                 ? WithConversionCounts("Lista formatada para SQL IN e pronta para colar.", result.InputItemCount, result.OutputItemCount)
@@ -1474,58 +1479,68 @@ public partial class MainWindow : Window
             var result = await _selectionTransformer.ExecuteAsync(FormatTextForExecution);
             if (result.Success && result.BeforeValue is not null && result.AfterValue is not null)
                 _conversionGuard.Remember(result.BeforeValue, result.AfterValue);
-            RecordSelectionHistory(result, voiceCommand);
+            var historyId = result.Success ? RecordSelectionHistory(result, voiceCommand) : null;
             var message = result.Success
                 ? WithConversionCounts(result.Message, result.InputItemCount, result.OutputItemCount)
                 : result.Message;
-            Notify("JMD", message, result.Success);
+            Notify("JMD", message, result.Success, historyId);
         }
         catch (Exception exception) { Notify("JMD", $"Falha ao substituir a seleção: {exception.Message}", false); }
         finally { _conversionRunning = false; }
     }
 
-    private void RecordHistory(string commandName, string beforeValue, TransformationResult result, VoiceCommandInvocation? voiceCommand = null)
+    private long? RecordHistory(string commandName, string beforeValue, TransformationResult result, VoiceCommandInvocation? voiceCommand = null)
     {
-        if (!result.Success || result.Value is null || _historyStore is null) return;
+        if (!result.Success || result.Value is null || _historyStore is null) return null;
         try
         {
             if (voiceCommand is not null)
-                RecordCommandHistory(commandName, beforeValue, result.Value, voiceCommand);
+                return RecordCommandHistory(commandName, beforeValue, result.Value, voiceCommand);
             else if (_historyRecorder?.RecordIfSuccessful(commandName, beforeValue, result, GetConversionSource()) == true)
+            {
                 RefreshHistory();
+                return _historyStore.GetLatest()?.Id;
+            }
+            return null;
         }
         catch (Exception exception)
         {
             SetStatus($"Conversão concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+            return null;
         }
     }
 
-    private void RecordSelectionHistory(SelectionTransformResult result, VoiceCommandInvocation? voiceCommand = null)
+    private long? RecordSelectionHistory(SelectionTransformResult result, VoiceCommandInvocation? voiceCommand = null)
     {
-        if (!result.Success || result.BeforeValue is null || result.AfterValue is null || _historyStore is null) return;
+        if (!result.Success || result.BeforeValue is null || result.AfterValue is null || _historyStore is null) return null;
         try
         {
             var commandName = result.UsedClipboardFallback
                 ? "Formatar clipboard (atalho de seleção)"
                 : "Substituir seleção (SQL IN)";
             if (voiceCommand is not null)
-                RecordCommandHistory(commandName, result.BeforeValue, result.AfterValue, voiceCommand);
+                return RecordCommandHistory(commandName, result.BeforeValue, result.AfterValue, voiceCommand);
             else if (_historyRecorder?.RecordIfSuccessful(commandName, result, GetConversionSource()) == true)
+            {
                 RefreshHistory();
+                return _historyStore.GetLatest()?.Id;
+            }
+            return null;
         }
         catch (Exception exception)
         {
             SetStatus($"Conversão concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+            return null;
         }
     }
 
-    private void RecordCommandHistory(string commandName, string beforeValue, string afterValue, VoiceCommandInvocation? voiceCommand = null)
+    private long? RecordCommandHistory(string commandName, string beforeValue, string afterValue, VoiceCommandInvocation? voiceCommand = null)
     {
-        if (_historyStore is null) return;
+        if (_historyStore is null) return null;
         var historyCommandName = voiceCommand is null
             ? commandName
             : $"Ativação por voz (Jey) - {voiceCommand.CommandName}";
-        _historyStore.Add(historyCommandName, beforeValue, afterValue,
+        var historyId = _historyStore.Add(historyCommandName, beforeValue, afterValue,
             source: GetConversionSource(), isVoiceTriggered: voiceCommand is not null,
             voiceTranscript: voiceCommand?.Transcript, voiceAudioWav: voiceCommand?.AudioWav,
             voiceDurationMilliseconds: voiceCommand?.DebugInfo?.DurationMilliseconds,
@@ -1534,6 +1549,7 @@ public partial class MainWindow : Window
             portugueseTranscriptionTimeMilliseconds: voiceCommand?.DebugInfo?.PortugueseTranscriptionTimeMilliseconds,
             englishTranscriptionTimeMilliseconds: voiceCommand?.DebugInfo?.EnglishTranscriptionTimeMilliseconds);
         RefreshHistory();
+        return historyId;
     }
 
     private void RefreshHistory()
@@ -1561,7 +1577,8 @@ public partial class MainWindow : Window
                     new HistoryAudioPlaybackRequest(entry.Id, false),
                     new HistoryAudioPlaybackRequest(entry.Id, true),
                     entry.CommandName.EndsWith(DraftStack.SavedCommandName, StringComparison.Ordinal),
-                    entry.CommandName.EndsWith(DraftStack.RestoredCommandName, StringComparison.Ordinal)))
+                    entry.CommandName.EndsWith(DraftStack.RestoredCommandName, StringComparison.Ordinal),
+                    entry.Id == _historyTargetId))
                 .ToList();
             HistoryItemsControl.ItemsSource = entries;
             HistoryScrollViewer.ScrollToTop();
@@ -1704,7 +1721,8 @@ public partial class MainWindow : Window
         HistoryAudioPlaybackRequest OriginalAudioRequest,
         HistoryAudioPlaybackRequest TranscriptionAudioRequest,
         bool IsDraftSaved,
-        bool IsDraftRestored);
+        bool IsDraftRestored,
+        bool IsNotificationTarget);
 
     private static string FormatSourceDisplay(string? applicationName, string? windowTitle)
     {
@@ -2029,8 +2047,13 @@ public partial class MainWindow : Window
     private void HistoryButton_Click(object sender, RoutedEventArgs e)
         => ShowHistory();
 
-    public void ShowHistory()
+    public void ShowHistory() => ShowHistory(null);
+
+    public void ShowHistory(long? historyId)
     {
+        _historyTargetId = historyId;
+        if (historyId is not null && HistorySearchBox is not null)
+            HistorySearchBox.Text = string.Empty;
         _navigation.ShowHistory();
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
@@ -2048,6 +2071,16 @@ public partial class MainWindow : Window
         PageTitle.Text = "Histórico";
         PageSubtitle.Text = "Consulte as conversões recentes";
         RefreshHistory();
+        if (historyId is not null)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                HistoryItemsControl.UpdateLayout();
+                var entry = HistoryItemsControl.Items.OfType<HistoryDisplayEntry>().FirstOrDefault(item => item.Id == historyId);
+                if (entry is not null)
+                    (HistoryItemsControl.ItemContainerGenerator.ContainerFromItem(entry) as FrameworkElement)?.BringIntoView();
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
         Show();
         WindowState = WindowState.Normal;
         Activate();
@@ -3184,11 +3217,11 @@ public partial class MainWindow : Window
                 var verb = layout == StructuredDataLayout.Pretty ? "Formatar" : "Compactar";
                 var commandName = $"{verb} {formatName}";
                 if (result.UsedClipboardFallback) commandName += " (clipboard)";
-                RecordSelectionHistory(commandName, result, voiceCommand);
+                var historyId = RecordSelectionHistory(commandName, result, voiceCommand);
                 var action = layout == StructuredDataLayout.Pretty ? "formatado" : "compactado";
                 var subject = detectedFormat == StructuredDataFormat.Json ? "JSON" : "XML";
                 var target = result.UsedClipboardFallback ? "O texto do clipboard foi" : "O texto selecionado foi";
-                Notify("JMD", $"{target} {subject} {action}.", true);
+                Notify("JMD", $"{target} {subject} {action}.", true, historyId);
             }
             else
             {
@@ -3199,19 +3232,24 @@ public partial class MainWindow : Window
         finally { _conversionRunning = false; }
     }
 
-    private void RecordSelectionHistory(string commandName, SelectionTransformResult result, VoiceCommandInvocation? voiceCommand = null)
+    private long? RecordSelectionHistory(string commandName, SelectionTransformResult result, VoiceCommandInvocation? voiceCommand = null)
     {
-        if (!result.Success || result.BeforeValue is null || result.AfterValue is null || _historyStore is null) return;
+        if (!result.Success || result.BeforeValue is null || result.AfterValue is null || _historyStore is null) return null;
         try
         {
             if (voiceCommand is not null)
-                RecordCommandHistory(commandName, result.BeforeValue, result.AfterValue, voiceCommand);
+                return RecordCommandHistory(commandName, result.BeforeValue, result.AfterValue, voiceCommand);
             else if (_historyRecorder?.RecordIfSuccessful(commandName, result, GetConversionSource()) == true)
+            {
                 RefreshHistory();
+                return _historyStore.GetLatest()?.Id;
+            }
+            return null;
         }
         catch (Exception exception)
         {
             SetStatus($"Transformação concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+            return null;
         }
     }
 
@@ -3236,10 +3274,10 @@ public partial class MainWindow : Window
         Hide();
     }
 
-    private void Notify(string title, string message, bool success)
+    private void Notify(string title, string message, bool success, long? historyId = null)
     {
         SetStatus(message, success);
-        TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications);
+        TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications, historyId);
     }
 
     private static string WithConversionCounts(string message, int? identified, int? output)

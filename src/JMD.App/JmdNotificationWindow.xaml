@@ -5,7 +5,7 @@
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
         ShowActivated="False" Topmost="True" WindowStartupLocation="Manual">
   <Border Background="#FF22252D" BorderBrush="#FFB4F36A" BorderThickness="1"
-          CornerRadius="12" Padding="15">
+          CornerRadius="12" Padding="15" MouseLeftButtonUp="NotificationBorder_MouseLeftButtonUp">
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto" />
@@ -15,8 +15,11 @@
         <Button Content="×" Click="DismissButton_Click" DockPanel.Dock="Right"
                 Width="24" Height="24" Padding="0" FontSize="16" Margin="8,0,0,0"
                 Background="Transparent" Foreground="#FF969BA7" BorderThickness="0" />
-        <TextBlock x:Name="NotificationTitle" Foreground="White" FontSize="13" FontWeight="SemiBold"
-                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+        <Border Width="34" Height="34" CornerRadius="10" Background="#FFB4F36A"
+                HorizontalAlignment="Left" VerticalAlignment="Center">
+          <TextBlock Text="J" Foreground="#FF17191F" FontSize="20" FontWeight="Bold"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
       </DockPanel>
       <TextBlock x:Name="NotificationMessage" Grid.Row="1" Foreground="#FFD8DBE2" FontSize="12"
                  TextWrapping="Wrap" Margin="0,7,0,0" MaxHeight="56" />

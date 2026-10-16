@@ -35,7 +35,7 @@
             <Button.ContextMenu>
               <ContextMenu>
                 <MenuItem Header="Jey" Click="JeyMenuItem_Click" />
-                <MenuItem Header="Configurações avançadas" Click="AdvancedSettingsMenuItem_Click" />
+                <MenuItem Header="Apenas Avançado" Click="AdvancedSettingsMenuItem_Click" />
                 <MenuItem Header="Sobre" Click="AboutMenuItem_Click" />
               </ContextMenu>
             </Button.ContextMenu>
@@ -211,8 +211,19 @@
                 <ItemsControl x:Name="HistoryItemsControl">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1"
-                              CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                      <Border BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                        <Border.Style>
+                          <Style TargetType="Border">
+                            <Setter Property="Background" Value="#FF22252D" />
+                            <Setter Property="BorderBrush" Value="#FF31343D" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding IsNotificationTarget}" Value="True">
+                                <Setter Property="Background" Value="#FF303B2C" />
+                                <Setter Property="BorderBrush" Value="#FFB4F36A" />
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </Border.Style>
                         <StackPanel>
                           <DockPanel Margin="0,0,0,8">
                             <TextBlock Text="&#xE720;" FontFamily="Segoe MDL2 Assets" Foreground="#FFB4F36A"
@@ -394,7 +405,7 @@
             <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14">
               <StackPanel>
                 <CheckBox x:Name="AdvancedNotificationsToggle" Content="Usar notificações próprias do JMD"
-                          Foreground="White" FontSize="13" FontWeight="SemiBold"
+                          Style="{StaticResource CompactToggleCheckBoxStyle}" FontSize="13" FontWeight="SemiBold"
                           Checked="AdvancedNotificationsToggle_Changed" Unchecked="AdvancedNotificationsToggle_Changed" />
                 <TextBlock Text="Substitui o balão e o som padrão do Windows por uma janela discreta do JMD. O som de ativação do JMD continua funcionando."
                            Foreground="#FF969BA7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />

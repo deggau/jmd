@@ -92,9 +92,9 @@ internal sealed class SnippetPickerWindow : Window
 
     private void RefreshResults()
     {
-        var query = _search.Text.Trim();
+        var queryTerms = _search.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         _results.Items.Clear();
-        foreach (var snippet in _snippets.Where(item => query.Length == 0 || item.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+        foreach (var snippet in _snippets.Where(item => MatchesQuery(item.Title, queryTerms)))
         {
             var label = new TextBlock
             {
@@ -107,6 +107,9 @@ internal sealed class SnippetPickerWindow : Window
         }
         if (_results.Items.Count > 0) _results.SelectedIndex = 0;
     }
+
+    private static bool MatchesQuery(string title, IReadOnlyList<string> queryTerms) =>
+        queryTerms.Count == 0 || queryTerms.All(term => title.Contains(term, StringComparison.CurrentCultureIgnoreCase));
 
     private void Picker_PreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -123,9 +126,25 @@ internal sealed class SnippetPickerWindow : Window
         }
         else if (e.Key == Key.Down && _search.IsKeyboardFocusWithin && _results.Items.Count > 0)
         {
-            if (_results.SelectedIndex < 0) _results.SelectedIndex = 0;
-            _results.Focus();
-            Keyboard.Focus(_results);
+            _results.SelectedIndex = 0;
+            var firstItem = _results.ItemContainerGenerator.ContainerFromIndex(0) as ListBoxItem;
+            if (firstItem is not null)
+            {
+                firstItem.Focus();
+                Keyboard.Focus(firstItem);
+            }
+            else
+            {
+                _results.Focus();
+                Keyboard.Focus(_results);
+            }
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Up && _results.IsKeyboardFocusWithin && _results.SelectedIndex <= 0)
+        {
+            _search.Focus();
+            Keyboard.Focus(_search);
+            _search.CaretIndex = _search.Text.Length;
             e.Handled = true;
         }
     }

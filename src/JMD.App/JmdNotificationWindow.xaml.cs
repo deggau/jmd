@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace JMD.App;
@@ -6,11 +8,14 @@ namespace JMD.App;
 public partial class JmdNotificationWindow : Window
 {
     private readonly DispatcherTimer _dismissTimer = new() { Interval = TimeSpan.FromSeconds(4) };
+    private readonly long? _historyId;
 
-    public JmdNotificationWindow(string title, string message)
+    public event Action<long?>? HistoryRequested;
+
+    public JmdNotificationWindow(string message, long? historyId)
     {
         InitializeComponent();
-        NotificationTitle.Text = title;
+        _historyId = historyId;
         NotificationMessage.Text = message;
 
         var workArea = SystemParameters.WorkArea;
@@ -23,4 +28,21 @@ public partial class JmdNotificationWindow : Window
     }
 
     private void DismissButton_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void NotificationBorder_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (IsInsideButton(e.OriginalSource as DependencyObject)) return;
+        HistoryRequested?.Invoke(_historyId);
+        Close();
+    }
+
+    private static bool IsInsideButton(DependencyObject? element)
+    {
+        while (element is not null)
+        {
+            if (element is System.Windows.Controls.Primitives.ButtonBase) return true;
+            element = VisualTreeHelper.GetParent(element);
+        }
+        return false;
+    }
 }

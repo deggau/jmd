@@ -54,22 +54,30 @@ public partial class App : System.Windows.Application
             ContextMenuStrip = menu,
             Visible = true
         };
-        _mainWindow.TrayNotification += (title, message, useJmdNotification) =>
+        long? activeBalloonHistoryId = null;
+        _mainWindow.TrayNotification += (title, message, useJmdNotification, historyId) =>
         {
             if (useJmdNotification)
             {
                 var window = _mainWindow;
                 if (window is not null)
-                    window.Dispatcher.BeginInvoke(() => new JmdNotificationWindow(title, message).Show());
+                    window.Dispatcher.BeginInvoke(() =>
+                    {
+                        var notification = new JmdNotificationWindow(message, historyId);
+                        notification.HistoryRequested += selectedHistoryId => window.Dispatcher.BeginInvoke(
+                            new Action(() => window.ShowHistory(selectedHistoryId)));
+                        notification.Show();
+                    });
                 return;
             }
 
+            activeBalloonHistoryId = historyId;
             _trayIcon.BalloonTipTitle = title;
             _trayIcon.BalloonTipText = message;
             _trayIcon.ShowBalloonTip(2200);
         };
         _trayIcon.BalloonTipClicked += (_, _) =>
-            _mainWindow.Dispatcher.BeginInvoke(_mainWindow.ShowHistory);
+            _mainWindow.Dispatcher.BeginInvoke(new Action(() => _mainWindow.ShowHistory(activeBalloonHistoryId)));
         StartUpdateSignalListener();
         if (updateOnStartup)
             _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.UpdateFromCommandLineAsync()));
