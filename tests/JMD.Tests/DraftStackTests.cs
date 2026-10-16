@@ -113,6 +113,6 @@ public sealed class DraftStackTests
         Assert.Equal(0, stack.Count);
     }
 
-    private static ConversionHistoryEntry Entry(long id, DateTimeOffset at, string command, string text)
-        => new(id, at, command, string.Empty, text);
+    private static DraftHistoryEntry Entry(long id, DateTimeOffset at, string command, string text)
+        => new(id, at, command, text);
 }

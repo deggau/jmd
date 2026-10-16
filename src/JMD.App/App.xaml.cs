@@ -42,6 +42,11 @@ public partial class App : System.Windows.Application
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Abrir JMD", null, (_, _) => _mainWindow.ShowPalette());
+        var jeyToggleItem = new Forms.ToolStripMenuItem("Ativar Jey");
+        jeyToggleItem.Click += (_, _) => _mainWindow.ToggleVoiceWakeWordFromTray();
+        menu.Items.Add(jeyToggleItem);
+        menu.Opening += (_, _) =>
+            jeyToggleItem.Text = _mainWindow.IsVoiceWakeWordEnabled ? "Desativar Jey" : "Ativar Jey";
         menu.Items.Add("Sair", null, (_, _) =>
         {
             _mainWindow.PrepareForExit();

@@ -35,7 +35,7 @@
             <Button.ContextMenu>
               <ContextMenu>
                 <MenuItem Header="Jey" Click="JeyMenuItem_Click" />
-                <MenuItem Header="Apenas Avançado" Click="AdvancedSettingsMenuItem_Click" />
+                <MenuItem Header="Avançado" Click="AdvancedSettingsMenuItem_Click" />
                 <MenuItem Header="Sobre" Click="AboutMenuItem_Click" />
               </ContextMenu>
             </Button.ContextMenu>
@@ -205,9 +205,13 @@
                       Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" />
             </DockPanel>
             <Grid Grid.Row="3">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
               <TextBlock x:Name="HistoryEmptyText" Text="Nenhuma conversão encontrada." Foreground="#FF969BA7"
-                         HorizontalAlignment="Center" VerticalAlignment="Center" />
-              <ScrollViewer x:Name="HistoryScrollViewer" VerticalScrollBarVisibility="Auto">
+                         HorizontalAlignment="Center" VerticalAlignment="Center" Grid.RowSpan="2" />
+              <ScrollViewer x:Name="HistoryScrollViewer" Grid.Row="0" VerticalScrollBarVisibility="Auto">
                 <ItemsControl x:Name="HistoryItemsControl">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
@@ -396,6 +400,14 @@
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
               </ScrollViewer>
+              <DockPanel Grid.Row="1" Margin="0,8,0,0" LastChildFill="False" HorizontalAlignment="Center">
+                <Button x:Name="PreviousHistoryPageButton" Content="‹ Anterior" Click="PreviousHistoryPage_Click"
+                        Padding="10,5" Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                <TextBlock x:Name="HistoryPageText" Text="Página 0 de 0" Foreground="#FFBFC3CC"
+                           VerticalAlignment="Center" Margin="12,0" />
+                <Button x:Name="NextHistoryPageButton" Content="Próxima ›" Click="NextHistoryPage_Click"
+                        Padding="10,5" Background="#FF30343E" Foreground="White" BorderThickness="0" />
+              </DockPanel>
             </Grid>
           </Grid>
         </Grid>

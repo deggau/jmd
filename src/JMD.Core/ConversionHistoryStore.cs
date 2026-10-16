@@ -19,6 +19,8 @@ public sealed record ConversionHistoryEntry(
     int? PortugueseTranscriptionTimeMilliseconds = null,
     int? EnglishTranscriptionTimeMilliseconds = null);
 
+public sealed record DraftHistoryEntry(long HistoryId, DateTimeOffset OccurredAt, string CommandName, string Text);
+
 public sealed record ConversionSource(string? ApplicationName, string? WindowTitle);
 
 public sealed class ConversionHistoryStore
@@ -57,6 +59,41 @@ public sealed class ConversionHistoryStore
         EnsureColumn(connection, "VoiceTranscriptionAudioWav", "BLOB NULL");
         EnsureColumn(connection, "PortugueseTranscriptionTimeMilliseconds", "INTEGER NULL");
         EnsureColumn(connection, "EnglishTranscriptionTimeMilliseconds", "INTEGER NULL");
+        using var draftSchema = connection.CreateCommand();
+        draftSchema.CommandText = """
+            CREATE TABLE IF NOT EXISTS DraftHistory (
+                HistoryId INTEGER PRIMARY KEY,
+                OccurredAtUtc TEXT NOT NULL,
+                CommandName TEXT NOT NULL,
+                DraftText TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS JmdMigrations (Version INTEGER PRIMARY KEY);
+            CREATE TRIGGER IF NOT EXISTS TR_ConversionHistory_DraftHistory_Insert
+            AFTER INSERT ON ConversionHistory
+            WHEN NEW.CommandName LIKE '%Salvar rascunho' OR NEW.CommandName LIKE '%Restaurar rascunho'
+            BEGIN
+                INSERT OR IGNORE INTO DraftHistory (HistoryId, OccurredAtUtc, CommandName, DraftText)
+                VALUES (NEW.Id, NEW.OccurredAtUtc, NEW.CommandName, NEW.AfterValue);
+            END;
+            """;
+        draftSchema.ExecuteNonQuery();
+        using var migrationCheck = connection.CreateCommand();
+        migrationCheck.CommandText = "SELECT 1 FROM JmdMigrations WHERE Version = 1;";
+        if (migrationCheck.ExecuteScalar() is null)
+        {
+            using var migration = connection.BeginTransaction();
+            using var migrateDrafts = connection.CreateCommand();
+            migrateDrafts.Transaction = migration;
+            migrateDrafts.CommandText = """
+                INSERT OR IGNORE INTO DraftHistory (HistoryId, OccurredAtUtc, CommandName, DraftText)
+                SELECT Id, OccurredAtUtc, CommandName, AfterValue
+                FROM ConversionHistory
+                WHERE CommandName LIKE '%Salvar rascunho' OR CommandName LIKE '%Restaurar rascunho';
+                INSERT OR IGNORE INTO JmdMigrations (Version) VALUES (1);
+                """;
+            migrateDrafts.ExecuteNonQuery();
+            migration.Commit();
+        }
     }
 
     public long Add(
@@ -144,6 +181,84 @@ public sealed class ConversionHistoryStore
         return entries;
     }
 
+    public IReadOnlyList<ConversionHistoryEntry> SearchPage(string query, int pageSize, int pageIndex)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
+        ArgumentOutOfRangeException.ThrowIfNegative(pageIndex);
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds
+            FROM ConversionHistory
+            WHERE $query = '' OR CommandName LIKE $pattern ESCAPE '\'
+                OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
+                OR VoiceTranscript LIKE $pattern ESCAPE '\'
+                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\'
+            ORDER BY OccurredAtUtc DESC, Id DESC
+            LIMIT $limit OFFSET $offset;
+            """;
+        AddSearchParameters(command, query);
+        command.Parameters.AddWithValue("$limit", pageSize);
+        command.Parameters.AddWithValue("$offset", checked(pageIndex * pageSize));
+        var entries = new List<ConversionHistoryEntry>(pageSize);
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) entries.Add(ReadEntry(reader));
+        return entries;
+    }
+
+    public int CountSearch(string query)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM ConversionHistory
+            WHERE $query = '' OR CommandName LIKE $pattern ESCAPE '\'
+                OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
+                OR VoiceTranscript LIKE $pattern ESCAPE '\'
+                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\';
+            """;
+        AddSearchParameters(command, query);
+        return Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public int GetPageIndexContaining(long historyId, string query, int pageSize)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
+        using var connection = OpenConnection();
+        using var targetCommand = connection.CreateCommand();
+        targetCommand.CommandText = "SELECT OccurredAtUtc FROM ConversionHistory WHERE Id = $id;";
+        targetCommand.Parameters.AddWithValue("$id", historyId);
+        var targetTime = targetCommand.ExecuteScalar() as string;
+        if (targetTime is null) return 0;
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM ConversionHistory
+            WHERE ($query = '' OR CommandName LIKE $pattern ESCAPE '\'
+                OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
+                OR VoiceTranscript LIKE $pattern ESCAPE '\'
+                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\')
+                AND (OccurredAtUtc > $targetTime OR (OccurredAtUtc = $targetTime AND Id > $id));
+            """;
+        AddSearchParameters(command, query);
+        command.Parameters.AddWithValue("$targetTime", targetTime);
+        command.Parameters.AddWithValue("$id", historyId);
+        var precedingEntries = Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        return precedingEntries / pageSize;
+    }
+
+    public IReadOnlyList<DraftHistoryEntry> GetDraftHistory()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT HistoryId, OccurredAtUtc, CommandName, DraftText FROM DraftHistory ORDER BY OccurredAtUtc, HistoryId;";
+        var entries = new List<DraftHistoryEntry>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            entries.Add(new DraftHistoryEntry(reader.GetInt64(0), DateTimeOffset.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture), reader.GetString(2), reader.GetString(3)));
+        return entries;
+    }
+
     public ConversionHistoryEntry? GetLatest()
     {
         using var connection = OpenConnection();
@@ -220,9 +335,18 @@ public sealed class ConversionHistoryStore
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM ConversionHistory WHERE OccurredAtUtc < $cutoff;";
+        command.CommandText = "DELETE FROM DraftHistory WHERE OccurredAtUtc < $cutoff; DELETE FROM ConversionHistory WHERE OccurredAtUtc < $cutoff;";
         command.Parameters.AddWithValue("$cutoff", _utcNow().ToUniversalTime().AddDays(-retentionDays).ToString("O"));
         command.ExecuteNonQuery();
+    }
+
+    private static void AddSearchParameters(SqliteCommand command, string query)
+    {
+        command.Parameters.AddWithValue("$query", query);
+        var escapedQuery = query.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal);
+        command.Parameters.AddWithValue("$pattern", $"%{escapedQuery}%");
     }
 
     private SqliteConnection OpenConnection()

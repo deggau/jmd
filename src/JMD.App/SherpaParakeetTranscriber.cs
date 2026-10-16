@@ -147,7 +147,16 @@ internal sealed class SherpaParakeetTranscriber : IDisposable
 
     public void Dispose()
     {
-        lock (_sync) _recognizer?.Dispose();
-        if (_hotwordsPath is not null) { try { File.Delete(_hotwordsPath); } catch (IOException) { } }
+        lock (_sync)
+        {
+            _recognizer?.Dispose();
+            _recognizer = null;
+            _activeModelId = null;
+            if (_hotwordsPath is not null)
+            {
+                try { File.Delete(_hotwordsPath); } catch (IOException) { }
+                _hotwordsPath = null;
+            }
+        }
     }
 }

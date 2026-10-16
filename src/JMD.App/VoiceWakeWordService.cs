@@ -26,7 +26,8 @@ internal sealed class VoiceWakeWordService : IDisposable
     private readonly Model _model;
     private readonly VoskRecognizer _recognizer;
     private readonly VoskRecognizer? _followupRecognizer;
-    private readonly Model _portugueseModel;
+    private VoskRecognizer? _dictationRecognizer;
+    private Model? _portugueseModel;
     private readonly string _portugueseModelId;
     private readonly string _englishModelId;
     private readonly bool _closedWakeWordGrammarEnabled;
@@ -38,9 +39,11 @@ internal sealed class VoiceWakeWordService : IDisposable
     private readonly WaveInEvent _microphone;
     private readonly AudioFrameQueue _audioFrames = new(capacity: 1800);
     private readonly Task _audioProcessor;
+    private readonly System.Threading.Timer _transcriptionModelIdleTimer;
     private readonly MemoryStream _utteranceAudio = new();
     private readonly MemoryStream _followupAudio = new();
     private readonly MemoryStream _followupSegmentAudio = new();
+    private readonly MemoryStream _dictationAudio = new();
     private long _recognizerAudioBytesFed;
     private double _utteranceStartSeconds;
     private DateTimeOffset? _utteranceCapturedAt;
@@ -48,9 +51,16 @@ internal sealed class VoiceWakeWordService : IDisposable
     private DateTimeOffset? _followupSegmentCapturedAt;
     private DateTimeOffset _followupDeadline;
     private bool _awaitingPostWakeSpeech;
+    private volatile bool _dictationRequested;
+    private volatile bool _dictationStopRequested;
+    private bool _dictationActive;
+    private DateTimeOffset _dictationSilenceDeadline;
+    private string _dictationLastPartial = string.Empty;
     private bool _started;
     private int _disposeRequested;
     private int _resourcesDisposed;
+    private int _transcriptionModelsUnloadRequested;
+    private long _lastTranscriptionModelUseUtcTicks;
 
     private volatile bool _debugEnabled;
     private volatile bool _wakeWordDebugEnabled;
@@ -74,10 +84,14 @@ internal sealed class VoiceWakeWordService : IDisposable
     }
     public void SetVoiceCommandPhrases(string[] phrases)
         => Volatile.Write(ref _voiceCommandPhrases, phrases);
+    public void StartDictation() { _dictationStopRequested = false; _dictationRequested = true; }
+    public void StopDictation() { _dictationRequested = false; _dictationStopRequested = true; }
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? WakeWordRecognized;
     public event Action? WakeWordProcessingStarted;
     public event Action? WakeWordProcessingEnded;
     public event Action<string?, byte[], VoiceCaptureDebugInfo?>? FollowupSpeechCaptured;
+    public event Action<string>? DictationTextRecognized;
+    public event Action? DictationEnded;
     public event Action<Exception>? AudioProcessingFailed;
     public event Action<WakeWordRecognitionDebugInfo>? WakeWordRecognitionDebugUpdated;
     public event Action<VoiceTranscriptionDebugInfo>? WakeWordTranscriptionDebugUpdated;
@@ -115,7 +129,8 @@ internal sealed class VoiceWakeWordService : IDisposable
             _recognizer = new VoskRecognizer(_model, 16000.0f);
         }
         _recognizer.SetWords(true);
-        _portugueseModel = new Model(portugueseModelPath);
+        _transcriptionModelIdleTimer = new System.Threading.Timer(_ => OnTranscriptionModelIdleTimer(),
+            null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         _microphone = new WaveInEvent
         {
             WaveFormat = new WaveFormat(16000, 16, 1),
@@ -129,6 +144,8 @@ internal sealed class VoiceWakeWordService : IDisposable
     {
         _microphone.StartRecording();
         _started = true;
+        MarkTranscriptionModelUse();
+        _transcriptionModelIdleTimer.Change(VoiceModelIdlePolicy.UnloadTimeout, Timeout.InfiniteTimeSpan);
     }
 
     private void OnDataAvailable(object? sender, WaveInEventArgs eventArgs)
@@ -157,6 +174,14 @@ internal sealed class VoiceWakeWordService : IDisposable
     private void ProcessAudioFrame(byte[] buffer, DateTimeOffset capturedAt)
     {
         _recognizerAudioBytesFed += buffer.Length;
+        if (Interlocked.Exchange(ref _transcriptionModelsUnloadRequested, 0) != 0 &&
+            VoiceModelIdlePolicy.ShouldUnload(GetLastTranscriptionModelUse(), DateTimeOffset.UtcNow))
+            UnloadTranscriptionModels();
+        if (_dictationRequested || _dictationStopRequested || _dictationActive)
+        {
+            CaptureDictation(buffer, capturedAt);
+            return;
+        }
         if (_awaitingPostWakeSpeech)
         {
             CapturePostWakeSpeech(buffer, capturedAt);
@@ -178,9 +203,11 @@ internal sealed class VoiceWakeWordService : IDisposable
         try
         {
             var wakeWordResult = _recognizer.Result();
-            var wakeWordCandidateDetected = IsWakeWordResult(wakeWordResult);
+            var wakeWordToken = GetWakeWordToken(wakeWordResult);
+            var wakeWordCandidateDetected = wakeWordToken is not null;
             var wakeWordConfidence = GetFirstWordConfidence(wakeWordResult);
-            var minimumConfidence = MinimumWakeWordConfidencePercent;
+            var minimumConfidence = VoiceWakeWordPolicy.GetMinimumConfidencePercent(
+                wakeWordToken, MinimumWakeWordConfidencePercent);
             var confidenceAccepted = wakeWordCandidateDetected &&
                 (minimumConfidence == 0 || wakeWordConfidence is { } confidence && confidence * 100 >= minimumConfidence);
             if (_wakeWordDebugEnabled)
@@ -211,7 +238,7 @@ internal sealed class VoiceWakeWordService : IDisposable
 
     private string TranscribePortugueseAudio(byte[] audio, int length, string? grammar)
     {
-        return TranscribeAudio(_portugueseModel, audio, length, grammar);
+        return TranscribeAudio(GetPortugueseModel(), audio, length, grammar);
     }
 
     private string TranscribeEnglishAudio(byte[] audio, int length, string? grammar)
@@ -230,8 +257,10 @@ internal sealed class VoiceWakeWordService : IDisposable
     }
 
     private string? TranscribeBestAudio(
-        byte[] audio, int length, int? cutMilliseconds = null, DateTimeOffset? audioCapturedAt = null)
+        byte[] audio, int length, int? cutMilliseconds = null, DateTimeOffset? audioCapturedAt = null,
+        bool removeActivationWord = true)
     {
+        MarkTranscriptionModelUse();
         var measure = _debugEnabled || _wakeWordDebugEnabled;
         var totalTimer = measure ? System.Diagnostics.Stopwatch.StartNew() : null;
         VoiceTranscriptionCandidate? portuguese = null;
@@ -280,7 +309,127 @@ internal sealed class VoiceWakeWordService : IDisposable
             }
             catch { }
         }
-        return best is null ? null : RemoveActivationWord(best.Text);
+        return best is null ? null : removeActivationWord ? RemoveActivationWord(best.Text) : best.Text;
+    }
+
+    private void CaptureDictation(byte[] buffer, DateTimeOffset capturedAt)
+    {
+        MarkTranscriptionModelUse();
+        if (_dictationStopRequested)
+        {
+            _dictationStopRequested = false;
+            _dictationRequested = false;
+            _dictationActive = false;
+            _dictationAudio.SetLength(0);
+            _dictationRecognizer?.Reset();
+            DictationEnded?.Invoke();
+            return;
+        }
+        if (!_dictationActive)
+        {
+            _dictationActive = true;
+            _dictationRequested = false;
+            _dictationSilenceDeadline = capturedAt + VoiceDictationPolicy.SilenceTimeout;
+            _dictationAudio.SetLength(0);
+            GetDictationRecognizer().Reset();
+            _dictationLastPartial = string.Empty;
+        }
+        _dictationAudio.Write(buffer, 0, buffer.Length);
+        var dictationRecognizer = GetDictationRecognizer();
+        if (dictationRecognizer.AcceptWaveform(buffer, buffer.Length))
+        {
+            var result = dictationRecognizer.Result();
+            var candidate = CreateTranscriptionCandidate(result)?.Text;
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                var text = TranscribeBestAudio(_dictationAudio.GetBuffer(), checked((int)_dictationAudio.Length),
+                    audioCapturedAt: capturedAt, removeActivationWord: false);
+                if (!string.IsNullOrWhiteSpace(text)) DictationTextRecognized?.Invoke(text.Trim());
+                _dictationSilenceDeadline = capturedAt + VoiceDictationPolicy.SilenceTimeout;
+            }
+            _dictationAudio.SetLength(0);
+            dictationRecognizer.Reset();
+            _dictationLastPartial = string.Empty;
+            return;
+        }
+
+        var partial = CreateTranscriptionCandidate(dictationRecognizer.PartialResult())?.Text ?? string.Empty;
+        if (partial.Length > 0 && !string.Equals(partial, _dictationLastPartial, StringComparison.Ordinal))
+        {
+            _dictationLastPartial = partial;
+            _dictationSilenceDeadline = capturedAt + VoiceDictationPolicy.SilenceTimeout;
+        }
+
+        if (VoiceDictationPolicy.HasReachedMaximumSegment(checked((int)_dictationAudio.Length)))
+        {
+            var text = TranscribeBestAudio(_dictationAudio.GetBuffer(), checked((int)_dictationAudio.Length),
+                audioCapturedAt: capturedAt, removeActivationWord: false);
+            if (!string.IsNullOrWhiteSpace(text)) DictationTextRecognized?.Invoke(text.Trim());
+            _dictationAudio.SetLength(0);
+            dictationRecognizer.Reset();
+            _dictationSilenceDeadline = capturedAt + VoiceDictationPolicy.SilenceTimeout;
+            _dictationLastPartial = string.Empty;
+            return;
+        }
+
+        if (capturedAt < _dictationSilenceDeadline) return;
+        if (_dictationAudio.Length > 0)
+        {
+            var finalText = TranscribeBestAudio(_dictationAudio.GetBuffer(), checked((int)_dictationAudio.Length),
+                audioCapturedAt: capturedAt, removeActivationWord: false);
+            if (!string.IsNullOrWhiteSpace(finalText)) DictationTextRecognized?.Invoke(finalText.Trim());
+        }
+        _dictationAudio.SetLength(0);
+        dictationRecognizer.Reset();
+        _dictationLastPartial = string.Empty;
+        _dictationActive = false;
+        _utteranceStartSeconds = _recognizerAudioBytesFed / 32000d;
+        DictationEnded?.Invoke();
+    }
+
+    private Model GetPortugueseModel()
+    {
+        _portugueseModel ??= new Model(Path.Combine(AppContext.BaseDirectory, "vosk-model-small-pt-0.3"));
+        return _portugueseModel;
+    }
+
+    private VoskRecognizer GetDictationRecognizer()
+        => _dictationRecognizer ??= new VoskRecognizer(GetPortugueseModel(), 16000.0f);
+
+    private void MarkTranscriptionModelUse()
+    {
+        Interlocked.Exchange(ref _lastTranscriptionModelUseUtcTicks, DateTimeOffset.UtcNow.Ticks);
+    }
+
+    private DateTimeOffset GetLastTranscriptionModelUse()
+        => new(Interlocked.Read(ref _lastTranscriptionModelUseUtcTicks), TimeSpan.Zero);
+
+    private void OnTranscriptionModelIdleTimer()
+    {
+        if (Volatile.Read(ref _disposeRequested) != 0) return;
+        var lastUsedAt = GetLastTranscriptionModelUse();
+        var now = DateTimeOffset.UtcNow;
+        var elapsed = now - lastUsedAt;
+        if (VoiceModelIdlePolicy.ShouldUnload(lastUsedAt, now))
+        {
+            Interlocked.Exchange(ref _transcriptionModelsUnloadRequested, 1);
+            return;
+        }
+
+        var remaining = VoiceModelIdlePolicy.UnloadTimeout - elapsed;
+        if (remaining < TimeSpan.FromMilliseconds(1)) remaining = TimeSpan.FromMilliseconds(1);
+        try { _transcriptionModelIdleTimer.Change(remaining, Timeout.InfiniteTimeSpan); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void UnloadTranscriptionModels()
+    {
+        _dictationRecognizer?.Dispose();
+        _dictationRecognizer = null;
+        _portugueseModel?.Dispose();
+        _portugueseModel = null;
+        _sherpaPortuguese.Dispose();
+        _sherpaEnglish.Dispose();
     }
 
     private VoiceTranscriptionCandidate? TranscribeConfiguredModel(byte[] audio, int length, string language, string modelId)
@@ -520,7 +669,8 @@ internal sealed class VoiceWakeWordService : IDisposable
     {
         var transcript = RemoveActivationWord(candidate.Text);
         var phrases = Volatile.Read(ref _voiceCommandPhrases);
-        return phrases.Any(phrase => VoicePhrasePolicy.Matches(phrase, transcript));
+        return phrases.Any(phrase => VoicePhrasePolicy.Matches(phrase, transcript) ||
+            VoicePhrasePolicy.StartsWith(phrase, transcript));
     }
 
     private static string RemoveActivationWord(string transcript)
@@ -570,22 +720,19 @@ internal sealed class VoiceWakeWordService : IDisposable
         => word.Equals("jay", StringComparison.OrdinalIgnoreCase) ||
            word.Equals("jey", StringComparison.OrdinalIgnoreCase) ||
            word.Equals("jei", StringComparison.OrdinalIgnoreCase) ||
+           word.Equals("j", StringComparison.OrdinalIgnoreCase) ||
            word.Equals("já", StringComparison.OrdinalIgnoreCase) ||
            word.Equals("ja", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsWakeWordResult(string resultJson)
+    private static string? GetWakeWordToken(string resultJson)
     {
         using var result = JsonDocument.Parse(resultJson);
         var firstWord = result.RootElement.TryGetProperty("text", out var text)
             ? text.GetString()?.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()
             : null;
-        return firstWord is not null && IsWakeWordToken(firstWord);
+        if (!VoiceWakeWordPolicy.IsWakeWordToken(firstWord)) return null;
+        return VoicePhrasePolicy.Normalize(firstWord);
     }
-
-    private static bool IsWakeWordToken(string word)
-        => word.Equals("jay", StringComparison.OrdinalIgnoreCase) ||
-           word.Equals("jey", StringComparison.OrdinalIgnoreCase) ||
-           word.Equals("jei", StringComparison.OrdinalIgnoreCase);
 
     private static double? GetFirstWordConfidence(string resultJson)
     {
@@ -608,7 +755,7 @@ internal sealed class VoiceWakeWordService : IDisposable
             return false;
         var firstWord = words[0];
         return firstWord.TryGetProperty("word", out var word) &&
-            word.GetString() is { } recognizedWord && IsWakeWordToken(recognizedWord) &&
+            word.GetString() is { } recognizedWord && VoiceWakeWordPolicy.IsWakeWordToken(recognizedWord) &&
             firstWord.TryGetProperty("end", out var endElement) &&
             (end = endElement.GetDouble()) >= 0;
     }
@@ -638,14 +785,17 @@ internal sealed class VoiceWakeWordService : IDisposable
     private void DisposeAudioResources()
     {
         if (Interlocked.Exchange(ref _resourcesDisposed, 1) != 0) return;
+        _transcriptionModelIdleTimer.Dispose();
         _followupRecognizer?.Dispose();
+        _dictationRecognizer?.Dispose();
         _recognizer.Dispose();
-        _portugueseModel.Dispose();
+        _portugueseModel?.Dispose();
         _model.Dispose();
         _sherpaPortuguese.Dispose();
         _sherpaEnglish.Dispose();
         _utteranceAudio.Dispose();
         _followupAudio.Dispose();
         _followupSegmentAudio.Dispose();
+        _dictationAudio.Dispose();
     }
 }

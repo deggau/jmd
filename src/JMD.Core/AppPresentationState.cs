@@ -114,6 +114,63 @@ public static class VoicePhrasePolicy
             .ToHashSet(StringComparer.Ordinal);
         return phrases.Select(Normalize).Any(value => value.Length > 0 && existing.Contains(value));
     }
+
+    public static bool StartsWith(string? configuredPhrase, string? recognizedPhrase)
+    {
+        var configured = Normalize(configuredPhrase);
+        var recognized = Normalize(recognizedPhrase);
+        return configured.Length > 0 && recognized.Length > configured.Length &&
+            recognized.StartsWith(configured, StringComparison.OrdinalIgnoreCase) &&
+            recognized[configured.Length] == ' ';
+    }
+
+    public static string RemovePrefix(string? configuredPhrase, string? recognizedPhrase)
+    {
+        if (!StartsWith(configuredPhrase, recognizedPhrase)) return string.Empty;
+        var configured = Normalize(configuredPhrase);
+        var recognized = Normalize(recognizedPhrase);
+        return recognized[(configured.Length + 1)..].Trim();
+    }
+}
+
+public static class VoiceDictationPolicy
+{
+    public static readonly TimeSpan SilenceTimeout = TimeSpan.FromSeconds(3);
+    public static readonly TimeSpan MaximumSegmentDuration = TimeSpan.FromSeconds(25);
+    public const int PcmBytesPerSecond = 32_000;
+
+    public static bool HasSilenceTimedOut(DateTimeOffset lastSpeechAt, DateTimeOffset now)
+        => now - lastSpeechAt >= SilenceTimeout;
+
+    public static bool HasReachedMaximumSegment(int pcmByteLength)
+        => pcmByteLength >= MaximumSegmentDuration.TotalSeconds * PcmBytesPerSecond;
+}
+
+public static class VoiceModelIdlePolicy
+{
+    public static readonly TimeSpan UnloadTimeout = TimeSpan.FromMinutes(15);
+
+    public static bool ShouldUnload(DateTimeOffset lastUsedAt, DateTimeOffset now)
+        => now - lastUsedAt >= UnloadTimeout;
+}
+
+public static class VoiceWakeWordPolicy
+{
+    public const int AmbiguousLetterConfidenceFloorPercent = 80;
+
+    public static bool IsWakeWordToken(string? token)
+    {
+        var normalized = VoicePhrasePolicy.Normalize(token);
+        return normalized is "jay" or "jey" or "jei" or "j";
+    }
+
+    public static int GetMinimumConfidencePercent(string? token, int configuredMinimum)
+    {
+        var minimum = Math.Clamp(configuredMinimum, 0, 100);
+        return VoicePhrasePolicy.Normalize(token) == "j"
+            ? Math.Max(minimum, AmbiguousLetterConfidenceFloorPercent)
+            : minimum;
+    }
 }
 
 public static class ReleaseVersionComparison

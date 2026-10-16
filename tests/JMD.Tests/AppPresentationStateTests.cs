@@ -147,6 +147,49 @@ public sealed class AppPresentationStateTests
     }
 
     [Fact]
+    public void Voice_phrase_policy_recognizes_and_removes_command_prefix()
+    {
+        Assert.True(VoicePhrasePolicy.StartsWith("transcrever", "Transcrever... Exemplo de teste!"));
+        Assert.Equal("exemplo de teste", VoicePhrasePolicy.RemovePrefix("transcrever", "Transcrever... Exemplo de teste!"));
+        Assert.False(VoicePhrasePolicy.StartsWith("transcrever", "transcrever"));
+        Assert.False(VoicePhrasePolicy.StartsWith("transcrever", "transcrevendo texto"));
+    }
+
+    [Fact]
+    public void Voice_dictation_policy_ends_after_three_seconds_without_speech()
+    {
+        var lastSpeechAt = DateTimeOffset.Parse("2026-01-01T12:00:00Z");
+        Assert.False(VoiceDictationPolicy.HasSilenceTimedOut(lastSpeechAt, lastSpeechAt.AddMilliseconds(2999)));
+        Assert.True(VoiceDictationPolicy.HasSilenceTimedOut(lastSpeechAt, lastSpeechAt.AddSeconds(3)));
+        Assert.False(VoiceDictationPolicy.HasReachedMaximumSegment(25 * VoiceDictationPolicy.PcmBytesPerSecond - 1));
+        Assert.True(VoiceDictationPolicy.HasReachedMaximumSegment(25 * VoiceDictationPolicy.PcmBytesPerSecond));
+    }
+
+    [Fact]
+    public void Voice_model_idle_policy_unloads_at_fifteen_minutes()
+    {
+        var lastUsedAt = DateTimeOffset.Parse("2026-01-01T12:00:00Z");
+        Assert.False(VoiceModelIdlePolicy.ShouldUnload(lastUsedAt, lastUsedAt.AddMinutes(14).AddSeconds(59)));
+        Assert.True(VoiceModelIdlePolicy.ShouldUnload(lastUsedAt, lastUsedAt.AddMinutes(15)));
+    }
+
+    [Theory]
+    [InlineData("Jey", true)]
+    [InlineData("JAY", true)]
+    [InlineData("J.", true)]
+    [InlineData("SQL", false)]
+    public void Wake_word_policy_accepts_jey_jay_and_the_confidence_gated_letter_j(string token, bool expected)
+        => Assert.Equal(expected, VoiceWakeWordPolicy.IsWakeWordToken(token));
+
+    [Theory]
+    [InlineData("J", 0, 80)]
+    [InlineData("J.", 90, 90)]
+    [InlineData("Jey", 0, 0)]
+    [InlineData("Jay", 65, 65)]
+    public void Letter_j_wake_word_uses_a_confidence_floor(string token, int configuredMinimum, int expectedMinimum)
+        => Assert.Equal(expectedMinimum, VoiceWakeWordPolicy.GetMinimumConfidencePercent(token, configuredMinimum));
+
+    [Fact]
     public void Closed_vosk_command_grammar_contains_only_distinct_nonempty_configured_phrases()
     {
         var grammar = VoiceCommandGrammar.CreateVoskGrammar(

@@ -123,6 +123,74 @@ public sealed class ConversionHistoryTests : IDisposable
     }
 
     [Fact]
+    public void History_search_supports_fifteen_item_pages_and_direct_page_lookup()
+    {
+        var store = new ConversionHistoryStore(DatabasePath);
+        long oldestId = 0;
+        for (var index = 0; index < 20; index++)
+        {
+            var id = store.Add("Comando", index.ToString(), index.ToString(), DateTimeOffset.UtcNow.AddMinutes(index));
+            if (index == 0) oldestId = id;
+        }
+
+        Assert.Equal(20, store.CountSearch(string.Empty));
+        Assert.Equal(15, store.SearchPage(string.Empty, 15, 0).Count);
+        Assert.Equal(5, store.SearchPage(string.Empty, 15, 1).Count);
+        Assert.Equal(1, store.GetPageIndexContaining(oldestId, string.Empty, 15));
+        Assert.Empty(store.SearchPage("missing", 15, 0));
+        Assert.Equal(0, store.GetPageIndexContaining(long.MaxValue, string.Empty, 15));
+    }
+
+    [Fact]
+    public void Draft_history_migrates_existing_events_and_indexes_new_events_separately()
+    {
+        Directory.CreateDirectory(_directory);
+        var timestamp = "2026-10-06T12:00:00.0000000+00:00";
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DatabasePath }.ToString()))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE ConversionHistory (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    OccurredAtUtc TEXT NOT NULL,
+                    CommandName TEXT NOT NULL,
+                    BeforeValue TEXT NOT NULL,
+                    AfterValue TEXT NOT NULL
+                );
+                INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue)
+                VALUES
+                    ($timestamp, 'Salvar rascunho', '', 'draft antigo'),
+                    ($timestamp, 'Formatar JSON', '{}', '{ }'),
+                    ($timestamp, 'Ativação por voz (Jey) - Restaurar rascunho', '', 'draft antigo');
+                """;
+            command.Parameters.AddWithValue("$timestamp", timestamp);
+            command.ExecuteNonQuery();
+        }
+
+        var store = new ConversionHistoryStore(DatabasePath);
+        store.Add("Salvar rascunho", string.Empty, "draft novo", DateTimeOffset.Parse(timestamp));
+        var drafts = store.GetDraftHistory();
+
+        Assert.Equal(3, drafts.Count);
+        Assert.Equal(new[] { "draft antigo", "draft antigo", "draft novo" }, drafts.Select(entry => entry.Text));
+        Assert.Equal(4, store.Search(string.Empty).Count);
+    }
+
+    [Fact]
+    public void Draft_history_obeys_the_same_retention_window_as_conversion_history()
+    {
+        var now = new DateTimeOffset(2026, 10, 5, 12, 0, 0, TimeSpan.Zero);
+        var store = new ConversionHistoryStore(DatabasePath, () => now);
+        store.Add(DraftStack.SavedCommandName, string.Empty, "expired", now.AddDays(-16));
+        store.Add(DraftStack.SavedCommandName, string.Empty, "recent", now.AddDays(-2));
+
+        store.DeleteOlderThan(15);
+
+        Assert.Equal("recent", Assert.Single(store.GetDraftHistory()).Text);
+    }
+
+    [Fact]
     public void History_persists_and_searches_the_source_application_and_window_title()
     {
         var store = new ConversionHistoryStore(DatabasePath);

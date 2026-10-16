@@ -35,6 +35,7 @@ namespace JMD.App;
 public partial class MainWindow : Window
 {
     private const int MaxWakeRecognitionHistoryEntries = 100;
+    private const int HistoryPageSize = 15;
     private const int VkLWin = 0x5B;
     private const int VkRWin = 0x5C;
     private readonly SettingsStore _settingsStore = new();
@@ -81,11 +82,26 @@ public partial class MainWindow : Window
     private bool _loadingAdvancedNotificationToggle;
     private bool _showingDialog;
     private bool _checkingUpdates;
+    private IntPtr _dictationTargetWindow;
+    private bool _dictationHasInsertedText;
     private string _wakeRecognitionPartial = string.Empty;
     private long? _historyTargetId;
+    private int _historyPageIndex;
+    private int _historyPageCount;
     private readonly ObservableCollection<WakeRecognitionHistoryRow> _wakeRecognitionHistory = [];
 
     public event Action<string, string, bool, long?>? TrayNotification;
+    public bool IsVoiceWakeWordEnabled => _settings.VoiceWakeWordEnabled;
+
+    public void ToggleVoiceWakeWordFromTray()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(ToggleVoiceWakeWordFromTray));
+            return;
+        }
+        SetVoiceWakeWordEnabled(!_settings.VoiceWakeWordEnabled);
+    }
 
     public MainWindow()
     {
@@ -139,7 +155,7 @@ public partial class MainWindow : Window
             _historyStore = new ConversionHistoryStore(historyPath);
             _historyRecorder = new ConversionHistoryRecorder(_historyStore);
             _historyStore.DeleteOlderThan(_settings.HistoryRetentionDays);
-            _draftStack.RestoreFromHistory(_historyStore.Search(string.Empty));
+            _draftStack.RestoreFromHistory(_historyStore.GetDraftHistory());
             if (_historyStore.GetLatest() is { } lastConversion &&
                 (lastConversion.CommandName == "Montar SQL IN" ||
                  lastConversion.CommandName.StartsWith("Substituir seleção", StringComparison.Ordinal)))
@@ -215,6 +231,10 @@ public partial class MainWindow : Window
         _commands.Add(new CommandRow("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.", "Sem atalho")
         {
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("checkUpdates")
+        });
+        _commands.Add(new CommandRow("transcribe", "Transcrever", "Digita a fala reconhecida pelo Jey; uma pausa de 3 segundos encerra.", "Sem atalho")
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("transcribe")
         });
         _commands.Add(new CommandRow("createCustomShortcut", "Criar atalho personalizado",
             "Cadastra um comando para abrir um programa ou endereço da web.", "Sem atalho"));
@@ -308,6 +328,7 @@ public partial class MainWindow : Window
 
         AddShortcutRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.");
         AddShortcutRow("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.");
+        AddShortcutRow("transcribe", "Transcrever", "Digita o que você disser após o comando; pausa de 3 segundos encerra.");
 
         SettingsPanel.Children.Add(new TextBlock
         {
@@ -399,12 +420,13 @@ public partial class MainWindow : Window
         var defaults = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["about"] = ["abrir sobre", "abrir tela sobre"],
-            ["checkUpdates"] = ["verificar atualizações", "verificar atualização", "atualizar jmd"]
+            ["checkUpdates"] = ["verificar atualizações", "verificar atualização", "atualizar jmd"],
+            ["transcribe"] = ["transcrever"]
         };
         var changed = false;
         foreach (var (commandId, phrases) in defaults)
         {
-            if (_settings.VoicePhrases.ContainsKey(commandId)) continue;
+            if (_settings.VoicePhrases.TryGetValue(commandId, out var configured) && configured.Count > 0) continue;
             var existing = _settings.VoicePhrases.Where(pair => pair.Key != commandId).SelectMany(pair => pair.Value);
             _settings.VoicePhrases[commandId] = phrases
                 .Where(phrase => !VoicePhrasePolicy.ConflictsWith([phrase], existing))
@@ -587,7 +609,10 @@ public partial class MainWindow : Window
                 !_settings.VoicePhrases.TryGetValue(commandId, out var phrases))
                 continue;
 
-            if (!phrases.Any(phrase => VoicePhrasePolicy.Matches(phrase, transcript))) continue;
+            var match = phrases.Any(phrase => commandId == "transcribe"
+                ? VoicePhrasePolicy.Matches(phrase, transcript) || VoicePhrasePolicy.StartsWith(phrase, transcript)
+                : VoicePhrasePolicy.Matches(phrase, transcript));
+            if (!match) continue;
             if (matchedCommand is not null)
             {
                 SetStatus("Essa frase está associada a mais de um comando. Deixe-a em apenas um comando para usá-la por voz.", false);
@@ -1019,9 +1044,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "about", "checkUpdates"];
+    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "about", "checkUpdates", "transcribe"];
 
-    private static bool IsJeyAction(string id) => id is "about" or "checkUpdates";
+    private static bool IsJeyAction(string id) => id is "about" or "checkUpdates" or "transcribe";
 
     private string GetShortcut(string id)
     {
@@ -1166,6 +1191,9 @@ public partial class MainWindow : Window
                     if (voiceCommand is not null)
                         RecordActionHistory("Verificar atualizações JMD", string.Empty, string.Empty, voiceCommand);
                     CheckUpdatesButton_Click(this, new RoutedEventArgs());
+                    break;
+                case "transcribe":
+                    StartDictation(voiceCommand?.Transcript);
                     break;
                 case "clipboard":
                     await TransformClipboardAsync(voiceCommand);
@@ -1558,7 +1586,11 @@ public partial class MainWindow : Window
         if (_historyStore is null) return;
         try
         {
-            var entries = _historyStore.Search(HistorySearchBox?.Text ?? string.Empty)
+            var query = HistorySearchBox?.Text ?? string.Empty;
+            var totalEntries = _historyStore.CountSearch(query);
+            _historyPageCount = (totalEntries + HistoryPageSize - 1) / HistoryPageSize;
+            _historyPageIndex = Math.Clamp(_historyPageIndex, 0, Math.Max(0, _historyPageCount - 1));
+            var entries = _historyStore.SearchPage(query, HistoryPageSize, _historyPageIndex)
                 .Select(entry => new HistoryDisplayEntry(
                     entry.Id,
                     entry.CommandName,
@@ -1583,6 +1615,11 @@ public partial class MainWindow : Window
                 .ToList();
             HistoryItemsControl.ItemsSource = entries;
             HistoryScrollViewer.ScrollToTop();
+            HistoryPageText.Text = _historyPageCount == 0
+                ? "Página 0 de 0"
+                : $"Página {_historyPageIndex + 1} de {_historyPageCount}";
+            PreviousHistoryPageButton.IsEnabled = _historyPageIndex > 0;
+            NextHistoryPageButton.IsEnabled = _historyPageIndex + 1 < _historyPageCount;
             HistoryEmptyText.Text = entries.Count == 0
                 ? string.IsNullOrWhiteSpace(HistorySearchBox?.Text) ? "Nenhuma conversão registrada." : "Nenhum resultado para essa busca."
                 : string.Empty;
@@ -1591,13 +1628,35 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             HistoryItemsControl.ItemsSource = null;
+            _historyPageCount = 0;
+            HistoryPageText.Text = "Página 0 de 0";
+            PreviousHistoryPageButton.IsEnabled = false;
+            NextHistoryPageButton.IsEnabled = false;
             HistoryEmptyText.Text = "Não foi possível consultar o histórico.";
             HistoryEmptyText.Visibility = Visibility.Visible;
             SetStatus($"Falha ao consultar o histórico: {exception.Message}", false);
         }
     }
 
-    private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshHistory();
+    private void HistorySearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _historyPageIndex = 0;
+        RefreshHistory();
+    }
+
+    private void PreviousHistoryPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_historyPageIndex == 0) return;
+        _historyPageIndex--;
+        RefreshHistory();
+    }
+
+    private void NextHistoryPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_historyPageIndex + 1 >= _historyPageCount) return;
+        _historyPageIndex++;
+        RefreshHistory();
+    }
 
     private async void CopyHistoryValue_Click(object sender, RoutedEventArgs e)
     {
@@ -1972,6 +2031,24 @@ public partial class MainWindow : Window
             if (ReferenceEquals(_voiceWakeWord, service))
                 SetStatus($"Falha ao processar áudio do Jey; a escuta continua ativa. {exception.Message}", false, exception.ToString());
         }));
+        service.DictationTextRecognized += text => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!ReferenceEquals(_voiceWakeWord, service)) return;
+            if (_keyboard.GetForegroundWindow() != _dictationTargetWindow || !_focusedText.HasEditableTextFocus())
+            {
+                service.StopDictation();
+                SetStatus("Transcrição encerrada porque o foco saiu do campo de texto.", false);
+                return;
+            }
+            InsertDictationText(text);
+        }));
+        service.DictationEnded += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!ReferenceEquals(_voiceWakeWord, service)) return;
+            _dictationTargetWindow = IntPtr.Zero;
+            _dictationHasInsertedText = false;
+            SetStatus("Transcrição encerrada após 3 segundos sem fala.", true);
+        }));
         service.WakeWordRecognized += (transcript, audioWav, debugInfo) => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
@@ -2048,6 +2125,44 @@ public partial class MainWindow : Window
         service.Start();
     }
 
+    private void StartDictation(string? transcript)
+    {
+        if (_voiceWakeWord is null || !_focusedText.HasEditableTextFocus())
+        {
+            Notify("JMD", "Para transcrever, deixe o cursor em um campo de texto editável.", false);
+            return;
+        }
+        _dictationTargetWindow = _keyboard.GetForegroundWindow();
+        if (_dictationTargetWindow == IntPtr.Zero)
+        {
+            Notify("JMD", "Não foi possível identificar a janela do campo de texto.", false);
+            return;
+        }
+
+        _dictationHasInsertedText = false;
+        var phrase = _settings.VoicePhrases.TryGetValue("transcribe", out var phrases)
+            ? phrases.FirstOrDefault(value => VoicePhrasePolicy.StartsWith(value, transcript))
+                ?? phrases.FirstOrDefault(value => VoicePhrasePolicy.Matches(value, transcript))
+            : null;
+        var initialText = VoicePhrasePolicy.RemovePrefix(phrase, transcript);
+        if (!string.IsNullOrWhiteSpace(initialText)) InsertDictationText(initialText);
+        _voiceWakeWord.StartDictation();
+        SetStatus("Transcrição do Jey iniciada. Uma pausa de 3 segundos encerra o ditado.", true);
+    }
+
+    private void InsertDictationText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        var normalizedText = _dictationHasInsertedText && char.IsLetterOrDigit(text[0]) ? " " + text : text;
+        if (!_keyboard.SendUnicodeText(normalizedText))
+        {
+            _voiceWakeWord?.StopDictation();
+            SetStatus("Não foi possível digitar a transcrição no campo ativo.", false);
+            return;
+        }
+        _dictationHasInsertedText = true;
+    }
+
     private void StopVoiceWakeWord()
     {
         CloseJeyProcessingNotification();
@@ -2072,6 +2187,9 @@ public partial class MainWindow : Window
         _historyTargetId = historyId;
         if (historyId is not null && HistorySearchBox is not null)
             HistorySearchBox.Text = string.Empty;
+        _historyPageIndex = historyId is { } targetId && _historyStore is not null
+            ? _historyStore.GetPageIndexContaining(targetId, HistorySearchBox?.Text ?? string.Empty, HistoryPageSize)
+            : 0;
         _navigation.ShowHistory();
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;

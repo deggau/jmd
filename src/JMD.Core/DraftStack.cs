@@ -33,15 +33,15 @@ public sealed class DraftStack
     }
 
     /// <summary>Replays draft save and restore events in chronological order.</summary>
-    public void RestoreFromHistory(IEnumerable<ConversionHistoryEntry> history)
+    public void RestoreFromHistory(IEnumerable<DraftHistoryEntry> history)
     {
         _items.Clear();
-        foreach (var entry in history.OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.Id))
+        foreach (var entry in history.OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.HistoryId))
         {
-            if (entry.CommandName.EndsWith(SavedCommandName, StringComparison.Ordinal)) Push(entry.AfterValue);
+            if (entry.CommandName.EndsWith(SavedCommandName, StringComparison.Ordinal)) Push(entry.Text);
             else if (entry.CommandName.EndsWith(RestoredCommandName, StringComparison.Ordinal))
             {
-                var restoredIndex = _items.FindLastIndex(text => text == entry.AfterValue);
+                var restoredIndex = _items.FindLastIndex(text => text == entry.Text);
                 if (restoredIndex >= 0) _items.RemoveAt(restoredIndex);
             }
         }
