@@ -78,8 +78,9 @@
             <DataTemplate>
               <Grid Margin="0,0,0,9">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Border Grid.ColumnSpan="2" Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" />
                 <Button Tag="{Binding Id}" Click="CommandButton_Click" Padding="16"
-                        Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1"
+                        Background="Transparent" BorderThickness="0"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Cursor="Hand"
                         FocusVisualStyle="{StaticResource AccentFocusCue}">
                   <Grid>

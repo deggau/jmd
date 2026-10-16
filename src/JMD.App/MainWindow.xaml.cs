@@ -171,6 +171,7 @@ public partial class MainWindow : Window
         CommandsList.ItemsSource = _commands;
         _commandView = CollectionViewSource.GetDefaultView(_commands);
         _commandView.Filter = item => item is CommandRow command && command.Visible;
+        _commandView.SortDescriptions.Add(new SortDescription(nameof(CommandRow.Name), ListSortDirection.Ascending));
         BuildSettingsPanel();
         BuildSnippetManagementPage();
         if (_settings.VoiceWakeWordEnabled)
@@ -241,7 +242,7 @@ public partial class MainWindow : Window
         foreach (var shortcut in _settings.CustomShortcuts)
         {
             var row = new CommandRow(shortcut.Id, shortcut.Name, shortcut.Target,
-                string.IsNullOrWhiteSpace(shortcut.Shortcut) ? "Comando personalizado" : shortcut.Shortcut)
+                string.IsNullOrWhiteSpace(shortcut.Shortcut) ? "Sem atalho" : shortcut.Shortcut)
             {
                 IsCustomShortcut = true,
                 VoicePhrasesDisplay = GetVoicePhrasesDisplay(shortcut.Id)
@@ -316,19 +317,24 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 14)
         });
 
-        AddShortcutRow("palette", "Abrir paleta", "Exibe a lista de comandos e configurações.");
-        AddShortcutRow("clipboard", "Formatar clipboard", "Transforma o texto copiado para SQL IN.");
-        AddShortcutRow("selection", "Substituir seleção", "Recorta, transforma e cola a seleção atual.");
-        AddShortcutRow("jsonPretty", "Formatar", "Identifica JSON ou XML e aplica indentação.");
-        AddShortcutRow("jsonCompact", "Compactar", "Identifica JSON ou XML e deixa o conteúdo em uma linha.");
-        AddShortcutRow("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior.");
-        AddShortcutRow("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título.");
-        AddShortcutRow("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo.");
-        AddShortcutRow("draftRestore", "Usar rascunho", "Guarda o conteúdo atual e recupera o último rascunho.");
-
-        AddShortcutRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.");
-        AddShortcutRow("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.");
-        AddShortcutRow("transcribe", "Transcrever", "Digita o que você disser após o comando; pausa de 3 segundos encerra.");
+        (string Id, string Name, string Description)[] configurableCommands =
+        [
+            ("palette", "Abrir paleta", "Exibe a lista de comandos e configurações."),
+            ("about", "Abrir Sobre", "Abre a tela Sobre do JMD."),
+            ("clipboard", "Formatar clipboard", "Transforma o texto copiado para SQL IN."),
+            ("jsonPretty", "Formatar", "Identifica JSON ou XML e aplica indentação."),
+            ("jsonCompact", "Compactar", "Identifica JSON ou XML e deixa o conteúdo em uma linha."),
+            ("createCustomShortcut", "Criar atalho personalizado", "Cadastra um comando para abrir um programa ou endereço da web."),
+            ("draftRestore", "Usar rascunho", "Guarda o conteúdo atual e recupera o último rascunho."),
+            ("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior."),
+            ("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo."),
+            ("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título."),
+            ("selection", "Substituir seleção", "Recorta, transforma e cola a seleção atual."),
+            ("transcribe", "Transcrever", "Digita o que você disser após o comando; pausa de 3 segundos encerra."),
+            ("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.")
+        ];
+        foreach (var command in configurableCommands.OrderBy(command => command.Name, StringComparer.CurrentCultureIgnoreCase))
+            AddShortcutRow(command.Id, command.Name, command.Description);
 
         SettingsPanel.Children.Add(new TextBlock
         {
@@ -354,18 +360,50 @@ public partial class MainWindow : Window
             BuildSettingsPanel();
         };
         SettingsPanel.Children.Add(addCustomShortcut);
-        foreach (var customShortcut in _settings.CustomShortcuts)
+        foreach (var customShortcut in _settings.CustomShortcuts.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
         {
-            var customRow = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            var customCard = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+            var customRow = new Grid();
             customRow.ColumnDefinitions.Add(new ColumnDefinition());
             customRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            customRow.Children.Add(new TextBlock
+            var customDetails = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            customDetails.Children.Add(new TextBlock
             {
-                Text = $"{customShortcut.Name} · {customShortcut.Target}",
-                Foreground = new SolidColorBrush(Color.FromRgb(220, 223, 230)),
-                VerticalAlignment = VerticalAlignment.Center,
+                Text = customShortcut.Name,
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            customDetails.Children.Add(new TextBlock
+            {
+                Text = customShortcut.Target,
+                Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+                FontSize = 11,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 ToolTip = customShortcut.Target
+            });
+            customRow.Children.Add(customDetails);
+            var customActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            customActions.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(8, 5, 8, 5),
+                Margin = new Thickness(0, 0, 6, 0),
+                Child = new TextBlock
+                {
+                    Text = string.IsNullOrWhiteSpace(customShortcut.Shortcut) ? "Sem atalho" : customShortcut.Shortcut,
+                    Foreground = new SolidColorBrush(Color.FromRgb(228, 231, 236)),
+                    FontSize = 11
+                }
             });
             var editCustomShortcut = new Button
             {
@@ -381,9 +419,23 @@ public partial class MainWindow : Window
                 CreateCustomShortcutFromDialog(customShortcut);
                 BuildSettingsPanel();
             };
-            Grid.SetColumn(editCustomShortcut, 1);
-            customRow.Children.Add(editCustomShortcut);
-            SettingsPanel.Children.Add(customRow);
+            var removeCustomShortcut = new Button
+            {
+                Content = "Remover",
+                Tag = customShortcut,
+                Padding = new Thickness(10, 5, 10, 5),
+                Margin = new Thickness(6, 0, 0, 0),
+                Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(0)
+            };
+            removeCustomShortcut.Click += RemoveCustomShortcut_Click;
+            customActions.Children.Add(editCustomShortcut);
+            customActions.Children.Add(removeCustomShortcut);
+            Grid.SetColumn(customActions, 1);
+            customRow.Children.Add(customActions);
+            customCard.Child = customRow;
+            SettingsPanel.Children.Add(customCard);
         }
 
         SettingsPanel.Children.Add(new TextBlock
@@ -1044,7 +1096,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "about", "checkUpdates", "transcribe"];
+    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "about", "checkUpdates", "transcribe", "createCustomShortcut"];
 
     private static bool IsJeyAction(string id) => id is "about" or "checkUpdates" or "transcribe";
 
@@ -1194,6 +1246,9 @@ public partial class MainWindow : Window
                     break;
                 case "transcribe":
                     StartDictation(voiceCommand?.Transcript);
+                    break;
+                case "createCustomShortcut":
+                    CreateCustomShortcutFromDialog();
                     break;
                 case "clipboard":
                     await TransformClipboardAsync(voiceCommand);
