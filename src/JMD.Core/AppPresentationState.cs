@@ -77,7 +77,8 @@ public static class VoicePhrasePolicy
     public static bool Matches(string? configuredPhrase, string? recognizedPhrase)
     {
         var configured = Normalize(configuredPhrase);
-        return configured.Length > 0 && configured == Normalize(recognizedPhrase);
+        var recognized = Normalize(recognizedPhrase);
+        return configured.Length > 0 && string.Equals(configured, recognized, StringComparison.OrdinalIgnoreCase);
     }
 
     public static string Normalize(string? phrase)

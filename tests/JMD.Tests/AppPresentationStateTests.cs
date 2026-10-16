@@ -133,6 +133,8 @@ public sealed class AppPresentationStateTests
     [InlineData("abrir sobre", "Abrir sobre!")]
     [InlineData("verificar atualizações", "Verificar atualizações!!!")]
     [InlineData("abrir sobre!", "abrir, sobre?")]
+    [InlineData("abrir histórico", "Abrir Histórico.")]
+    [InlineData("ABRIR HISTÓRICO", "abrir histórico.")]
     public void Voice_phrase_matching_ignores_punctuation(string configuredPhrase, string recognizedPhrase)
     {
         Assert.True(VoicePhrasePolicy.Matches(configuredPhrase, recognizedPhrase));
