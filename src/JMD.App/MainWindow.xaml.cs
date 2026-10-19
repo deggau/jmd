@@ -218,6 +218,12 @@ public partial class MainWindow : Window
         RefreshShortcutStatuses();
     }
 
+    private void Header_DragMove(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState == MouseButtonState.Pressed)
+            DragMove();
+    }
+
     private void BuildCommands()
     {
         _commands.Add(new CommandRow("clipboard", "Formatar clipboard para SQL IN",
