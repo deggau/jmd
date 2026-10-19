@@ -39,6 +39,7 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
     public bool SendSelectAll() => SendChord(VkA);
     public bool SendBackspace() => SendKey(VkBackspace);
     public bool SendHome() => SendKey(VkHome);
+    public bool SendVirtualKey(ushort virtualKey) => virtualKey != 0 && SendKey(virtualKey);
 
     public bool SendShiftEnd()
     {

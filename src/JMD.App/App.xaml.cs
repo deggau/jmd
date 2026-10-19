@@ -169,6 +169,7 @@ internal sealed class UserSettings
     public string JeyEnglishModel { get; set; } = "vosk";
     public List<SnippetEntry> Snippets { get; set; } = [];
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
+    public List<WorkflowVariableEntry> WorkflowVariables { get; set; } = [];
 
     public Dictionary<string, string> Shortcuts { get; set; } = new(StringComparer.Ordinal)
     {
@@ -204,6 +205,22 @@ internal sealed class CustomShortcutEntry
     public string Target { get; set; } = string.Empty;
     public string Shortcut { get; set; } = string.Empty;
     public bool FocusIfAlreadyOpen { get; set; }
+    public List<CustomWorkflowStep> Steps { get; set; } = [];
+}
+
+internal sealed class CustomWorkflowStep
+{
+    public string Action { get; set; } = "";
+    public string Value { get; set; } = "";
+    public int DelayMilliseconds { get; set; }
+}
+
+internal sealed class WorkflowVariableEntry
+{
+    public string Name { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+    public string ProtectedValue { get; set; } = string.Empty;
+    public bool IsSecret { get; set; }
 }
 
 internal sealed class SettingsStore
@@ -225,6 +242,13 @@ internal sealed class SettingsStore
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];
                     loaded.CustomShortcuts ??= [];
+                    loaded.WorkflowVariables ??= [];
+                    foreach (var customShortcut in loaded.CustomShortcuts)
+                    {
+                        customShortcut.Steps ??= [];
+                        if (customShortcut.Steps.Count == 0 && !string.IsNullOrWhiteSpace(customShortcut.Target))
+                            customShortcut.Steps.Add(new CustomWorkflowStep { Action = "Open", Value = customShortcut.Target });
+                    }
                     loaded.JeyPortugueseModel = VoiceModelOptions.NormalizePersisted(loaded.JeyPortugueseModel);
                     loaded.JeyEnglishModel = VoiceModelOptions.NormalizePersisted(loaded.JeyEnglishModel);
                     loaded.JeyWakeWordMinimumConfidencePercent = Math.Clamp(loaded.JeyWakeWordMinimumConfidencePercent, 0, 100);

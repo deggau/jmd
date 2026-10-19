@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -255,10 +256,10 @@ public partial class MainWindow : Window
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("transcribe")
         });
         _commands.Add(new CommandRow("createCustomShortcut", "Criar atalho personalizado",
-            "Cadastra um comando para abrir um programa ou endereço da web.", "Sem atalho"));
+            "Cria workflows com etapas de abertura, teclado e texto.", "Sem atalho"));
         foreach (var shortcut in _settings.CustomShortcuts)
         {
-            var row = new CommandRow(shortcut.Id, shortcut.Name, shortcut.Target,
+            var row = new CommandRow(shortcut.Id, shortcut.Name, DescribeCustomWorkflow(shortcut),
                 string.IsNullOrWhiteSpace(shortcut.Shortcut) ? "Sem atalho" : shortcut.Shortcut)
             {
                 IsCustomShortcut = true,
@@ -341,7 +342,7 @@ public partial class MainWindow : Window
             ("clipboard", "Formatar clipboard", "Transforma o texto copiado para SQL IN."),
             ("jsonPretty", "Formatar", "Identifica JSON ou XML e aplica indentação."),
             ("jsonCompact", "Compactar", "Identifica JSON ou XML e deixa o conteúdo em uma linha."),
-            ("createCustomShortcut", "Criar atalho personalizado", "Cadastra um comando para abrir um programa ou endereço da web."),
+            ("createCustomShortcut", "Criar atalho personalizado", "Cria workflows com etapas de abertura, teclado e texto."),
             ("draftRestore", "Usar rascunho", "Guarda o conteúdo atual e recupera o último rascunho."),
             ("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior."),
             ("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo."),
@@ -355,7 +356,7 @@ public partial class MainWindow : Window
 
         SettingsPanel.Children.Add(new TextBlock
         {
-            Text = "Atalhos personalizados",
+            Text = "Workflows personalizados",
             Foreground = Brushes.White,
             FontSize = 15,
             FontWeight = FontWeights.SemiBold,
@@ -363,7 +364,7 @@ public partial class MainWindow : Window
         });
         var addCustomShortcut = new Button
         {
-            Content = "+ Criar atalho personalizado",
+            Content = "+ Criar workflow",
             HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
             Padding = new Thickness(12, 8, 12, 8),
             Margin = new Thickness(0, 0, 0, 8),
@@ -401,11 +402,11 @@ public partial class MainWindow : Window
             });
             customDetails.Children.Add(new TextBlock
             {
-                Text = customShortcut.Target,
+                Text = DescribeCustomWorkflow(customShortcut),
                 Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
                 FontSize = 11,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                ToolTip = customShortcut.Target
+                ToolTip = DescribeCustomWorkflow(customShortcut)
             });
             customRow.Children.Add(customDetails);
             var customActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
@@ -454,6 +455,26 @@ public partial class MainWindow : Window
             customCard.Child = customRow;
             SettingsPanel.Children.Add(customCard);
         }
+
+        SettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Variáveis globais para workflows",
+            Foreground = Brushes.White,
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 12, 0, 6)
+        });
+        var manageVariables = new Button
+        {
+            Content = $"Gerenciar variáveis ({_settings.WorkflowVariables.Count})",
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+            Padding = new Thickness(12, 8, 12, 8),
+            Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0)
+        };
+        manageVariables.Click += (_, _) => ManageWorkflowVariables();
+        SettingsPanel.Children.Add(manageVariables);
 
         SettingsPanel.Children.Add(new TextBlock
         {
@@ -774,11 +795,13 @@ public partial class MainWindow : Window
 
     private void CreateCustomShortcutFromDialog(CustomShortcutEntry? existing = null)
     {
-        (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen)? previous = existing is null
-            ? null : (existing.Name, existing.Target, existing.Shortcut, existing.FocusIfAlreadyOpen);
+        (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen, List<CustomWorkflowStep> Steps)? previous = existing is null
+            ? null : (existing.Name, existing.Target, existing.Shortcut, existing.FocusIfAlreadyOpen,
+                existing.Steps.Select(step => new CustomWorkflowStep { Action = step.Action, Value = step.Value, DelayMilliseconds = step.DelayMilliseconds }).ToList());
         var previousPhrases = existing is not null && _settings.VoicePhrases.TryGetValue(existing.Id, out var savedPhrases)
             ? savedPhrases.ToList() : [];
-        var dialog = new CustomShortcutEditorWindow(existing, previousPhrases);
+        var dialog = new CustomShortcutEditorWindow(existing, previousPhrases,
+            _settings.WorkflowVariables.Select(variable => variable.Name), draft => ValidateCustomWorkflowDraft(draft, existing?.Id));
         PrepareWindowForCaptureExclusion(dialog);
         _showingDialog = true;
         bool accepted;
@@ -787,19 +810,12 @@ public partial class MainWindow : Window
         if (!accepted) return;
 
         var name = dialog.CommandName;
-        var target = dialog.Target;
+        var steps = dialog.Steps;
+        var target = steps.FirstOrDefault(step => step.Action == "Open")?.Value ?? string.Empty;
         var shortcutText = dialog.Shortcut;
         var focusIfAlreadyOpen = dialog.FocusIfAlreadyOpen;
         var phrases = dialog.VoicePhrases.ToList();
-        string? error = null;
-        if (name.Length == 0 || target.Length == 0) error = "Informe o nome e o programa ou URL do atalho.";
-        else if (!IsValidCustomTarget(target)) error = "Informe um caminho de programa ou uma URL http/https válida.";
-        else if (shortcutText.Length == 0 && phrases.Count == 0) error = "Configure um atalho de teclado ou uma frase do Jey.";
-        else if (shortcutText.Length > 0 && !ShortcutParser.TryParse(shortcutText, out _, out error)) { }
-        else if (shortcutText.Length > 0 && HasShortcutConflict(shortcutText, existing?.Id)) error = "Essa combinação de teclas já está associada a outro comando.";
-        else if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases,
-                     _settings.VoicePhrases.Where(pair => pair.Key != existing?.Id).SelectMany(pair => pair.Value)))
-            error = "Uma dessas frases do Jey já está associada a outro comando. Escolha frases exclusivas.";
+        var error = ValidateCustomWorkflowDraft(dialog, existing?.Id);
         if (error is not null)
         {
             Notify("JMD", error, false);
@@ -809,6 +825,7 @@ public partial class MainWindow : Window
         var entry = existing ?? new CustomShortcutEntry();
         entry.Name = name;
         entry.Target = target;
+        entry.Steps = steps;
         entry.Shortcut = shortcutText;
         entry.FocusIfAlreadyOpen = focusIfAlreadyOpen;
         if (existing is null) _settings.CustomShortcuts.Add(entry);
@@ -818,7 +835,7 @@ public partial class MainWindow : Window
             _settingsStore.Save(_settings);
             var oldRow = _commands.FirstOrDefault(command => command.Id == entry.Id);
             if (oldRow is not null) _commands.Remove(oldRow);
-            _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target,
+            _commands.Add(new CommandRow(entry.Id, entry.Name, DescribeCustomWorkflow(entry),
                 string.IsNullOrWhiteSpace(entry.Shortcut) ? "Sem atalho" : entry.Shortcut)
             {
                 IsCustomShortcut = true,
@@ -847,11 +864,39 @@ public partial class MainWindow : Window
                 entry.Target = previous.Value.Target;
                 entry.Shortcut = previous.Value.Shortcut;
                 entry.FocusIfAlreadyOpen = previous.Value.FocusIfAlreadyOpen;
+                entry.Steps = previous.Value.Steps;
                 _settings.VoicePhrases[entry.Id] = previousPhrases;
             }
             Notify("JMD", $"Não foi possível salvar o atalho: {exception.Message}", false);
         }
         UpdateVoiceCommandPhrases();
+    }
+
+    private string? ValidateCustomWorkflowDraft(CustomShortcutEditorWindow dialog, string? exceptId)
+    {
+        var steps = dialog.Steps;
+        var shortcutText = dialog.Shortcut;
+        var phrases = dialog.VoicePhrases;
+        if (dialog.CommandName.Length == 0) return "Informe o nome do workflow.";
+        if (steps.Count == 0) return "Adicione ao menos uma etapa ao workflow.";
+        if (steps.Any(step => step.DelayMilliseconds is < 0 or > 60000)) return "A pausa após cada etapa deve ficar entre 0 e 60000 ms.";
+        if (steps.Any(step => step.Action == "Open" && !IsValidCustomTarget(step.Value))) return "Informe um caminho de programa ou uma URL http/https válida em cada etapa de abertura.";
+        if (steps.Any(step => step.Action == "Key" && !TryGetWorkflowKey(step.Value, out _))) return "Informe uma tecla válida, como Tab, Enter, Escape ou F1.";
+        if (steps.Any(step => step.Action == "Type" && string.IsNullOrEmpty(step.Value))) return "Informe o texto a digitar em cada etapa de texto.";
+        if (steps.Any(step => step.Action == "Wait" && (!int.TryParse(step.Value, out var milliseconds) || milliseconds is < 1 or > 60000))) return "A etapa de espera deve ter entre 1 e 60000 ms.";
+        if (steps.Any(step => step.Action is not ("Open" or "Key" or "Type" or "Wait"))) return "O workflow contém uma etapa desconhecida.";
+        foreach (var token in steps.Where(step => step.Action == "Type").SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value)))
+        {
+            if (!_settings.WorkflowVariables.Any(variable => variable.Name.Equals(token, StringComparison.OrdinalIgnoreCase)))
+                return $"A variável {{{{{token}}}}} não está cadastrada. Cadastre-a em Gerenciar atalhos.";
+        }
+        if (shortcutText.Length == 0 && phrases.Length == 0) return "Configure um atalho de teclado ou uma frase do Jey.";
+        if (shortcutText.Length > 0 && !ShortcutParser.TryParse(shortcutText, out _, out var shortcutError)) return shortcutError ?? "Atalho inválido.";
+        if (shortcutText.Length > 0 && HasShortcutConflict(shortcutText, exceptId)) return "Essa combinação de teclas já está associada a outro comando.";
+        if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases,
+                _settings.VoicePhrases.Where(pair => pair.Key != exceptId).SelectMany(pair => pair.Value)))
+            return "Uma dessas frases do Jey já está associada a outro comando. Escolha frases exclusivas.";
+        return null;
     }
 
     private void EditCustomCommandButton_Click(object sender, RoutedEventArgs e)
@@ -867,6 +912,31 @@ public partial class MainWindow : Window
         var entry = _settings.CustomShortcuts.FirstOrDefault(item => item.Id == id);
         if (entry is null) return;
         RemoveCustomShortcut_Click(new Button { Tag = entry }, e);
+    }
+
+    private void ManageWorkflowVariables()
+    {
+        var dialog = new WorkflowVariablesWindow(_settings.WorkflowVariables);
+        PrepareWindowForCaptureExclusion(dialog);
+        _showingDialog = true;
+        bool accepted;
+        try { accepted = dialog.ShowDialog() == true; }
+        finally { _showingDialog = false; }
+        if (!accepted) return;
+
+        var previous = _settings.WorkflowVariables;
+        _settings.WorkflowVariables = dialog.Variables;
+        try
+        {
+            _settingsStore.Save(_settings);
+            BuildSettingsPanel();
+            SetStatus("Variáveis dos workflows salvas.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _settings.WorkflowVariables = previous;
+            SetStatus($"Não foi possível salvar as variáveis: {exception.Message}", false);
+        }
     }
 
     private void RemoveCustomShortcut_Click(object sender, RoutedEventArgs e)
@@ -888,7 +958,7 @@ public partial class MainWindow : Window
         {
             _settings.CustomShortcuts.Add(entry);
             if (savedPhrases is not null) _settings.VoicePhrases[entry.Id] = savedPhrases;
-            _commands.Add(new CommandRow(entry.Id, entry.Name, entry.Target, entry.Shortcut)
+            _commands.Add(new CommandRow(entry.Id, entry.Name, DescribeCustomWorkflow(entry), entry.Shortcut)
             {
                 IsCustomShortcut = true,
                 VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
@@ -1298,7 +1368,7 @@ public partial class MainWindow : Window
                     break;
                 default:
                     var customShortcut = _settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id);
-                    if (customShortcut is not null) OpenCustomShortcut(customShortcut, voiceCommand);
+                    if (customShortcut is not null) await RunCustomWorkflowAsync(customShortcut, voiceCommand);
                     break;
             }
         }
@@ -1344,35 +1414,110 @@ public partial class MainWindow : Window
         Notify("JMD", $"Rascunho salvo ({_draftStack.Count} na pilha).", true, historyId);
     }
 
-    private void OpenCustomShortcut(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null)
+    private async Task RunCustomWorkflowAsync(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null)
     {
         try
         {
-            if (shortcut.FocusIfAlreadyOpen && TryFocusExistingTarget(shortcut.Target))
+            if (!await _keyboard.WaitForModifiersReleasedAsync())
+                throw new InvalidOperationException("Solte as teclas modificadoras para iniciar o workflow.");
+            var steps = shortcut.Steps ?? [];
+            if (steps.Count == 0 && !string.IsNullOrWhiteSpace(shortcut.Target))
+                steps = [new CustomWorkflowStep { Action = "Open", Value = shortcut.Target }];
+            if (steps.Count == 0)
             {
-                RecordActionHistory($"Focar {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
+                SetStatus($"O workflow {shortcut.Name} não tem etapas.", false);
                 return;
             }
-            if (!CustomCommandLine.TryParse(shortcut.Target, out var executable, out var arguments))
+
+            var firstLaunch = true;
+            var hasTypingOrKeys = steps.Any(step => step.Action is "Key" or "Type");
+            var hasOpenStep = steps.Any(step => step.Action == "Open");
+            if (hasTypingOrKeys && !hasOpenStep && _previousWindow == IntPtr.Zero)
+                throw new InvalidOperationException("Não foi possível identificar a janela que deve receber o texto.");
+            if (hasTypingOrKeys && !hasOpenStep)
             {
-                SetStatus($"Não foi possível abrir {shortcut.Name}: comando inválido.", false);
-                return;
+                SetForegroundWindow(_previousWindow);
+                await Task.Delay(100);
             }
-            var isUrl = Uri.TryCreate(shortcut.Target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
-            var startInfo = new ProcessStartInfo
+
+            foreach (var step in steps)
             {
-                FileName = isUrl ? shortcut.Target : executable,
-                UseShellExecute = isUrl
-            };
-            foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-            if (Process.Start(startInfo) is null)
-                throw new InvalidOperationException("O Windows não iniciou o aplicativo ou endereço.");
-            RecordActionHistory($"Abrir {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
+                switch (step.Action)
+                {
+                    case "Open":
+                        if (firstLaunch && shortcut.FocusIfAlreadyOpen && TryFocusExistingTarget(step.Value))
+                        {
+                            await Task.Delay(step.DelayMilliseconds > 0 ? step.DelayMilliseconds : 100);
+                        }
+                        else
+                        {
+                            if (!CustomCommandLine.TryParse(step.Value, out var executable, out var arguments))
+                                throw new InvalidOperationException($"Programa ou URL inválido: {step.Value}");
+                            var isUrl = Uri.TryCreate(step.Value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+                            var startInfo = new ProcessStartInfo { FileName = isUrl ? step.Value : executable, UseShellExecute = isUrl };
+                            foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+                            if (Process.Start(startInfo) is null)
+                                throw new InvalidOperationException("O Windows não iniciou o aplicativo ou endereço.");
+                            await Task.Delay(step.DelayMilliseconds > 0 ? step.DelayMilliseconds : 1000);
+                        }
+                        firstLaunch = false;
+                        break;
+                    case "Key":
+                        if (!TryGetWorkflowKey(step.Value, out var virtualKey) || !_keyboard.SendVirtualKey(virtualKey))
+                            throw new InvalidOperationException($"Não foi possível pressionar a tecla {step.Value}.");
+                        break;
+                    case "Type":
+                        var textToType = ExpandWorkflowVariables(step.Value);
+                        if (string.IsNullOrEmpty(textToType) || !_keyboard.SendUnicodeText(textToType))
+                            throw new InvalidOperationException("Não foi possível digitar o texto da etapa.");
+                        break;
+                    case "Wait":
+                        if (!int.TryParse(step.Value, out var waitMilliseconds) || waitMilliseconds is < 1 or > 60000)
+                            throw new InvalidOperationException("A etapa de espera deve ter entre 1 e 60000 ms.");
+                        await Task.Delay(waitMilliseconds);
+                        break;
+                    default:
+                        throw new InvalidOperationException("O workflow contém uma etapa desconhecida.");
+                }
+
+                if (step.Action is not ("Wait" or "Open") && step.DelayMilliseconds > 0)
+                    await Task.Delay(Math.Clamp(step.DelayMilliseconds, 1, 60000));
+            }
+            RecordActionHistory($"Executar {shortcut.Name}", string.Empty, string.Empty, voiceCommand);
+            Notify("JMD", $"Workflow concluído: {shortcut.Name}.", true);
         }
         catch (Exception exception)
         {
-            SetStatus($"Não foi possível abrir {shortcut.Name}: {exception.Message}", false);
+            SetStatus($"Workflow interrompido ({shortcut.Name}): {exception.Message}", false);
         }
+    }
+
+    private static bool TryGetWorkflowKey(string value, out ushort virtualKey)
+    {
+        virtualKey = 0;
+        var keyName = value.Trim() switch { "Enter" => nameof(Key.Return), "Esc" => nameof(Key.Escape), "Up" => nameof(Key.Up), "Down" => nameof(Key.Down), "Left" => nameof(Key.Left), "Right" => nameof(Key.Right), var other => other };
+        if (!Enum.TryParse<Key>(keyName, true, out var key) || key is Key.None or Key.System or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+            return false;
+        var result = KeyInterop.VirtualKeyFromKey(key);
+        if (result <= 0 || result > ushort.MaxValue) return false;
+        virtualKey = (ushort)result;
+        return true;
+    }
+
+    private string ExpandWorkflowVariables(string text)
+        => Regex.Replace(text, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}", match =>
+        {
+            var variable = _settings.WorkflowVariables.FirstOrDefault(item => item.Name.Equals(match.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
+            if (variable is null)
+                throw new InvalidOperationException($"A variável {{{{{match.Groups[1].Value}}}}} não está cadastrada.");
+            return variable.IsSecret ? WorkflowVariableProtection.Unprotect(variable.ProtectedValue) : variable.Value;
+        });
+
+    private static string DescribeCustomWorkflow(CustomShortcutEntry shortcut)
+    {
+        var count = shortcut.Steps?.Count ?? 0;
+        if (count == 0 && !string.IsNullOrWhiteSpace(shortcut.Target)) count = 1;
+        return count == 1 && !string.IsNullOrWhiteSpace(shortcut.Target) ? shortcut.Target : $"Workflow · {count} etapas";
     }
 
     private static bool TryFocusExistingTarget(string target)
@@ -1926,7 +2071,7 @@ public partial class MainWindow : Window
             CheckUpdatesButton_Click(this, new RoutedEventArgs());
         }
         else if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
-            OpenCustomShortcut(customShortcut);
+            await RunCustomWorkflowAsync(customShortcut);
     }
 
     private void ManageButton_Click(object sender, RoutedEventArgs e)
@@ -3469,7 +3614,7 @@ public partial class MainWindow : Window
         if (id == "saveSnippet") await CaptureSnippetAsync();
         if (id == "createCustomShortcut") CreateCustomShortcutFromDialog();
         if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
-            OpenCustomShortcut(customShortcut);
+            await RunCustomWorkflowAsync(customShortcut);
     }
 
     private async Task TransformSelectionFromPaletteAsync()
