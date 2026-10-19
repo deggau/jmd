@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="JMD" Icon="Assets/JMD.png" Width="760" Height="570" MinWidth="650" MinHeight="480"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStyle="None" Background="{StaticResource SurfaceBrush}"
         WindowStartupLocation="CenterScreen" ShowInTaskbar="False" Topmost="True"
         PreviewKeyDown="Window_PreviewKeyDown" Deactivated="Window_Deactivated">
   <Border Background="{StaticResource SurfaceBrush}" BorderBrush="#FF3A3E48" BorderThickness="1"
@@ -349,6 +349,25 @@
                             <TextBlock Text="{Binding AfterValue}" Foreground="White" TextWrapping="Wrap"
                                        FontFamily="Consolas" Margin="0,3,0,0" />
                           </StackPanel>
+                          <DockPanel LastChildFill="True" Margin="0,0,0,0">
+                            <DockPanel.Style>
+                              <Style TargetType="DockPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding IsApplicationLaunch}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </DockPanel.Style>
+                            <Button Tag="{Binding BeforeValue}" Click="CopyHistoryValue_Click" ToolTip="Copiar aplicativo ou URL chamado"
+                                    Padding="5,2" Margin="0,0,6,0" Background="#FF30343E" Foreground="White" BorderThickness="0"
+                                    DockPanel.Dock="Left">
+                              <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="12" />
+                            </Button>
+                            <TextBlock Text="{Binding BeforeValue}" Foreground="White" TextWrapping="Wrap"
+                                       FontFamily="Consolas" VerticalAlignment="Center" />
+                          </DockPanel>
                           <Grid>
                             <Grid.Style>
                               <Style TargetType="Grid">
@@ -358,6 +377,9 @@
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
                                   <DataTrigger Binding="{Binding IsDraftRestored}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
+                                  <DataTrigger Binding="{Binding IsApplicationLaunch}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
                                   <MultiDataTrigger>

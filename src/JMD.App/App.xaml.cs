@@ -69,6 +69,7 @@ public partial class App : System.Windows.Application
                     window.Dispatcher.BeginInvoke(() =>
                     {
                         var notification = new JmdNotificationWindow(message, historyId);
+                        window.PrepareWindowForCaptureExclusion(notification);
                         notification.HistoryRequested += selectedHistoryId => window.Dispatcher.BeginInvoke(
                             new Action(() => window.ShowHistory(selectedHistoryId)));
                         notification.Show();

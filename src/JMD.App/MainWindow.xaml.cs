@@ -1344,8 +1344,7 @@ public partial class MainWindow : Window
         {
             if (shortcut.FocusIfAlreadyOpen && TryFocusExistingTarget(shortcut.Target))
             {
-                if (voiceCommand is not null)
-                    RecordActionHistory($"Focar {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
+                RecordActionHistory($"Focar {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
                 return;
             }
             if (!CustomCommandLine.TryParse(shortcut.Target, out var executable, out var arguments))
@@ -1353,11 +1352,16 @@ public partial class MainWindow : Window
                 SetStatus($"Não foi possível abrir {shortcut.Name}: comando inválido.", false);
                 return;
             }
-            var startInfo = new ProcessStartInfo { FileName = executable, UseShellExecute = true };
+            var isUrl = Uri.TryCreate(shortcut.Target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = isUrl ? shortcut.Target : executable,
+                UseShellExecute = isUrl
+            };
             foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-            Process.Start(startInfo);
-            if (voiceCommand is not null)
-                RecordActionHistory($"Abrir {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
+            if (Process.Start(startInfo) is null)
+                throw new InvalidOperationException("O Windows não iniciou o aplicativo ou endereço.");
+            RecordActionHistory($"Abrir {shortcut.Name}", shortcut.Target, string.Empty, voiceCommand);
         }
         catch (Exception exception)
         {
@@ -1369,8 +1373,13 @@ public partial class MainWindow : Window
     {
         var isUrl = Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
         var processName = string.Empty;
-        if (!isUrl && CustomCommandLine.TryParse(target, out var executable, out _))
+        if (!isUrl && CustomCommandLine.TryParse(target, out var executable, out var arguments))
+        {
+            // A command with parameters can identify a specific document or folder.
+            // Focusing any existing window of the same executable would skip opening it.
+            if (arguments.Count > 0) return false;
             processName = Path.GetFileNameWithoutExtension(executable);
+        }
         var processNames = isUrl
             ? new HashSet<string>(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"], StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>([processName], StringComparer.OrdinalIgnoreCase);
@@ -1689,6 +1698,7 @@ public partial class MainWindow : Window
                     entry.HasVoiceTranscriptionAudio,
                     new HistoryAudioPlaybackRequest(entry.Id, false),
                     new HistoryAudioPlaybackRequest(entry.Id, true),
+                    HistoryEntryDisplayPolicy.IsApplicationLaunch(entry.CommandName, entry.BeforeValue, entry.AfterValue),
                     entry.CommandName.EndsWith(DraftStack.SavedCommandName, StringComparison.Ordinal),
                     entry.CommandName.EndsWith(DraftStack.RestoredCommandName, StringComparison.Ordinal),
                     entry.Id == _historyTargetId))
@@ -1860,6 +1870,7 @@ public partial class MainWindow : Window
         bool HasVoiceTranscriptionAudio,
         HistoryAudioPlaybackRequest OriginalAudioRequest,
         HistoryAudioPlaybackRequest TranscriptionAudioRequest,
+        bool IsApplicationLaunch,
         bool IsDraftSaved,
         bool IsDraftRestored,
         bool IsNotificationTarget);
@@ -2402,7 +2413,7 @@ public partial class MainWindow : Window
         return accepted;
     }
 
-    private void PrepareWindowForCaptureExclusion(Window window)
+    internal void PrepareWindowForCaptureExclusion(Window window)
     {
         window.SourceInitialized += (_, _) =>
         {

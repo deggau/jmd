@@ -45,8 +45,7 @@ internal sealed class CustomShortcutEditorWindow : Window
         MinWidth = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         WindowStyle = WindowStyle.None;
-        AllowsTransparency = true;
-        Background = Brushes.Transparent;
+        Background = new SolidColorBrush(Color.FromRgb(23, 25, 31));
         Topmost = true;
 
         var outer = new Border

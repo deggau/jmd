@@ -27,8 +27,7 @@ internal sealed class SnippetPickerWindow : Window
         MinHeight = 280;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         WindowStyle = WindowStyle.None;
-        AllowsTransparency = true;
-        Background = Brushes.Transparent;
+        Background = new SolidColorBrush(Color.FromRgb(23, 25, 31));
         Topmost = true;
         Title = "Inserir texto salvo";
 

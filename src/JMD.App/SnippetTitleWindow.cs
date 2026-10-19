@@ -21,8 +21,7 @@ internal sealed class SnippetTitleWindow : Window
         Width = 480;
         SizeToContent = SizeToContent.Height;
         WindowStyle = WindowStyle.None;
-        AllowsTransparency = true;
-        Background = Brushes.Transparent;
+        Background = new SolidColorBrush(Color.FromRgb(23, 25, 31));
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Topmost = true;
         var panel = new StackPanel { Margin = new Thickness(22) };
