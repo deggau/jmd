@@ -41,6 +41,8 @@ public partial class MainWindow : Window
     private const int VkRWin = 0x5C;
     private const uint WindowDisplayAffinityNone = 0;
     private const uint WindowDisplayAffinityExcludeFromCapture = 0x11;
+    private const int DwmWindowCornerPreferenceAttribute = 33;
+    private const int DwmWindowCornerPreferenceRound = 2;
     private readonly SettingsStore _settingsStore = new();
     private readonly UserSettings _settings;
     private ConversionHistoryStore? _historyStore;
@@ -83,6 +85,7 @@ public partial class MainWindow : Window
     private bool _conversionRunning;
     private bool _updatingKeepAwakeToggle;
     private bool _updatingCaptureExclusionToggle;
+    private bool _usesRoundedWindowRegion;
     private bool _loadingAdvancedNotificationToggle;
     private bool _showingDialog;
     private bool _checkingUpdates;
@@ -209,6 +212,12 @@ public partial class MainWindow : Window
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
     {
         var source = (HwndSource)PresentationSource.FromVisual(this)!;
+        _usesRoundedWindowRegion = !TrySetNativeRoundedCorners(source.Handle);
+        if (_usesRoundedWindowRegion)
+        {
+            ApplyRoundedWindowRegion();
+            SizeChanged += (_, _) => Dispatcher.BeginInvoke(new Action(ApplyRoundedWindowRegion));
+        }
         if (ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version) &&
             _settings.HideFromScreenCapture && !TrySetCaptureExcluded(true))
             SetStatus("A preferência para ocultar o JMD foi carregada, mas o Windows não aceitou a solicitação.", false);
@@ -3851,6 +3860,27 @@ public partial class MainWindow : Window
 
     private static bool SetForegroundWindow(IntPtr window) => SetForegroundWindowNative(window);
 
+    private static bool TrySetNativeRoundedCorners(IntPtr window)
+    {
+        var preference = DwmWindowCornerPreferenceRound;
+        return DwmSetWindowAttribute(window, DwmWindowCornerPreferenceAttribute, ref preference, sizeof(int)) == 0;
+    }
+
+    private void ApplyRoundedWindowRegion()
+    {
+        var window = new WindowInteropHelper(this).Handle;
+        if (window == IntPtr.Zero || !GetWindowRect(window, out var rect)) return;
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        if (width <= 0 || height <= 0) return;
+        var scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var cornerDiameter = Math.Max(1, (int)Math.Round(36 * scale));
+        var region = CreateRoundRectRgn(0, 0, width + 1, height + 1, cornerDiameter, cornerDiameter);
+        if (region == IntPtr.Zero) return;
+        if (SetWindowRgn(window, region, true) == 0)
+            DeleteObject(region);
+    }
+
     [DllImport("user32.dll", EntryPoint = "GetAsyncKeyState")]
     private static extern short GetAsyncKeyState(int key);
 
@@ -3861,6 +3891,32 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetWindowDisplayAffinity(IntPtr window, uint affinity);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int valueSize);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int SetWindowRgn(IntPtr window, IntPtr region, [MarshalAs(UnmanagedType.Bool)] bool redraw);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(IntPtr handle);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
 }
 
 internal static class CustomCommandLine
