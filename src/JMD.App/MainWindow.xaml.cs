@@ -924,7 +924,6 @@ public partial class MainWindow : Window
             if (!_settings.WorkflowVariables.Any(variable => variable.Name.Equals(token, StringComparison.OrdinalIgnoreCase)) && !dynamicNames.Contains(token))
                 return $"A variável {{{{{token}}}}} não está cadastrada nem definida como trecho variável em uma frase de voz.";
         }
-        if (shortcutText.Length == 0 && phrases.Length == 0) return "Configure um atalho de teclado ou uma frase do Jey.";
         if (shortcutText.Length > 0 && !ShortcutParser.TryParse(shortcutText, out _, out var shortcutError)) return shortcutError ?? "Atalho inválido.";
         if (shortcutText.Length > 0 && HasShortcutConflict(shortcutText, exceptId)) return "Essa combinação de teclas já está associada a outro comando.";
         if (VoicePhrasePolicy.HasDuplicate(phrases) || VoicePhrasePolicy.ConflictsWith(phrases,
@@ -1495,8 +1494,37 @@ public partial class MainWindow : Window
                             var isUrl = Uri.TryCreate(openTarget, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
                             var startInfo = new ProcessStartInfo { FileName = isUrl ? openTarget : executable, UseShellExecute = isUrl };
                             foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-                            if (Process.Start(startInfo) is null)
-                                throw new InvalidOperationException("O Windows não iniciou o aplicativo ou endereço.");
+                            try
+                            {
+                                if (Process.Start(startInfo) is null)
+                                    throw new InvalidOperationException("O Windows não iniciou o aplicativo ou endereço.");
+                            }
+                            catch (System.ComponentModel.Win32Exception exception) when (!isUrl && IsElevationRequiredError(exception.NativeErrorCode))
+                            {
+                                var answer = MessageBox.Show(this,
+                                    $"O Windows informou que ‘{executable}’ precisa de mais permissões. Quer tentar executá-lo como administrador? O Windows pedirá confirmação.",
+                                    "Permissão necessária", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                                if (answer != MessageBoxResult.Yes)
+                                    throw new OperationCanceledException("A execução com permissões elevadas foi recusada. O workflow foi interrompido.", exception);
+
+                                var elevatedStartInfo = new ProcessStartInfo
+                                {
+                                    FileName = executable,
+                                    Arguments = CustomCommandLine.JoinArguments(arguments),
+                                    WorkingDirectory = Path.IsPathRooted(executable) ? Path.GetDirectoryName(executable) ?? string.Empty : string.Empty,
+                                    UseShellExecute = true,
+                                    Verb = "runas"
+                                };
+                                try
+                                {
+                                    if (Process.Start(elevatedStartInfo) is null)
+                                        throw new InvalidOperationException("O Windows não iniciou o aplicativo com permissões elevadas.");
+                                }
+                                catch (System.ComponentModel.Win32Exception elevationException) when (elevationException.NativeErrorCode == 1223)
+                                {
+                                    throw new OperationCanceledException("O pedido de permissão do Windows foi cancelado. O workflow foi interrompido.", elevationException);
+                                }
+                            }
                             await Task.Delay(step.DelayMilliseconds > 0 ? step.DelayMilliseconds : 1000);
                         }
                         firstLaunch = false;
@@ -1535,6 +1563,9 @@ public partial class MainWindow : Window
             SetStatus($"Workflow interrompido ({shortcut.Name}): {exception.Message}", false);
         }
     }
+
+    private static bool IsElevationRequiredError(int nativeErrorCode)
+        => nativeErrorCode is 5 or 740 or 1314;
 
     private static bool TryGetWorkflowKey(string value, out ushort virtualKey)
     {
@@ -3927,6 +3958,38 @@ public partial class MainWindow : Window
 
 internal static class CustomCommandLine
 {
+    public static string JoinArguments(IEnumerable<string> arguments)
+        => string.Join(" ", arguments.Select(QuoteWindowsArgument));
+
+    private static string QuoteWindowsArgument(string argument)
+    {
+        var result = new System.Text.StringBuilder(argument.Length + 2);
+        result.Append('"');
+        var backslashes = 0;
+        foreach (var character in argument)
+        {
+            if (character == '\\')
+            {
+                backslashes++;
+                continue;
+            }
+            if (character == '"')
+            {
+                result.Append('\\', backslashes * 2 + 1);
+                result.Append('"');
+            }
+            else
+            {
+                result.Append('\\', backslashes);
+                result.Append(character);
+            }
+            backslashes = 0;
+        }
+        result.Append('\\', backslashes * 2);
+        result.Append('"');
+        return result.ToString();
+    }
+
     public static bool TryParse(string commandLine, out string executable, out IReadOnlyList<string> arguments)
     {
         var parts = new List<string>();

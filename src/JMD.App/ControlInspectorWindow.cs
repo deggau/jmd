@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using JMD.Core;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using WpfButton = System.Windows.Controls.Button;
@@ -20,12 +21,17 @@ internal sealed class ControlInspectorWindow : Window
     private readonly TextBlock _name = new() { Text = "Aponte para um campo ou botão…", Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap, MinWidth = 230, MaxWidth = 330, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _details = new() { Foreground = Brushes.LightGray, FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) };
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(180) };
+    private readonly Dispatcher _uiDispatcher = Dispatcher.CurrentDispatcher;
+    private readonly AsyncInspectionCoordinator<System.Windows.Point, InspectionResult> _inspection;
     private string _currentName = string.Empty;
-    private int _inspectionInProgress;
-    private int _requestId;
 
     public ControlInspectorWindow()
     {
+        _inspection = new AsyncInspectionCoordinator<System.Windows.Point, InspectionResult>(
+            ReadControlAt,
+            () => new InspectionResult(string.Empty, "Não foi possível consultar este controle. Tente outro."),
+            action => { _uiDispatcher.BeginInvoke(action); },
+            UpdateInspection);
         Title = "Inspecionar controle";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
@@ -36,8 +42,14 @@ internal sealed class ControlInspectorWindow : Window
         var border = new Border { Background = Background, BorderBrush = new SolidColorBrush(Color.FromRgb(90, 95, 108)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12) };
         var content = new StackPanel();
         border.Child = content;
-        var titleBar = new TextBlock { Text = "Nome acessível do controle", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8), Cursor = WpfCursors.SizeAll };
-        titleBar.MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); };
+        var titleBar = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+        var close = new WpfButton { Content = "×", Padding = new Thickness(8, 1, 8, 2), FontSize = 16, Background = new SolidColorBrush(Color.FromRgb(48, 51, 60)), Foreground = Brushes.White, BorderThickness = new Thickness(0), ToolTip = "Fechar inspetor" };
+        close.Click += (_, _) => Close();
+        DockPanel.SetDock(close, Dock.Right);
+        titleBar.Children.Add(close);
+        var title = new TextBlock { Text = "Nome acessível do controle", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Cursor = WpfCursors.SizeAll };
+        title.MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); };
+        titleBar.Children.Add(title);
         content.Children.Add(titleBar);
         var row = new StackPanel { Orientation = WpfOrientation.Horizontal };
         row.Children.Add(_name);
@@ -53,7 +65,7 @@ internal sealed class ControlInspectorWindow : Window
         content.Children.Add(_details);
         Content = border;
         Loaded += (_, _) => { Left = SystemParameters.WorkArea.Right - ActualWidth - 18; Top = SystemParameters.WorkArea.Bottom - ActualHeight - 18; _timer.Start(); };
-        Closed += (_, _) => { _timer.Stop(); Interlocked.Increment(ref _requestId); };
+        Closed += (_, _) => { _timer.Stop(); _inspection.Close(); };
         _timer.Tick += (_, _) => InspectAtCursor();
     }
 
@@ -62,18 +74,7 @@ internal sealed class ControlInspectorWindow : Window
         if (!GetCursorPos(out var cursor)) return;
         var own = new Rect(Left, Top, ActualWidth, ActualHeight);
         if (own.Contains(new System.Windows.Point(cursor.X, cursor.Y))) return;
-        if (Interlocked.Exchange(ref _inspectionInProgress, 1) != 0) return;
-        var requestId = Interlocked.Increment(ref _requestId);
-        var point = new System.Windows.Point(cursor.X, cursor.Y);
-        _ = Task.Run(() => ReadControlAt(point)).ContinueWith(task =>
-        {
-            Interlocked.Exchange(ref _inspectionInProgress, 0);
-            if (task.IsCanceled || requestId != Volatile.Read(ref _requestId) || !IsLoaded) return;
-            var result = task.Status == TaskStatus.RanToCompletion
-                ? task.Result
-                : new InspectionResult(string.Empty, "Não foi possível consultar este controle. Tente outro.");
-            Dispatcher.BeginInvoke(new Action(() => UpdateInspection(result)));
-        }, TaskScheduler.Default);
+        _ = _inspection.Request(new System.Windows.Point(cursor.X, cursor.Y));
     }
 
     private static InspectionResult ReadControlAt(System.Windows.Point point)
