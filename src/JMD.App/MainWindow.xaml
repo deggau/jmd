@@ -27,9 +27,9 @@
           </StackPanel>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <Button x:Name="HistoryButton" Content="Histórico" Click="HistoryButton_Click"
-                  Padding="14,8" Margin="0,0,8,0" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
           <Button x:Name="ManageButton" Content="Gerenciar atalhos" Click="ManageButton_Click"
+                  Padding="14,8" Margin="0,0,8,0" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
+          <Button x:Name="HistoryButton" Content="Histórico" Click="HistoryButton_Click"
                   Padding="14,8" Margin="0,0,8,0" Background="#FF2A2D35" Foreground="White" BorderThickness="0" />
       <Button x:Name="ExtraButton" Content="..." Click="ExtraButton_Click" Padding="11,8" Margin="0,0,8,0" Background="#FF2A2D35"
                   Foreground="White" BorderThickness="0" ToolTip="Mais opções">

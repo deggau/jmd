@@ -21,6 +21,8 @@ internal sealed class ControlInspectorWindow : Window
     private readonly TextBlock _details = new() { Foreground = Brushes.LightGray, FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) };
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private string _currentName = string.Empty;
+    private int _inspectionInProgress;
+    private int _requestId;
 
     public ControlInspectorWindow()
     {
@@ -51,7 +53,7 @@ internal sealed class ControlInspectorWindow : Window
         content.Children.Add(_details);
         Content = border;
         Loaded += (_, _) => { Left = SystemParameters.WorkArea.Right - ActualWidth - 18; Top = SystemParameters.WorkArea.Bottom - ActualHeight - 18; _timer.Start(); };
-        Closed += (_, _) => _timer.Stop();
+        Closed += (_, _) => { _timer.Stop(); Interlocked.Increment(ref _requestId); };
         _timer.Tick += (_, _) => InspectAtCursor();
     }
 
@@ -60,25 +62,60 @@ internal sealed class ControlInspectorWindow : Window
         if (!GetCursorPos(out var cursor)) return;
         var own = new Rect(Left, Top, ActualWidth, ActualHeight);
         if (own.Contains(new System.Windows.Point(cursor.X, cursor.Y))) return;
+        if (Interlocked.Exchange(ref _inspectionInProgress, 1) != 0) return;
+        var requestId = Interlocked.Increment(ref _requestId);
+        var point = new System.Windows.Point(cursor.X, cursor.Y);
+        _ = Task.Run(() => ReadControlAt(point)).ContinueWith(task =>
+        {
+            Interlocked.Exchange(ref _inspectionInProgress, 0);
+            if (task.IsCanceled || requestId != Volatile.Read(ref _requestId) || !IsLoaded) return;
+            var result = task.Status == TaskStatus.RanToCompletion
+                ? task.Result
+                : new InspectionResult(string.Empty, "Não foi possível consultar este controle. Tente outro.");
+            Dispatcher.BeginInvoke(new Action(() => UpdateInspection(result)));
+        }, TaskScheduler.Default);
+    }
+
+    private static InspectionResult ReadControlAt(System.Windows.Point point)
+    {
         try
         {
-            var element = AutomationElement.FromPoint(new System.Windows.Point(cursor.X, cursor.Y));
-            if (element is null) return;
-            var name = element.Current.Name?.Trim() ?? string.Empty;
-            if (name == _currentName && _details.Text.Length > 0) return;
-            _currentName = name;
-            _name.Text = name.Length == 0 ? "(sem nome acessível)" : name;
-            var type = element.Current.ControlType?.ProgrammaticName?.Replace("ControlType.", "", StringComparison.Ordinal) ?? "Controle";
-            var automationId = element.Current.AutomationId;
-            _details.Text = $"Tipo: {type}" + (string.IsNullOrWhiteSpace(automationId) ? string.Empty : $" · AutomationId: {automationId}");
+            var element = AutomationElement.FromPoint(point);
+            if (element is null) return new InspectionResult(string.Empty, "Nenhum controle acessível sob o cursor.");
+            var nearest = element;
+            var name = string.Empty;
+            for (var depth = 0; depth < 10 && nearest is not null; depth++)
+            {
+                var candidateName = nearest.Current.Name?.Trim() ?? string.Empty;
+                if (candidateName.Length > 0)
+                {
+                    name = candidateName;
+                    break;
+                }
+                nearest = TreeWalker.ControlViewWalker.GetParent(nearest);
+            }
+
+            var type = nearest?.Current.ControlType?.ProgrammaticName?.Replace("ControlType.", "", StringComparison.Ordinal) ??
+                       element.Current.ControlType?.ProgrammaticName?.Replace("ControlType.", "", StringComparison.Ordinal) ?? "Controle";
+            var automationId = nearest?.Current.AutomationId;
+            var details = $"Tipo: {type}" + (string.IsNullOrWhiteSpace(automationId) ? string.Empty : $" · AutomationId: {automationId}");
+            return new InspectionResult(name, details);
         }
-        catch (Exception exception) when (exception is ElementNotAvailableException or InvalidOperationException or COMException)
+        catch (Exception)
         {
-            _currentName = string.Empty;
-            _name.Text = "Não foi possível ler este controle";
-            _details.Text = "Tente apontar para outro campo ou botão.";
+            return new InspectionResult(string.Empty, "Não foi possível consultar este controle. Tente outro.");
         }
     }
+
+    private void UpdateInspection(InspectionResult result)
+    {
+        if (!IsLoaded) return;
+        _currentName = result.Name;
+        _name.Text = result.Name.Length == 0 ? "(sem nome acessível)" : result.Name;
+        _details.Text = result.Details;
+    }
+
+    private sealed record InspectionResult(string Name, string Details);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetCursorPos(out NativePoint point);
