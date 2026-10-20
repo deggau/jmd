@@ -688,27 +688,31 @@ public partial class MainWindow : Window
         editor.CaretIndex = editor.Text.Length;
     }
 
-    private string? FindVoiceCommand(string? transcript)
+    private VoiceCommandMatch? FindVoiceCommand(string? transcript)
     {
         if (NormalizeVoicePhrase(transcript).Length == 0) return null;
 
-        string? matchedCommand = null;
+        VoiceCommandMatch? matchedCommand = null;
         foreach (var commandId in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
         {
             if (_settings.DisabledCommands.Contains(commandId) ||
                 !_settings.VoicePhrases.TryGetValue(commandId, out var phrases))
                 continue;
 
-            var match = phrases.Any(phrase => commandId == "transcribe"
-                ? VoicePhrasePolicy.Matches(phrase, transcript) || VoicePhrasePolicy.StartsWith(phrase, transcript)
-                : VoicePhrasePolicy.Matches(phrase, transcript));
-            if (!match) continue;
+            var phraseMatch = phrases.Select(phrase =>
+            {
+                if (VoicePhrasePolicy.TryMatchTemplate(phrase, transcript, out var captured)) return captured;
+                var exact = VoicePhrasePolicy.Matches(phrase, transcript) ||
+                    commandId == "transcribe" && VoicePhrasePolicy.StartsWith(phrase, transcript);
+                return exact ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : null;
+            }).FirstOrDefault(captured => captured is not null);
+            if (phraseMatch is null) continue;
             if (matchedCommand is not null)
             {
                 SetStatus("Essa frase está associada a mais de um comando. Deixe-a em apenas um comando para usá-la por voz.", false);
                 return null;
             }
-            matchedCommand = commandId;
+            matchedCommand = new VoiceCommandMatch(commandId, phraseMatch);
         }
         return matchedCommand;
     }
@@ -719,6 +723,22 @@ public partial class MainWindow : Window
             .SelectMany(pair => pair.Value)
             .Where(phrase => !string.IsNullOrWhiteSpace(phrase))
             .ToArray();
+
+    private VoiceCommandMatch? FindTypedWorkflowMatch(string? input)
+    {
+        VoiceCommandMatch? result = null;
+        foreach (var shortcut in _settings.CustomShortcuts)
+        {
+            if (_settings.DisabledCommands.Contains(shortcut.Id) || !_settings.VoicePhrases.TryGetValue(shortcut.Id, out var phrases)) continue;
+            foreach (var phrase in phrases)
+            {
+                if (!VoicePhrasePolicy.TryMatchTemplate(phrase, input, out var variables)) continue;
+                if (result is not null) return null;
+                result = new VoiceCommandMatch(shortcut.Id, variables);
+            }
+        }
+        return result;
+    }
 
     private void UpdateVoiceCommandPhrases()
         => _voiceWakeWord?.SetVoiceCommandPhrases(GetEnabledVoiceCommandPhrases());
@@ -885,10 +905,14 @@ public partial class MainWindow : Window
         if (steps.Any(step => step.Action == "Type" && string.IsNullOrEmpty(step.Value))) return "Informe o texto a digitar em cada etapa de texto.";
         if (steps.Any(step => step.Action == "Wait" && (!int.TryParse(step.Value, out var milliseconds) || milliseconds is < 1 or > 60000))) return "A etapa de espera deve ter entre 1 e 60000 ms.";
         if (steps.Any(step => step.Action is not ("Open" or "Key" or "Type" or "Wait"))) return "O workflow contém uma etapa desconhecida.";
-        foreach (var token in steps.Where(step => step.Action == "Type").SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value)))
+        var dynamicNames = dialog.VoicePhrases
+            .SelectMany(phrase => Regex.Matches(phrase, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var token in steps.Where(step => step.Action is "Open" or "Type")
+                     .SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value)))
         {
-            if (!_settings.WorkflowVariables.Any(variable => variable.Name.Equals(token, StringComparison.OrdinalIgnoreCase)))
-                return $"A variável {{{{{token}}}}} não está cadastrada. Cadastre-a em Gerenciar atalhos.";
+            if (!_settings.WorkflowVariables.Any(variable => variable.Name.Equals(token, StringComparison.OrdinalIgnoreCase)) && !dynamicNames.Contains(token))
+                return $"A variável {{{{{token}}}}} não está cadastrada nem definida como trecho variável em uma frase de voz.";
         }
         if (shortcutText.Length == 0 && phrases.Length == 0) return "Configure um atalho de teclado ou uma frase do Jey.";
         if (shortcutText.Length > 0 && !ShortcutParser.TryParse(shortcutText, out _, out var shortcutError)) return shortcutError ?? "Atalho inválido.";
@@ -916,7 +940,7 @@ public partial class MainWindow : Window
 
     private void ManageWorkflowVariables()
     {
-        var dialog = new WorkflowVariablesWindow(_settings.WorkflowVariables);
+        var dialog = new WorkflowVariablesWindow(_settings.WorkflowVariables, PrepareWindowForCaptureExclusion);
         PrepareWindowForCaptureExclusion(dialog);
         _showingDialog = true;
         bool accepted;
@@ -1414,7 +1438,8 @@ public partial class MainWindow : Window
         Notify("JMD", $"Rascunho salvo ({_draftStack.Count} na pilha).", true, historyId);
     }
 
-    private async Task RunCustomWorkflowAsync(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null)
+    private async Task RunCustomWorkflowAsync(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null,
+        IReadOnlyDictionary<string, string>? dynamicVariables = null)
     {
         try
         {
@@ -1445,16 +1470,20 @@ public partial class MainWindow : Window
                 switch (step.Action)
                 {
                     case "Open":
-                        if (firstLaunch && shortcut.FocusIfAlreadyOpen && TryFocusExistingTarget(step.Value))
+                        var commandVariables = voiceCommand?.Variables ?? dynamicVariables;
+                        var openTarget = ExpandWorkflowVariables(step.Value, commandVariables,
+                            urlEncodeValues: step.Value.TrimStart().StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                                step.Value.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+                        if (firstLaunch && shortcut.FocusIfAlreadyOpen && TryFocusExistingTarget(openTarget))
                         {
                             await Task.Delay(step.DelayMilliseconds > 0 ? step.DelayMilliseconds : 100);
                         }
                         else
                         {
-                            if (!CustomCommandLine.TryParse(step.Value, out var executable, out var arguments))
-                                throw new InvalidOperationException($"Programa ou URL inválido: {step.Value}");
-                            var isUrl = Uri.TryCreate(step.Value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
-                            var startInfo = new ProcessStartInfo { FileName = isUrl ? step.Value : executable, UseShellExecute = isUrl };
+                            if (!CustomCommandLine.TryParse(openTarget, out var executable, out var arguments))
+                                throw new InvalidOperationException($"Programa ou URL inválido: {openTarget}");
+                            var isUrl = Uri.TryCreate(openTarget, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+                            var startInfo = new ProcessStartInfo { FileName = isUrl ? openTarget : executable, UseShellExecute = isUrl };
                             foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
                             if (Process.Start(startInfo) is null)
                                 throw new InvalidOperationException("O Windows não iniciou o aplicativo ou endereço.");
@@ -1467,7 +1496,7 @@ public partial class MainWindow : Window
                             throw new InvalidOperationException($"Não foi possível pressionar a tecla {step.Value}.");
                         break;
                     case "Type":
-                        var textToType = ExpandWorkflowVariables(step.Value);
+                        var textToType = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
                         if (string.IsNullOrEmpty(textToType) || !_keyboard.SendUnicodeText(textToType))
                             throw new InvalidOperationException("Não foi possível digitar o texto da etapa.");
                         break;
@@ -1504,13 +1533,18 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private string ExpandWorkflowVariables(string text)
+    private string ExpandWorkflowVariables(string text, IReadOnlyDictionary<string, string>? commandVariables = null,
+        bool urlEncodeValues = false)
         => Regex.Replace(text, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}", match =>
         {
+            var value = commandVariables is not null && commandVariables.TryGetValue(match.Groups[1].Value, out var captured)
+                ? captured
+                : null;
             var variable = _settings.WorkflowVariables.FirstOrDefault(item => item.Name.Equals(match.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
-            if (variable is null)
-                throw new InvalidOperationException($"A variável {{{{{match.Groups[1].Value}}}}} não está cadastrada.");
-            return variable.IsSecret ? WorkflowVariableProtection.Unprotect(variable.ProtectedValue) : variable.Value;
+            if (value is null && variable is null)
+                throw new InvalidOperationException($"O valor {{{{{match.Groups[1].Value}}}}} não foi capturado pela frase de voz e não está cadastrado como variável global.");
+            value ??= variable!.IsSecret ? WorkflowVariableProtection.Unprotect(variable.ProtectedValue) : variable.Value;
+            return urlEncodeValues ? Uri.EscapeDataString(value) : value;
         });
 
     private static string DescribeCustomWorkflow(CustomShortcutEntry shortcut)
@@ -1999,7 +2033,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private sealed record VoiceCommandInvocation(string CommandName, string Transcript, byte[] AudioWav, VoiceCaptureDebugInfo? DebugInfo);
+    private sealed record VoiceCommandMatch(string CommandId, IReadOnlyDictionary<string, string> Variables);
+    private sealed record VoiceCommandInvocation(string CommandName, string Transcript, byte[] AudioWav, VoiceCaptureDebugInfo? DebugInfo,
+        IReadOnlyDictionary<string, string>? Variables = null);
     private sealed record WakeRecognitionHistoryRow(string Time, string Message);
     private sealed record HistoryAudioPlaybackRequest(long HistoryId, bool IsTranscriptionAudio);
 
@@ -2308,12 +2344,13 @@ public partial class MainWindow : Window
             if (_settings.VoiceWakeWordEnabled && ReferenceEquals(_voiceWakeWord, service))
             {
                 var wakeWordOnly = NormalizeVoicePhrase(transcript).Length == 0;
-                var voiceCommandId = FindVoiceCommand(transcript);
-                if (voiceCommandId is not null && transcript is not null)
+                var voiceMatch = FindVoiceCommand(transcript);
+                var voiceCommandId = voiceMatch?.CommandId;
+                if (voiceMatch is not null && transcript is not null)
                 {
                     CloseJeyProcessingNotification();
-                    var commandName = GetVoiceCommandName(voiceCommandId);
-                    HandleHotkeyAsync(voiceCommandId, new VoiceCommandInvocation(commandName, transcript, audioWav, debugInfo));
+                    var commandName = GetVoiceCommandName(voiceMatch.CommandId);
+                    HandleHotkeyAsync(voiceMatch.CommandId, new VoiceCommandInvocation(commandName, transcript, audioWav, debugInfo, voiceMatch.Variables));
                     return;
                 }
 
@@ -3530,9 +3567,10 @@ public partial class MainWindow : Window
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         var query = SearchBox.Text.Trim();
+        var dynamicMatch = FindTypedWorkflowMatch(query);
         foreach (var command in _commands)
             command.Visible = query.Length == 0 || command.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
-                command.Description.Contains(query, StringComparison.CurrentCultureIgnoreCase);
+                command.Description.Contains(query, StringComparison.CurrentCultureIgnoreCase) || command.Id == dynamicMatch?.CommandId;
         _commandView?.Refresh();
     }
 
@@ -3576,6 +3614,13 @@ public partial class MainWindow : Window
         else if (e.Key == Key.Enter && _navigation.CurrentPage == AppPage.Palette &&
                  (SearchBox.IsKeyboardFocusWithin || CommandsList.IsKeyboardFocusWithin))
         {
+            var dynamicMatch = FindTypedWorkflowMatch(SearchBox.Text);
+            if (dynamicMatch is not null)
+            {
+                _ = ExecuteCommandAsync(dynamicMatch.CommandId, dynamicMatch.Variables);
+                e.Handled = true;
+                return;
+            }
             var selected = CommandsList.SelectedItem as CommandRow;
             if (selected is null || !selected.Visible)
                 selected = _commands.FirstOrDefault(command => command.Visible);
@@ -3597,7 +3642,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task ExecuteCommandAsync(string id)
+    private async Task ExecuteCommandAsync(string id, IReadOnlyDictionary<string, string>? dynamicVariables = null)
     {
         Hide();
         if (_settings.DisabledCommands.Contains(id))
@@ -3614,7 +3659,7 @@ public partial class MainWindow : Window
         if (id == "saveSnippet") await CaptureSnippetAsync();
         if (id == "createCustomShortcut") CreateCustomShortcutFromDialog();
         if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
-            await RunCustomWorkflowAsync(customShortcut);
+            await RunCustomWorkflowAsync(customShortcut, dynamicVariables: dynamicVariables);
     }
 
     private async Task TransformSelectionFromPaletteAsync()

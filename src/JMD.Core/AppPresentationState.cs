@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace JMD.Core;
 
@@ -74,11 +75,76 @@ public static class ShortcutDefaults
 
 public static class VoicePhrasePolicy
 {
+    private static readonly Regex TemplateVariable = new(@"\{\{([A-Za-z][A-Za-z0-9_]{0,39})\}\}", RegexOptions.Compiled);
+
     public static bool Matches(string? configuredPhrase, string? recognizedPhrase)
     {
         var configured = Normalize(configuredPhrase);
         var recognized = Normalize(recognizedPhrase);
         return configured.Length > 0 && string.Equals(configured, recognized, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool TryMatchTemplate(string? configuredPhrase, string? recognizedPhrase,
+        out IReadOnlyDictionary<string, string> variables)
+    {
+        variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(configuredPhrase) || string.IsNullOrWhiteSpace(recognizedPhrase)) return false;
+        var placeholders = TemplateVariable.Matches(configuredPhrase);
+        if (placeholders.Count == 0) return false;
+
+        var pattern = new StringBuilder("^");
+        var names = new List<string>();
+        var position = 0;
+        foreach (Match placeholder in placeholders)
+        {
+            var literal = Normalize(configuredPhrase[position..placeholder.Index]);
+            if (literal.Length > 0)
+            {
+                if (pattern.Length > 1) pattern.Append(@"\s+");
+                pattern.Append(Regex.Escape(literal).Replace(@"\ ", @"\s+"));
+            }
+            if (pattern.Length > 1) pattern.Append(@"\s+");
+            var groupName = $"value{names.Count}";
+            names.Add(placeholder.Groups[1].Value);
+            pattern.Append($"(?<{groupName}>[\\p{{L}}\\p{{N}}]+(?:\\s+[\\p{{L}}\\p{{N}}]+)*)");
+            position = placeholder.Index + placeholder.Length;
+        }
+
+        var finalLiteral = Normalize(configuredPhrase[position..]);
+        if (finalLiteral.Length > 0)
+        {
+            pattern.Append(@"\s+");
+            pattern.Append(Regex.Escape(finalLiteral).Replace(@"\ ", @"\s+"));
+        }
+        pattern.Append('$');
+
+        Match match;
+        try { match = Regex.Match(NormalizePreservingCase(recognizedPhrase), pattern.ToString(), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)); }
+        catch (RegexMatchTimeoutException) { return false; }
+        if (!match.Success) return false;
+
+        var captured = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < names.Count; index++)
+            captured[names[index]] = match.Groups[$"value{index}"].Value.Trim();
+        variables = captured;
+        return true;
+    }
+
+    public static bool HasTemplateVariables(string? phrase)
+        => !string.IsNullOrWhiteSpace(phrase) && TemplateVariable.IsMatch(phrase);
+
+    private static string NormalizePreservingCase(string phrase)
+    {
+        var decomposed = phrase.Normalize(NormalizationForm.FormD);
+        var result = new StringBuilder(decomposed.Length);
+        foreach (var character in decomposed)
+        {
+            var category = CharUnicodeInfo.GetUnicodeCategory(character);
+            if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark) continue;
+            if (char.IsLetterOrDigit(character)) result.Append(character);
+            else if (result.Length > 0 && result[^1] != ' ') result.Append(' ');
+        }
+        return result.ToString().Trim();
     }
 
     public static string Normalize(string? phrase)
@@ -97,12 +163,15 @@ public static class VoicePhrasePolicy
         return result.ToString().Trim();
     }
 
+    private static string NormalizeForConflict(string? phrase)
+        => Normalize(string.IsNullOrWhiteSpace(phrase) ? phrase : TemplateVariable.Replace(phrase, " variavel "));
+
     public static bool HasDuplicate(IEnumerable<string> phrases)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var phrase in phrases)
         {
-            var normalized = Normalize(phrase);
+            var normalized = NormalizeForConflict(phrase);
             if (normalized.Length > 0 && !seen.Add(normalized)) return true;
         }
         return false;
@@ -110,9 +179,9 @@ public static class VoicePhrasePolicy
 
     public static bool ConflictsWith(IEnumerable<string> phrases, IEnumerable<string> existingPhrases)
     {
-        var existing = existingPhrases.Select(Normalize).Where(value => value.Length > 0)
+        var existing = existingPhrases.Select(NormalizeForConflict).Where(value => value.Length > 0)
             .ToHashSet(StringComparer.Ordinal);
-        return phrases.Select(Normalize).Any(value => value.Length > 0 && existing.Contains(value));
+        return phrases.Select(NormalizeForConflict).Any(value => value.Length > 0 && existing.Contains(value));
     }
 
     public static bool StartsWith(string? configuredPhrase, string? recognizedPhrase)

@@ -671,8 +671,8 @@ internal sealed class VoiceWakeWordService : IDisposable
     {
         var transcript = RemoveActivationWord(candidate.Text);
         var phrases = Volatile.Read(ref _voiceCommandPhrases);
-        return phrases.Any(phrase => VoicePhrasePolicy.Matches(phrase, transcript) ||
-            VoicePhrasePolicy.StartsWith(phrase, transcript));
+        return phrases.Any(phrase => VoicePhrasePolicy.TryMatchTemplate(phrase, transcript, out _) ||
+            VoicePhrasePolicy.Matches(phrase, transcript) || VoicePhrasePolicy.StartsWith(phrase, transcript));
     }
 
     private static string RemoveActivationWord(string transcript)

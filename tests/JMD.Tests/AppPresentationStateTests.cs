@@ -147,6 +147,34 @@ public sealed class AppPresentationStateTests
     }
 
     [Fact]
+    public void Voice_phrase_template_captures_a_dynamic_value_preserving_case()
+    {
+        Assert.True(VoicePhrasePolicy.TryMatchTemplate("Abra a tarefa {{tarefaId}}", "abra a tarefa AbC-12345", out var variables));
+        Assert.Equal("AbC 12345", variables["tarefaId"]);
+    }
+
+    [Fact]
+    public void Voice_phrase_template_captures_multiple_values_between_literal_words()
+    {
+        Assert.True(VoicePhrasePolicy.TryMatchTemplate("Abra {{tipo}} número {{id}}", "Abra tarefa número 12345", out var variables));
+        Assert.Equal("tarefa", variables["tipo"]);
+        Assert.Equal("12345", variables["id"]);
+    }
+
+    [Fact]
+    public void Voice_phrase_template_requires_literal_words_and_nonempty_values()
+    {
+        Assert.False(VoicePhrasePolicy.TryMatchTemplate("Abra a tarefa {{tarefaId}}", "Abra a tarefa", out _));
+        Assert.False(VoicePhrasePolicy.TryMatchTemplate("Abra a tarefa {{tarefaId}}", "Abra a nota 12345", out _));
+    }
+
+    [Fact]
+    public void Voice_phrase_policy_detects_duplicate_templates_even_when_variable_names_differ()
+    {
+        Assert.True(VoicePhrasePolicy.HasDuplicate(["Abra tarefa {{id}}", "Abra tarefa {{numero}}"]));
+    }
+
+    [Fact]
     public void Voice_phrase_policy_recognizes_and_removes_command_prefix()
     {
         Assert.True(VoicePhrasePolicy.StartsWith("transcrever", "Transcrever... Exemplo de teste!"));
@@ -213,6 +241,12 @@ public sealed class AppPresentationStateTests
     public void Closed_command_grammar_falls_back_to_open_vocabulary_when_no_phrases_are_configured()
     {
         Assert.Null(VoiceCommandGrammar.CreateVoskGrammar(true, "vosk", ["", "  "]));
+    }
+
+    [Fact]
+    public void Closed_vosk_grammar_falls_back_to_open_vocabulary_for_dynamic_voice_phrases()
+    {
+        Assert.Null(VoiceCommandGrammar.CreateVoskGrammar(true, "vosk", ["Abra a tarefa {{tarefaId}}"]));
     }
 
     [Theory]

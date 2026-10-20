@@ -18,12 +18,14 @@ namespace JMD.App;
 internal sealed class WorkflowVariablesWindow : Window
 {
     private readonly List<WorkflowVariableEntry> _variables;
+    private readonly Action<Window> _prepareWindowForCaptureExclusion;
     private readonly StackPanel _items = new();
     public List<WorkflowVariableEntry> Variables => _variables.Select(Clone).ToList();
 
-    public WorkflowVariablesWindow(IEnumerable<WorkflowVariableEntry> variables)
+    public WorkflowVariablesWindow(IEnumerable<WorkflowVariableEntry> variables, Action<Window> prepareWindowForCaptureExclusion)
     {
         _variables = variables.Select(Clone).ToList();
+        _prepareWindowForCaptureExclusion = prepareWindowForCaptureExclusion;
         Title = "Variáveis dos workflows";
         Width = 560;
         Height = 600;
@@ -104,6 +106,7 @@ internal sealed class WorkflowVariablesWindow : Window
         }
         var dialog = new WorkflowVariableEditWindow(existing?.Name ?? string.Empty, initialValue, existing?.IsSecret == true);
         dialog.Owner = this;
+        _prepareWindowForCaptureExclusion(dialog);
         if (dialog.ShowDialog() != true) return;
         var name = dialog.VariableName.Trim();
         if (!Regex.IsMatch(name, "^[A-Za-z][A-Za-z0-9_]{0,39}$"))

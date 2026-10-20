@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace JMD.Core;
 
@@ -8,7 +9,8 @@ public static class VoiceCommandGrammar
     {
         if (!enabled || modelId is not (VoiceModelOptions.SherpaParakeetPtBr or VoiceModelOptions.SherpaZipformerEn)) return [];
         return phrases.Where(phrase => !string.IsNullOrWhiteSpace(phrase))
-            .Select(phrase => phrase.Trim())
+            .Select(phrase => Regex.Replace(Regex.Replace(phrase, @"\{\{[A-Za-z][A-Za-z0-9_]{0,39}\}\}", " "), @"\s+", " ").Trim())
+            .Where(phrase => phrase.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -22,6 +24,7 @@ public static class VoiceCommandGrammar
             .Select(phrase => phrase.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        if (commands.Any(VoicePhrasePolicy.HasTemplateVariables)) return null;
         return commands.Length == 0 ? null : JsonSerializer.Serialize(commands);
     }
 

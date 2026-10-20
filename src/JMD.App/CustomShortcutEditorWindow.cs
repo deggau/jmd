@@ -114,6 +114,12 @@ internal sealed class CustomShortcutEditorWindow : Window
         AddField(form, "Nome do comando", _name, "Nome exibido na lista de comandos");
         AddField(form, "Atalho de teclado (opcional)", _shortcut, "Clique no campo e pressione Ctrl, Alt, Shift ou Win + outra tecla");
         AddField(form, "Frases do Jey (opcional)", _phrases, "Uma frase por linha");
+        form.Children.Add(new TextBlock
+        {
+            Text = "Use {{nome}} para capturar um trecho da frase, por exemplo: Abra a tarefa {{tarefaId}}. Você pode falar a frase ao Jey ou digitá-la na busca e pressionar Enter. Use o mesmo marcador na URL ou nos parâmetros do programa; coloque o parâmetro entre aspas se puder conter espaços.",
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(2, -4, 2, 8)
+        });
         _shortcut.PreviewKeyDown += CaptureShortcut;
 
         form.Children.Add(new TextBlock { Text = "Etapas do workflow", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(2, 14, 2, 3) });
