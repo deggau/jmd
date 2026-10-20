@@ -24,6 +24,7 @@ internal sealed class ControlInspectorWindow : Window
     private readonly Dispatcher _uiDispatcher = Dispatcher.CurrentDispatcher;
     private readonly AsyncInspectionCoordinator<System.Windows.Point, InspectionResult> _inspection;
     private string _currentName = string.Empty;
+    private readonly InspectionRequestGate<System.Windows.Point> _requestGate = new();
 
     public ControlInspectorWindow()
     {
@@ -57,8 +58,15 @@ internal sealed class ControlInspectorWindow : Window
         copy.Click += (_, _) =>
         {
             if (_currentName.Length == 0) return;
-            try { WpfClipboard.SetText(_currentName); copy.Content = "Copiado"; }
-            catch (System.Runtime.InteropServices.ExternalException) { copy.Content = "Falhou"; }
+            try
+            {
+                WpfClipboard.SetText(_currentName);
+                Close();
+            }
+            catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException)
+            {
+                copy.Content = "Falhou";
+            }
         };
         row.Children.Add(copy);
         content.Children.Add(row);
@@ -73,8 +81,14 @@ internal sealed class ControlInspectorWindow : Window
     {
         if (!GetCursorPos(out var cursor)) return;
         var own = new Rect(Left, Top, ActualWidth, ActualHeight);
-        if (own.Contains(new System.Windows.Point(cursor.X, cursor.Y))) return;
-        _ = _inspection.Request(new System.Windows.Point(cursor.X, cursor.Y));
+        var point = new System.Windows.Point(cursor.X, cursor.Y);
+        if (own.Contains(point))
+        {
+            _requestGate.Reset();
+            return;
+        }
+        if (!_requestGate.TryAccept(point)) return;
+        _ = _inspection.Request(point);
     }
 
     private static InspectionResult ReadControlAt(System.Windows.Point point)
@@ -83,10 +97,20 @@ internal sealed class ControlInspectorWindow : Window
         {
             var element = AutomationElement.FromPoint(point);
             if (element is null) return new InspectionResult(string.Empty, "Nenhum controle acessível sob o cursor.");
+            // Keep the hit element's type and id. Walking to a named ancestor
+            // and using its metadata made browser pages look like RootWebArea
+            // even when the pointer was over a textbox.
+            var hitType = element.Current.ControlType;
+            var hitTypeName = hitType?.ProgrammaticName?.Replace("ControlType.", "", StringComparison.Ordinal) ?? "Controle";
+            var automationId = element.Current.AutomationId;
             var nearest = element;
             var name = string.Empty;
             for (var depth = 0; depth < 10 && nearest is not null; depth++)
             {
+                var candidateType = nearest.Current.ControlType;
+                if (!ReferenceEquals(nearest, element) &&
+                    (candidateType == ControlType.Document || candidateType == ControlType.Pane))
+                    break;
                 var candidateName = nearest.Current.Name?.Trim() ?? string.Empty;
                 if (candidateName.Length > 0)
                 {
@@ -96,10 +120,7 @@ internal sealed class ControlInspectorWindow : Window
                 nearest = TreeWalker.ControlViewWalker.GetParent(nearest);
             }
 
-            var type = nearest?.Current.ControlType?.ProgrammaticName?.Replace("ControlType.", "", StringComparison.Ordinal) ??
-                       element.Current.ControlType?.ProgrammaticName?.Replace("ControlType.", "", StringComparison.Ordinal) ?? "Controle";
-            var automationId = nearest?.Current.AutomationId;
-            var details = $"Tipo: {type}" + (string.IsNullOrWhiteSpace(automationId) ? string.Empty : $" · AutomationId: {automationId}");
+            var details = $"Tipo: {hitTypeName}" + (string.IsNullOrWhiteSpace(automationId) ? string.Empty : $" · AutomationId: {automationId}");
             return new InspectionResult(name, details);
         }
         catch (Exception)
