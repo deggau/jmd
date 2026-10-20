@@ -913,11 +913,12 @@ public partial class MainWindow : Window
         if (steps.Any(step => step.Action == "Key" && !TryGetWorkflowKey(step.Value, out _))) return "Informe uma tecla válida, como Tab, Enter, Escape ou F1.";
         if (steps.Any(step => step.Action == "Type" && string.IsNullOrEmpty(step.Value))) return "Informe o texto a digitar em cada etapa de texto.";
         if (steps.Any(step => step.Action == "Wait" && (!int.TryParse(step.Value, out var milliseconds) || milliseconds is < 1 or > 60000))) return "A etapa de espera deve ter entre 1 e 60000 ms.";
-        if (steps.Any(step => step.Action is not ("Open" or "Key" or "Type" or "Wait"))) return "O workflow contém uma etapa desconhecida.";
+        if (steps.Any(step => step.Action == "Focus" && string.IsNullOrWhiteSpace(step.Value))) return "Informe o nome acessível do campo ou botão a focar.";
+        if (steps.Any(step => step.Action is not ("Open" or "Key" or "Type" or "Wait" or "Focus"))) return "O workflow contém uma etapa desconhecida.";
         var dynamicNames = dialog.VoicePhrases
             .SelectMany(phrase => Regex.Matches(phrase, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var token in steps.Where(step => step.Action is "Open" or "Type")
+        foreach (var token in steps.Where(step => step.Action is "Open" or "Type" or "Focus")
                      .SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value)))
         {
             if (!_settings.WorkflowVariables.Any(variable => variable.Name.Equals(token, StringComparison.OrdinalIgnoreCase)) && !dynamicNames.Contains(token))
@@ -1464,7 +1465,7 @@ public partial class MainWindow : Window
             }
 
             var firstLaunch = true;
-            var hasTypingOrKeys = steps.Any(step => step.Action is "Key" or "Type");
+            var hasTypingOrKeys = steps.Any(step => step.Action is "Key" or "Type" or "Focus");
             var hasOpenStep = steps.Any(step => step.Action == "Open");
             if (hasTypingOrKeys && !hasOpenStep && _previousWindow == IntPtr.Zero)
                 throw new InvalidOperationException("Não foi possível identificar a janela que deve receber o texto.");
@@ -1508,6 +1509,11 @@ public partial class MainWindow : Window
                         var textToType = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
                         if (string.IsNullOrEmpty(textToType) || !_keyboard.SendUnicodeText(textToType))
                             throw new InvalidOperationException("Não foi possível digitar o texto da etapa.");
+                        break;
+                    case "Focus":
+                        var controlName = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
+                        if (!_focusedText.FocusControlByName(controlName))
+                            throw new InvalidOperationException($"Não encontrei um campo ou botão acessível com o nome ‘{controlName}’. Confira se o navegador expõe esse nome à Automação do Windows.");
                         break;
                     case "Wait":
                         if (!int.TryParse(step.Value, out var waitMilliseconds) || waitMilliseconds is < 1 or > 60000)

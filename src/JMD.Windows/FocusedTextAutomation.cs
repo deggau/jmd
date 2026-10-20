@@ -7,6 +7,28 @@ namespace JMD.Windows;
 /// <summary>Reads and edits text in the currently focused control through UI Automation and keyboard input.</summary>
 public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
 {
+    /// <summary>Finds a visible control by its accessible name and moves keyboard focus to it.</summary>
+    public bool FocusControlByName(string accessibleName)
+    {
+        if (string.IsNullOrWhiteSpace(accessibleName)) return false;
+        try
+        {
+            var matches = AutomationElement.RootElement.FindAll(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.NameProperty, accessibleName.Trim(), PropertyConditionFlags.IgnoreCase));
+            foreach (AutomationElement element in matches)
+            {
+                if (!element.Current.IsEnabled || !element.Current.IsKeyboardFocusable) continue;
+                element.SetFocus();
+                return true;
+            }
+        }
+        catch (Exception exception) when (IsAutomationFailure(exception) || exception is UnauthorizedAccessException)
+        {
+            return false;
+        }
+        return false;
+    }
+
     public string? ReadSelection()
     {
         try

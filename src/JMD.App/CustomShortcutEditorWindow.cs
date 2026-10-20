@@ -122,7 +122,21 @@ internal sealed class CustomShortcutEditorWindow : Window
         });
         _shortcut.PreviewKeyDown += CaptureShortcut;
 
-        form.Children.Add(new TextBlock { Text = "Etapas do workflow", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(2, 14, 2, 3) });
+        var workflowHeading = new DockPanel { Margin = new Thickness(2, 14, 2, 3) };
+        var inspectControl = MakeButton("Inspecionar controle", false);
+        inspectControl.Padding = new Thickness(9, 5, 9, 5);
+        inspectControl.ToolTip = "Esconda esta janela e mostre o nome acessível do controle sob o cursor.";
+        inspectControl.Click += (_, _) =>
+        {
+            var inspector = new ControlInspectorWindow();
+            Hide();
+            inspector.Closed += (_, _) => Show();
+            inspector.Show();
+        };
+        DockPanel.SetDock(inspectControl, Dock.Right);
+        workflowHeading.Children.Add(inspectControl);
+        workflowHeading.Children.Add(new TextBlock { Text = "Etapas do workflow", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+        form.Children.Add(workflowHeading);
         form.Children.Add(new TextBlock { Text = "As etapas são executadas na ordem abaixo. Após abrir um programa, o JMD aguarda um instante antes de continuar.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 0, 2, 8) });
         var availableVariables = variableNames?.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray() ?? [];
         form.Children.Add(new TextBlock { Text = availableVariables.Length == 0
@@ -178,8 +192,8 @@ internal sealed class CustomShortcutEditorWindow : Window
                 actions.Children.Add(button);
             }
 
-            var type = new ComboBox { Margin = new Thickness(0, 8, 0, 5), Padding = new Thickness(6, 4, 6, 4), ItemsSource = new[] { "Abrir programa ou URL", "Pressionar tecla", "Digitar texto", "Aguardar" } };
-            type.SelectedIndex = step.Action switch { "Open" => 0, "Key" => 1, "Type" => 2, "Wait" => 3, _ => 2 };
+            var type = new ComboBox { Margin = new Thickness(0, 8, 0, 5), Padding = new Thickness(6, 4, 6, 4), ItemsSource = new[] { "Abrir programa ou URL", "Pressionar tecla", "Digitar texto", "Aguardar", "Focar campo ou botão pelo nome" } };
+            type.SelectedIndex = step.Action switch { "Open" => 0, "Key" => 1, "Type" => 2, "Wait" => 3, "Focus" => 4, _ => 2 };
             body.Children.Add(type);
             var value = CreateBox(step.Action == "Type" ? 68 : 36, multiline: step.Action == "Type");
             value.Text = step.Value;
@@ -216,12 +230,19 @@ internal sealed class CustomShortcutEditorWindow : Window
                         value.TextWrapping = TextWrapping.Wrap;
                         delayLabel.Text = "Pausa após digitar (ms, opcional)";
                         break;
-                    default:
+                    case 3:
                         valueLabel.Text = "Tempo de espera (ms)";
                         value.ToolTip = "Informe um valor entre 1 e 60000 ms";
                         value.Height = 36; value.AcceptsReturn = false;
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "";
+                        break;
+                    default:
+                        valueLabel.Text = "Nome acessível do campo ou botão";
+                        value.ToolTip = "Ex.: Usuário, Senha, Conectar. O navegador precisa expor o texto à Automação do Windows.";
+                        value.Height = 36; value.AcceptsReturn = false;
+                        value.TextWrapping = TextWrapping.NoWrap;
+                        delayLabel.Text = "Pausa após focar (ms, opcional)";
                         break;
                 }
                 delayLabel.Visibility = type.SelectedIndex == 3 ? Visibility.Collapsed : Visibility.Visible;
@@ -257,7 +278,7 @@ internal sealed class CustomShortcutEditorWindow : Window
         foreach (var step in _steps)
         {
             if (step.TypeBox is not null)
-                step.Action = step.TypeBox.SelectedIndex switch { 0 => "Open", 1 => "Key", 2 => "Type", 3 => "Wait", _ => "Type" };
+                step.Action = step.TypeBox.SelectedIndex switch { 0 => "Open", 1 => "Key", 2 => "Type", 3 => "Wait", 4 => "Focus", _ => "Type" };
             if (step.ValueBox is not null) step.Value = step.ValueBox.Text;
             if (step.DelayBox is not null)
                 step.DelayMilliseconds = int.TryParse(step.DelayBox.Text, out var milliseconds) ? milliseconds : -1;
