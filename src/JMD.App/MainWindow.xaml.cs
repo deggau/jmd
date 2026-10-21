@@ -3657,6 +3657,7 @@ public partial class MainWindow : Window
         AboutVersionText.Text = $"Versão instalada: {version}";
         UpdateStatusText.Text = "Verifique se há uma versão mais recente no GitHub.";
         InstallUpdateButton.Visibility = Visibility.Collapsed;
+        SilentUpdateToggle.Visibility = Visibility.Collapsed;
     }
 
     private static string GetInstalledVersion()
@@ -3682,6 +3683,7 @@ public partial class MainWindow : Window
         _checkingUpdates = true;
         var shouldInstall = false;
         InstallUpdateButton.Visibility = Visibility.Collapsed;
+        SilentUpdateToggle.Visibility = Visibility.Collapsed;
         UpdateStatusText.Text = "Consultando a versão mais recente no GitHub…";
         try
         {
@@ -3703,7 +3705,11 @@ public partial class MainWindow : Window
                 if (installWhenAvailable)
                     shouldInstall = true;
                 else
+                {
+                    SilentUpdateToggle.IsChecked = _settings.SilentUpdatesEnabled;
+                    SilentUpdateToggle.Visibility = Visibility.Visible;
                     InstallUpdateButton.Visibility = Visibility.Visible;
+                }
             }
             else
             {
@@ -3814,6 +3820,7 @@ public partial class MainWindow : Window
             var startedProcess = Process.Start(new ProcessStartInfo
             {
                 FileName = installerPath,
+                Arguments = _settings.SilentUpdatesEnabled ? "/S" : string.Empty,
                 UseShellExecute = true
             });
             if (startedProcess is null)
@@ -3843,6 +3850,17 @@ public partial class MainWindow : Window
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }
+        }
+    }
+
+    private void SilentUpdateToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_settings is null || SilentUpdateToggle is null) return;
+        _settings.SilentUpdatesEnabled = SilentUpdateToggle.IsChecked == true;
+        try { _settingsStore.Save(_settings); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            UpdateStatusText.Text = $"A preferência de atualização silenciosa não pôde ser salva: {exception.Message}";
         }
     }
 
