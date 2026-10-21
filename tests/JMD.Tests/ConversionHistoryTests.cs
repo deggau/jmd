@@ -61,6 +61,20 @@ public sealed class ConversionHistoryTests : IDisposable
     }
 
     [Fact]
+    public void Failed_workflow_history_keeps_the_failure_reason_and_can_be_searched()
+    {
+        var store = new ConversionHistoryStore(DatabasePath);
+        store.Add("Executar Conectar na VPN", string.Empty, string.Empty,
+            isFailure: true, failureDetails: "Abrir programa ou URL: acesso negado");
+
+        var entry = Assert.Single(store.SearchPage("acesso negado", 10, 0));
+
+        Assert.True(entry.IsFailure);
+        Assert.Equal("Abrir programa ou URL: acesso negado", entry.FailureDetails);
+        Assert.Equal(entry, store.GetLatest());
+    }
+
+    [Fact]
     public void Voice_history_keeps_recorded_audio_available_for_playback()
     {
         var store = new ConversionHistoryStore(DatabasePath);

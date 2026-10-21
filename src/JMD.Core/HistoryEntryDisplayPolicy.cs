@@ -14,4 +14,13 @@ public static class HistoryEntryDisplayPolicy
         return actionName.StartsWith("Abrir ", StringComparison.OrdinalIgnoreCase) ||
                actionName.StartsWith("Focar ", StringComparison.OrdinalIgnoreCase);
     }
+
+    public static bool IsWorkflowExecution(string commandName)
+    {
+        var actionName = commandName.StartsWith(VoiceCommandPrefix, StringComparison.Ordinal)
+            ? commandName[VoiceCommandPrefix.Length..]
+            : commandName;
+        return actionName.StartsWith("Executar ", StringComparison.OrdinalIgnoreCase) ||
+               actionName.StartsWith("Testar ", StringComparison.OrdinalIgnoreCase);
+    }
 }

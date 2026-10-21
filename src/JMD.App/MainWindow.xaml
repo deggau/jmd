@@ -231,6 +231,14 @@
                                 <Setter Property="Background" Value="#FF303B2C" />
                                 <Setter Property="BorderBrush" Value="#FFB4F36A" />
                               </DataTrigger>
+                              <DataTrigger Binding="{Binding IsWorkflowExecution}" Value="True">
+                                <Setter Property="Background" Value="#FF283125" />
+                                <Setter Property="BorderBrush" Value="#FF586E3E" />
+                              </DataTrigger>
+                              <DataTrigger Binding="{Binding IsFailure}" Value="True">
+                                <Setter Property="Background" Value="#FF382428" />
+                                <Setter Property="BorderBrush" Value="#FFE05B65" />
+                              </DataTrigger>
                             </Style.Triggers>
                           </Style>
                         </Border.Style>
@@ -249,12 +257,38 @@
                                 </Style>
                               </TextBlock.Style>
                             </TextBlock>
-                            <TextBlock Text="{Binding CommandName}" Foreground="#FFB4F36A" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding CommandName}" FontWeight="SemiBold">
+                              <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                  <Setter Property="Foreground" Value="#FFB4F36A" />
+                                  <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFailure}" Value="True">
+                                      <Setter Property="Foreground" Value="#FFFF7A83" />
+                                    </DataTrigger>
+                                  </Style.Triggers>
+                                </Style>
+                              </TextBlock.Style>
+                            </TextBlock>
                             <TextBlock Text="{Binding DisplayDate}" Foreground="#FF969BA7"
                                        HorizontalAlignment="Right" DockPanel.Dock="Right" />
                           </DockPanel>
                           <TextBlock Text="{Binding SourceDisplay}" Foreground="#FF747985" FontSize="10"
                                      TextWrapping="Wrap" Margin="0,-5,0,8" />
+                          <StackPanel Margin="0,0,0,8">
+                            <StackPanel.Style>
+                              <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding IsFailure}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="Falhou nesta etapa" Foreground="#FFFF7A83" FontSize="11" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding FailureDetails}" Foreground="#FFFFDADD" FontSize="11"
+                                       TextWrapping="Wrap" Margin="0,3,0,0" />
+                          </StackPanel>
                           <StackPanel Margin="0,0,0,8">
                             <StackPanel.Style>
                               <Style TargetType="StackPanel">
@@ -381,6 +415,9 @@
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
                                   <DataTrigger Binding="{Binding IsApplicationLaunch}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
+                                  <DataTrigger Binding="{Binding IsWorkflowExecution}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
                                   <MultiDataTrigger>

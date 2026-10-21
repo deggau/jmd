@@ -7,17 +7,56 @@ namespace JMD.Windows;
 /// <summary>Reads and edits text in the currently focused control through UI Automation and keyboard input.</summary>
 public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
 {
-    /// <summary>Finds a visible control by its accessible name and moves keyboard focus to it.</summary>
+    /// <summary>Captures the current UIA focus and returns a best-effort action that restores it.</summary>
+    public Func<bool>? CaptureFocusRestorer(IntPtr expectedWindow = default)
+    {
+        try
+        {
+            var focused = AutomationElement.FocusedElement;
+            if (focused is null) return null;
+            if (expectedWindow != IntPtr.Zero)
+            {
+                var focusedWindow = new IntPtr(focused.Current.NativeWindowHandle);
+                var rootWindow = GetAncestor(focusedWindow, 2);
+                if (focusedWindow != expectedWindow && rootWindow != expectedWindow) return null;
+            }
+            return () =>
+            {
+                try
+                {
+                    if (!focused.Current.IsEnabled || !focused.Current.IsKeyboardFocusable) return false;
+                    focused.SetFocus();
+                    return true;
+                }
+                catch (Exception exception) when (IsAutomationFailure(exception) || exception is UnauthorizedAccessException)
+                {
+                    return false;
+                }
+            };
+        }
+        catch (Exception exception) when (IsAutomationFailure(exception) || exception is UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Finds a visible control by its accessible name or AutomationId and moves keyboard focus to it.</summary>
     public bool FocusControlByName(string accessibleName)
     {
         if (string.IsNullOrWhiteSpace(accessibleName)) return false;
         try
         {
+            var name = accessibleName.Trim();
             var matches = AutomationElement.RootElement.FindAll(TreeScope.Descendants,
-                new PropertyCondition(AutomationElement.NameProperty, accessibleName.Trim(), PropertyConditionFlags.IgnoreCase));
+                new OrCondition(
+                    new PropertyCondition(AutomationElement.NameProperty, name, PropertyConditionFlags.IgnoreCase),
+                    new PropertyCondition(AutomationElement.AutomationIdProperty, name, PropertyConditionFlags.IgnoreCase)));
             foreach (AutomationElement element in matches)
             {
-                if (!element.Current.IsEnabled || !element.Current.IsKeyboardFocusable) continue;
+                var current = element.Current;
+                if (!current.IsEnabled || !current.IsKeyboardFocusable) continue;
+                if (!string.Equals(current.Name?.Trim(), name, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(current.AutomationId?.Trim(), name, StringComparison.OrdinalIgnoreCase)) continue;
                 element.SetFocus();
                 return true;
             }
@@ -124,4 +163,7 @@ public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
 
     private static bool IsTextEntry(AutomationElement element)
         => element.Current.ControlType == ControlType.Edit && element.Current.IsEnabled && element.Current.IsKeyboardFocusable;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr handle, uint flags);
 }

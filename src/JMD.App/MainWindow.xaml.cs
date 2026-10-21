@@ -826,11 +826,21 @@ public partial class MainWindow : Window
     {
         (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen, List<CustomWorkflowStep> Steps)? previous = existing is null
             ? null : (existing.Name, existing.Target, existing.Shortcut, existing.FocusIfAlreadyOpen,
-                existing.Steps.Select(step => new CustomWorkflowStep { Action = step.Action, Value = step.Value, DelayMilliseconds = step.DelayMilliseconds }).ToList());
+                existing.Steps.Select(step => new CustomWorkflowStep { Action = step.Action, Value = step.Value, DelayMilliseconds = step.DelayMilliseconds, RepeatCount = step.RepeatCount }).ToList());
         var previousPhrases = existing is not null && _settings.VoicePhrases.TryGetValue(existing.Id, out var savedPhrases)
             ? savedPhrases.ToList() : [];
         var dialog = new CustomShortcutEditorWindow(existing, previousPhrases,
-            _settings.WorkflowVariables.Select(variable => variable.Name), draft => ValidateCustomWorkflowDraft(draft, existing?.Id));
+            _settings.WorkflowVariables.Select(variable => variable.Name),
+            draft => ValidateCustomWorkflowDraft(draft, existing?.Id),
+            draft => RunCustomWorkflowAsync(new CustomShortcutEntry
+            {
+                Id = existing?.Id ?? $"custom:test:{Guid.NewGuid():N}",
+                Name = draft.CommandName,
+                Target = draft.Steps.FirstOrDefault(step => step.Action == "Open")?.Value ?? string.Empty,
+                Shortcut = draft.Shortcut,
+                FocusIfAlreadyOpen = draft.FocusIfAlreadyOpen,
+                Steps = draft.Steps
+            }, isTestExecution: true));
         PrepareWindowForCaptureExclusion(dialog);
         _showingDialog = true;
         bool accepted;
@@ -911,6 +921,7 @@ public partial class MainWindow : Window
         if (steps.Any(step => step.DelayMilliseconds is < 0 or > 60000)) return "A pausa após cada etapa deve ficar entre 0 e 60000 ms.";
         if (steps.Any(step => step.Action == "Open" && !IsValidCustomTarget(step.Value))) return "Informe um caminho de programa ou uma URL http/https válida em cada etapa de abertura.";
         if (steps.Any(step => step.Action == "Key" && !TryGetWorkflowKey(step.Value, out _))) return "Informe uma tecla válida, como Tab, Enter, Escape ou F1.";
+        if (steps.Any(step => step.Action == "Key" && !WorkflowRepeatPolicy.IsValidCount(step.RepeatCount))) return $"A repetição da tecla deve ficar entre {WorkflowRepeatPolicy.MinimumCount} e {WorkflowRepeatPolicy.MaximumCount} vezes.";
         if (steps.Any(step => step.Action == "Type" && string.IsNullOrEmpty(step.Value))) return "Informe o texto a digitar em cada etapa de texto.";
         if (steps.Any(step => step.Action == "Wait" && (!int.TryParse(step.Value, out var milliseconds) || milliseconds is < 1 or > 60000))) return "A etapa de espera deve ter entre 1 e 60000 ms.";
         if (steps.Any(step => step.Action == "Focus" && string.IsNullOrWhiteSpace(step.Value))) return "Informe o nome acessível do campo ou botão a focar.";
@@ -1207,16 +1218,17 @@ public partial class MainWindow : Window
         Notify("JMD", $"Texto inserido: {snippet.Title}", true, historyId);
     }
 
-    private long? RecordActionHistory(string commandName, string beforeValue, string afterValue, VoiceCommandInvocation? voiceCommand = null)
+    private long? RecordActionHistory(string commandName, string beforeValue, string afterValue,
+        VoiceCommandInvocation? voiceCommand = null, bool isFailure = false, string? failureDetails = null)
     {
         if (_historyStore is null) return null;
         try
         {
-            return RecordCommandHistory(commandName, beforeValue, afterValue, voiceCommand);
+            return RecordCommandHistory(commandName, beforeValue, afterValue, voiceCommand, isFailure, failureDetails);
         }
         catch (Exception exception)
         {
-            SetStatus($"Ação concluída, mas não foi possível salvar no histórico: {exception.Message}", false);
+            SetStatus($"Não foi possível salvar a ação no histórico: {exception.Message}", false);
             return null;
         }
     }
@@ -1447,9 +1459,12 @@ public partial class MainWindow : Window
         Notify("JMD", $"Rascunho salvo ({_draftStack.Count} na pilha).", true, historyId);
     }
 
-    private async Task RunCustomWorkflowAsync(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null,
-        IReadOnlyDictionary<string, string>? dynamicVariables = null)
+    private async Task<bool> RunCustomWorkflowAsync(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null,
+        IReadOnlyDictionary<string, string>? dynamicVariables = null, bool isTestExecution = false)
     {
+        var currentStepDescription = "Preparação do workflow";
+        var restoreInitialFocus = _focusedText.CaptureFocusRestorer(isTestExecution ? IntPtr.Zero : _previousWindow);
+        var launchedProgram = false;
         try
         {
             if (!await _keyboard.WaitForModifiersReleasedAsync())
@@ -1458,10 +1473,7 @@ public partial class MainWindow : Window
             if (steps.Count == 0 && !string.IsNullOrWhiteSpace(shortcut.Target))
                 steps = [new CustomWorkflowStep { Action = "Open", Value = shortcut.Target }];
             if (steps.Count == 0)
-            {
-                SetStatus($"O workflow {shortcut.Name} não tem etapas.", false);
-                return;
-            }
+                throw new InvalidOperationException($"O workflow {shortcut.Name} não tem etapas.");
 
             var firstLaunch = true;
             var hasTypingOrKeys = steps.Any(step => step.Action is "Key" or "Type" or "Focus");
@@ -1476,6 +1488,15 @@ public partial class MainWindow : Window
 
             foreach (var step in steps)
             {
+                currentStepDescription = step.Action switch
+                {
+                    "Open" => "Abrir programa ou URL",
+                    "Key" => "Pressionar tecla",
+                    "Type" => "Digitar texto",
+                    "Focus" => "Localizar controle",
+                    "Wait" => "Aguardar",
+                    _ => "Executar etapa"
+                };
                 switch (step.Action)
                 {
                     case "Open":
@@ -1492,8 +1513,27 @@ public partial class MainWindow : Window
                             if (!CustomCommandLine.TryParse(openTarget, out var executable, out var arguments))
                                 throw new InvalidOperationException($"Programa ou URL inválido: {openTarget}");
                             var isUrl = Uri.TryCreate(openTarget, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
-                            var startInfo = new ProcessStartInfo { FileName = isUrl ? openTarget : executable, UseShellExecute = isUrl };
-                            foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+                            var workingDirectory = string.Empty;
+                            if (!isUrl && Path.GetExtension(executable).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var shortcutTarget = WindowsShortcutResolver.Resolve(executable);
+                                if (!CustomCommandLine.TryParse($"shortcut.exe {shortcutTarget.Arguments}", out _, out var shortcutArguments))
+                                    throw new InvalidOperationException($"O atalho ‘{Path.GetFileName(executable)}’ possui argumentos inválidos.");
+                                arguments = WorkflowArgumentPolicy.Combine(shortcutArguments, arguments);
+                                executable = shortcutTarget.TargetPath;
+                                workingDirectory = shortcutTarget.WorkingDirectory;
+                                isUrl = Uri.TryCreate(executable, UriKind.Absolute, out uri) && uri.Scheme is "http" or "https";
+                            }
+                            var startInfo = new ProcessStartInfo
+                            {
+                                FileName = executable,
+                                WorkingDirectory = workingDirectory,
+                                UseShellExecute = isUrl
+                            };
+                            if (isUrl)
+                                startInfo.Arguments = CustomCommandLine.JoinArguments(arguments);
+                            else
+                                foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
                             try
                             {
                                 if (Process.Start(startInfo) is null)
@@ -1511,7 +1551,9 @@ public partial class MainWindow : Window
                                 {
                                     FileName = executable,
                                     Arguments = CustomCommandLine.JoinArguments(arguments),
-                                    WorkingDirectory = Path.IsPathRooted(executable) ? Path.GetDirectoryName(executable) ?? string.Empty : string.Empty,
+                                    WorkingDirectory = !string.IsNullOrWhiteSpace(workingDirectory)
+                                        ? workingDirectory
+                                        : Path.IsPathRooted(executable) ? Path.GetDirectoryName(executable) ?? string.Empty : string.Empty,
                                     UseShellExecute = true,
                                     Verb = "runas"
                                 };
@@ -1525,13 +1567,21 @@ public partial class MainWindow : Window
                                     throw new OperationCanceledException("O pedido de permissão do Windows foi cancelado. O workflow foi interrompido.", elevationException);
                                 }
                             }
+                            launchedProgram = true;
                             await Task.Delay(step.DelayMilliseconds > 0 ? step.DelayMilliseconds : 1000);
                         }
                         firstLaunch = false;
                         break;
                     case "Key":
-                        if (!TryGetWorkflowKey(step.Value, out var virtualKey) || !_keyboard.SendVirtualKey(virtualKey))
-                            throw new InvalidOperationException($"Não foi possível pressionar a tecla {step.Value}.");
+                        if (!TryGetWorkflowKey(step.Value, out var virtualKey))
+                            throw new InvalidOperationException($"Tecla inválida: {step.Value}.");
+                        if (!WorkflowRepeatPolicy.IsValidCount(step.RepeatCount))
+                            throw new InvalidOperationException($"A repetição da tecla deve ficar entre {WorkflowRepeatPolicy.MinimumCount} e {WorkflowRepeatPolicy.MaximumCount} vezes.");
+                        for (var repetition = 0; repetition < step.RepeatCount; repetition++)
+                        {
+                            if (!_keyboard.SendVirtualKey(virtualKey))
+                                throw new InvalidOperationException($"Não foi possível pressionar a tecla {step.Value} (repetição {repetition + 1} de {step.RepeatCount}).");
+                        }
                         break;
                     case "Type":
                         var textToType = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
@@ -1541,7 +1591,7 @@ public partial class MainWindow : Window
                     case "Focus":
                         var controlName = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
                         if (!_focusedText.FocusControlByName(controlName))
-                            throw new InvalidOperationException($"Não encontrei um campo ou botão acessível com o nome ‘{controlName}’. Confira se o navegador expõe esse nome à Automação do Windows.");
+                            throw new InvalidOperationException($"Não encontrei um campo ou botão acessível com o nome ou AutomationId ‘{controlName}’. Se o inspetor mostrar apenas Chrome Legacy Window, o aplicativo não expôs os controles internos à Automação do Windows; nesse caso, avance até o campo usando etapas Pressionar tecla (Tab/Shift+Tab).");
                         break;
                     case "Wait":
                         if (!int.TryParse(step.Value, out var waitMilliseconds) || waitMilliseconds is < 1 or > 60000)
@@ -1555,12 +1605,19 @@ public partial class MainWindow : Window
                 if (step.Action is not ("Wait" or "Open") && step.DelayMilliseconds > 0)
                     await Task.Delay(Math.Clamp(step.DelayMilliseconds, 1, 60000));
             }
-            RecordActionHistory($"Executar {shortcut.Name}", string.Empty, string.Empty, voiceCommand);
-            Notify("JMD", $"Workflow concluído: {shortcut.Name}.", true);
+            RecordActionHistory($"{(isTestExecution ? "Testar" : "Executar")} {shortcut.Name}", string.Empty, string.Empty, voiceCommand);
+            if (!isTestExecution) Notify("JMD", $"Workflow concluído: {shortcut.Name}.", true);
+            return true;
         }
         catch (Exception exception)
         {
-            SetStatus($"Workflow interrompido ({shortcut.Name}): {exception.Message}", false);
+            var focusRestored = !launchedProgram && restoreInitialFocus?.Invoke() == true;
+            var failureDetails = $"{currentStepDescription}: {exception.Message}" +
+                                 (focusRestored ? " O foco anterior foi restaurado." : string.Empty);
+            RecordActionHistory($"{(isTestExecution ? "Testar" : "Executar")} {shortcut.Name}", string.Empty, string.Empty,
+                voiceCommand, isFailure: true, failureDetails: failureDetails);
+            SetStatus($"Workflow interrompido ({shortcut.Name}): {exception.Message}", false, failureDetails);
+            return false;
         }
     }
 
@@ -1883,7 +1940,8 @@ public partial class MainWindow : Window
         }
     }
 
-    private long? RecordCommandHistory(string commandName, string beforeValue, string afterValue, VoiceCommandInvocation? voiceCommand = null)
+    private long? RecordCommandHistory(string commandName, string beforeValue, string afterValue,
+        VoiceCommandInvocation? voiceCommand = null, bool isFailure = false, string? failureDetails = null)
     {
         if (_historyStore is null) return null;
         var historyCommandName = voiceCommand is null
@@ -1896,7 +1954,9 @@ public partial class MainWindow : Window
             voiceCutMilliseconds: voiceCommand?.DebugInfo?.CutMilliseconds,
             voiceTranscriptionAudioWav: voiceCommand?.DebugInfo?.TranscriptionAudioWav,
             portugueseTranscriptionTimeMilliseconds: voiceCommand?.DebugInfo?.PortugueseTranscriptionTimeMilliseconds,
-            englishTranscriptionTimeMilliseconds: voiceCommand?.DebugInfo?.EnglishTranscriptionTimeMilliseconds);
+            englishTranscriptionTimeMilliseconds: voiceCommand?.DebugInfo?.EnglishTranscriptionTimeMilliseconds,
+            isFailure: isFailure,
+            failureDetails: failureDetails);
         RefreshHistory();
         return historyId;
     }
@@ -1930,6 +1990,9 @@ public partial class MainWindow : Window
                     new HistoryAudioPlaybackRequest(entry.Id, false),
                     new HistoryAudioPlaybackRequest(entry.Id, true),
                     HistoryEntryDisplayPolicy.IsApplicationLaunch(entry.CommandName, entry.BeforeValue, entry.AfterValue),
+                    HistoryEntryDisplayPolicy.IsWorkflowExecution(entry.CommandName),
+                    entry.IsFailure,
+                    entry.FailureDetails ?? string.Empty,
                     entry.CommandName.EndsWith(DraftStack.SavedCommandName, StringComparison.Ordinal),
                     entry.CommandName.EndsWith(DraftStack.RestoredCommandName, StringComparison.Ordinal),
                     entry.Id == _historyTargetId))
@@ -2104,6 +2167,9 @@ public partial class MainWindow : Window
         HistoryAudioPlaybackRequest OriginalAudioRequest,
         HistoryAudioPlaybackRequest TranscriptionAudioRequest,
         bool IsApplicationLaunch,
+        bool IsWorkflowExecution,
+        bool IsFailure,
+        string FailureDetails,
         bool IsDraftSaved,
         bool IsDraftRestored,
         bool IsNotificationTarget);

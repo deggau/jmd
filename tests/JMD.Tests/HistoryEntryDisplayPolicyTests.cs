@@ -17,4 +17,15 @@ public sealed class HistoryEntryDisplayPolicyTests
     {
         Assert.Equal(expected, HistoryEntryDisplayPolicy.IsApplicationLaunch(commandName, beforeValue, afterValue));
     }
+
+    [Theory]
+    [InlineData("Executar Conectar na VPN", true)]
+    [InlineData("Testar Conectar na VPN", true)]
+    [InlineData("Ativação por voz (Jey) - Testar Conectar na VPN", true)]
+    [InlineData("Ativação por voz (Jey) - Executar Conectar na VPN", true)]
+    [InlineData("Formatar SQL", false)]
+    public void IsWorkflowExecution_Recognizes_custom_workflow_history_rows(string commandName, bool expected)
+    {
+        Assert.Equal(expected, HistoryEntryDisplayPolicy.IsWorkflowExecution(commandName));
+    }
 }

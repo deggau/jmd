@@ -17,7 +17,9 @@ public sealed record ConversionHistoryEntry(
     int? VoiceCutMilliseconds = null,
     bool HasVoiceTranscriptionAudio = false,
     int? PortugueseTranscriptionTimeMilliseconds = null,
-    int? EnglishTranscriptionTimeMilliseconds = null);
+    int? EnglishTranscriptionTimeMilliseconds = null,
+    bool IsFailure = false,
+    string? FailureDetails = null);
 
 public sealed record DraftHistoryEntry(long HistoryId, DateTimeOffset OccurredAt, string CommandName, string Text);
 
@@ -59,6 +61,8 @@ public sealed class ConversionHistoryStore
         EnsureColumn(connection, "VoiceTranscriptionAudioWav", "BLOB NULL");
         EnsureColumn(connection, "PortugueseTranscriptionTimeMilliseconds", "INTEGER NULL");
         EnsureColumn(connection, "EnglishTranscriptionTimeMilliseconds", "INTEGER NULL");
+        EnsureColumn(connection, "IsFailure", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "FailureDetails");
         using var draftSchema = connection.CreateCommand();
         draftSchema.CommandText = """
             CREATE TABLE IF NOT EXISTS DraftHistory (
@@ -109,13 +113,15 @@ public sealed class ConversionHistoryStore
         int? voiceCutMilliseconds = null,
         byte[]? voiceTranscriptionAudioWav = null,
         int? portugueseTranscriptionTimeMilliseconds = null,
-        int? englishTranscriptionTimeMilliseconds = null)
+        int? englishTranscriptionTimeMilliseconds = null,
+        bool isFailure = false,
+        string? failureDetails = null)
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds)
-            VALUES ($occurredAt, $commandName, $beforeValue, $afterValue, $applicationName, $windowTitle, $isVoiceTriggered, $voiceTranscript, $voiceAudioWav, $voiceDurationMilliseconds, $voiceCutMilliseconds, $voiceTranscriptionAudioWav, $portugueseTranscriptionTimeMilliseconds, $englishTranscriptionTimeMilliseconds);
+            INSERT INTO ConversionHistory (OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds, IsFailure, FailureDetails)
+            VALUES ($occurredAt, $commandName, $beforeValue, $afterValue, $applicationName, $windowTitle, $isVoiceTriggered, $voiceTranscript, $voiceAudioWav, $voiceDurationMilliseconds, $voiceCutMilliseconds, $voiceTranscriptionAudioWav, $portugueseTranscriptionTimeMilliseconds, $englishTranscriptionTimeMilliseconds, $isFailure, $failureDetails);
             """;
         command.Parameters.AddWithValue("$occurredAt", (occurredAtUtc ?? _utcNow()).ToUniversalTime().ToString("O"));
         command.Parameters.AddWithValue("$commandName", commandName);
@@ -131,6 +137,8 @@ public sealed class ConversionHistoryStore
         command.Parameters.AddWithValue("$voiceTranscriptionAudioWav", (object?)voiceTranscriptionAudioWav ?? DBNull.Value);
         command.Parameters.AddWithValue("$portugueseTranscriptionTimeMilliseconds", (object?)portugueseTranscriptionTimeMilliseconds ?? DBNull.Value);
         command.Parameters.AddWithValue("$englishTranscriptionTimeMilliseconds", (object?)englishTranscriptionTimeMilliseconds ?? DBNull.Value);
+        command.Parameters.AddWithValue("$isFailure", isFailure ? 1 : 0);
+        command.Parameters.AddWithValue("$failureDetails", (object?)failureDetails ?? DBNull.Value);
         command.ExecuteNonQuery();
         using var idCommand = connection.CreateCommand();
         idCommand.CommandText = "SELECT last_insert_rowid();";
@@ -160,12 +168,12 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds, IsFailure, FailureDetails
             FROM ConversionHistory
             WHERE $query = '' OR CommandName LIKE $pattern ESCAPE '\'
                 OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
                 OR VoiceTranscript LIKE $pattern ESCAPE '\'
-                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\'
+                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\' OR FailureDetails LIKE $pattern ESCAPE '\'
             ORDER BY OccurredAtUtc DESC, Id DESC;
             """;
         command.Parameters.AddWithValue("$query", query);
@@ -188,12 +196,12 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds, IsFailure, FailureDetails
             FROM ConversionHistory
             WHERE $query = '' OR CommandName LIKE $pattern ESCAPE '\'
                 OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
                 OR VoiceTranscript LIKE $pattern ESCAPE '\'
-                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\'
+                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\' OR FailureDetails LIKE $pattern ESCAPE '\'
             ORDER BY OccurredAtUtc DESC, Id DESC
             LIMIT $limit OFFSET $offset;
             """;
@@ -215,7 +223,7 @@ public sealed class ConversionHistoryStore
             WHERE $query = '' OR CommandName LIKE $pattern ESCAPE '\'
                 OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
                 OR VoiceTranscript LIKE $pattern ESCAPE '\'
-                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\';
+                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\' OR FailureDetails LIKE $pattern ESCAPE '\';
             """;
         AddSearchParameters(command, query);
         return Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
@@ -237,7 +245,7 @@ public sealed class ConversionHistoryStore
             WHERE ($query = '' OR CommandName LIKE $pattern ESCAPE '\'
                 OR BeforeValue LIKE $pattern ESCAPE '\' OR AfterValue LIKE $pattern ESCAPE '\'
                 OR VoiceTranscript LIKE $pattern ESCAPE '\'
-                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\')
+                OR ApplicationName LIKE $pattern ESCAPE '\' OR WindowTitle LIKE $pattern ESCAPE '\' OR FailureDetails LIKE $pattern ESCAPE '\')
                 AND (OccurredAtUtc > $targetTime OR (OccurredAtUtc = $targetTime AND Id > $id));
             """;
         AddSearchParameters(command, query);
@@ -264,7 +272,7 @@ public sealed class ConversionHistoryStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds
+            SELECT Id, OccurredAtUtc, CommandName, BeforeValue, AfterValue, ApplicationName, WindowTitle, IsVoiceTriggered, VoiceTranscript, VoiceAudioWav IS NOT NULL, VoiceDurationMilliseconds, VoiceCutMilliseconds, VoiceTranscriptionAudioWav IS NOT NULL, PortugueseTranscriptionTimeMilliseconds, EnglishTranscriptionTimeMilliseconds, IsFailure, FailureDetails
             FROM ConversionHistory
             ORDER BY OccurredAtUtc DESC, Id DESC
             LIMIT 1;
@@ -308,7 +316,9 @@ public sealed class ConversionHistoryStore
         reader.IsDBNull(11) ? null : reader.GetInt32(11),
         reader.GetInt32(12) != 0,
         reader.IsDBNull(13) ? null : reader.GetInt32(13),
-        reader.IsDBNull(14) ? null : reader.GetInt32(14));
+        reader.IsDBNull(14) ? null : reader.GetInt32(14),
+        reader.GetInt32(15) != 0,
+        reader.IsDBNull(16) ? null : reader.GetString(16));
 
     private static void EnsureColumn(SqliteConnection connection, string columnName, string declaration = "TEXT NULL")
     {

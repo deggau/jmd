@@ -213,6 +213,7 @@ internal sealed class CustomWorkflowStep
     public string Action { get; set; } = "";
     public string Value { get; set; } = "";
     public int DelayMilliseconds { get; set; }
+    public int RepeatCount { get; set; } = 1;
 }
 
 internal sealed class WorkflowVariableEntry

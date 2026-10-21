@@ -26,6 +26,15 @@ internal sealed class CustomShortcutEditorWindow : Window
     private readonly StackPanel _stepsPanel = new();
     private readonly List<StepDraft> _steps = [];
     private readonly Func<CustomShortcutEditorWindow, string?>? _validate;
+    private readonly Func<CustomShortcutEditorWindow, Task<bool>>? _testWorkflow;
+    private readonly TextBlock _testStatus = new()
+    {
+        Text = "O teste executa as etapas no programa selecionado.",
+        Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+        FontSize = 11,
+        TextWrapping = TextWrapping.Wrap,
+        Margin = new Thickness(2, 8, 2, 0)
+    };
 
     public string CommandName => _name.Text.Trim();
     public string Shortcut => _shortcut.Text.Trim();
@@ -40,15 +49,18 @@ internal sealed class CustomShortcutEditorWindow : Window
             {
                 Action = step.Action,
                 Value = step.Value,
-                DelayMilliseconds = step.DelayMilliseconds
+                DelayMilliseconds = step.DelayMilliseconds,
+                RepeatCount = step.RepeatCount
             }).ToList();
         }
     }
 
     public CustomShortcutEditorWindow(CustomShortcutEntry? existing = null, IEnumerable<string>? existingPhrases = null,
-        IEnumerable<string>? variableNames = null, Func<CustomShortcutEditorWindow, string?>? validate = null)
+        IEnumerable<string>? variableNames = null, Func<CustomShortcutEditorWindow, string?>? validate = null,
+        Func<CustomShortcutEditorWindow, Task<bool>>? testWorkflow = null)
     {
         _validate = validate;
+        _testWorkflow = testWorkflow;
         if (existing is not null)
         {
             _name.Text = existing.Name;
@@ -56,7 +68,7 @@ internal sealed class CustomShortcutEditorWindow : Window
             _focusIfAlreadyOpen.IsChecked = existing.FocusIfAlreadyOpen;
             _phrases.Text = string.Join(Environment.NewLine, existingPhrases ?? []);
             if (existing.Steps.Count > 0)
-                _steps.AddRange(existing.Steps.Select(step => new StepDraft(step.Action, step.Value, step.DelayMilliseconds)));
+                _steps.AddRange(existing.Steps.Select(step => new StepDraft(step.Action, step.Value, step.DelayMilliseconds, step.RepeatCount)));
             else if (!string.IsNullOrWhiteSpace(existing.Target))
                 _steps.Add(new StepDraft("Open", existing.Target, 0));
         }
@@ -133,10 +145,62 @@ internal sealed class CustomShortcutEditorWindow : Window
             inspector.Closed += (_, _) => Show();
             inspector.Show();
         };
-        DockPanel.SetDock(inspectControl, Dock.Right);
-        workflowHeading.Children.Add(inspectControl);
+        var workflowActions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
+        var testButton = MakeButton("Testar workflow", false);
+        testButton.ToolTip = "Executa as etapas configuradas no programa selecionado. O teste pode interagir com esse programa.";
+        testButton.Click += async (_, _) =>
+        {
+            var runTest = _testWorkflow;
+            var error = _validate?.Invoke(this);
+            if (error is not null)
+            {
+                _testStatus.Text = error;
+                _testStatus.Foreground = Brushes.OrangeRed;
+                return;
+            }
+            if (runTest is null)
+            {
+                _testStatus.Text = "Não foi possível iniciar o teste do workflow.";
+                _testStatus.Foreground = Brushes.OrangeRed;
+                return;
+            }
+
+            testButton.IsEnabled = false;
+            _testStatus.Text = "Executando o workflow…";
+            _testStatus.Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167));
+            try
+            {
+                SyncSteps();
+                Hide();
+                await Task.Delay(120);
+                var succeeded = await runTest(this);
+                _testStatus.Text = succeeded
+                    ? "Teste concluído. Confira o programa; você pode continuar editando o workflow."
+                    : "O teste falhou. Confira o detalhe exibido no JMD ou no Histórico.";
+                _testStatus.Foreground = succeeded
+                    ? new SolidColorBrush(Color.FromRgb(180, 243, 106))
+                    : Brushes.OrangeRed;
+            }
+            catch (Exception exception)
+            {
+                _testStatus.Text = $"O teste falhou: {exception.Message}";
+                _testStatus.Foreground = Brushes.OrangeRed;
+            }
+            finally
+            {
+                if (!IsVisible) Show();
+                Activate();
+                testButton.IsEnabled = true;
+            }
+        };
+        testButton.Margin = new Thickness(0, 0, 6, 0);
+        workflowActions.Children.Add(testButton);
+        workflowActions.Children.Add(inspectControl);
+        DockPanel.SetDock(workflowActions, Dock.Right);
+        workflowHeading.Children.Add(workflowActions);
         workflowHeading.Children.Add(new TextBlock { Text = "Etapas do workflow", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         form.Children.Add(workflowHeading);
+        form.Children.Add(_testStatus);
         form.Children.Add(new TextBlock { Text = "As etapas são executadas na ordem abaixo. Após abrir um programa, o JMD aguarda um instante antes de continuar.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 0, 2, 8) });
         var availableVariables = variableNames?.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray() ?? [];
         form.Children.Add(new TextBlock { Text = availableVariables.Length == 0
@@ -200,9 +264,16 @@ internal sealed class CustomShortcutEditorWindow : Window
             var valueLabel = new TextBlock { Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 0, 2, 3) };
             var delay = CreateBox(34);
             delay.Text = step.DelayMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var repeatCount = CreateBox(34);
+            repeatCount.Width = 84;
+            repeatCount.Text = step.RepeatCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var repeatPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(2, 6, 2, 0) };
+            repeatPanel.Children.Add(new TextBlock { Text = "Repetir a tecla (1–100 vezes)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
+            repeatPanel.Children.Add(repeatCount);
             var delayLabel = new TextBlock { Text = "Pausa após a etapa (ms, opcional)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 6, 2, 3) };
             body.Children.Add(valueLabel);
             body.Children.Add(value);
+            body.Children.Add(repeatPanel);
             body.Children.Add(delayLabel);
             body.Children.Add(delay);
             void UpdateKind()
@@ -238,8 +309,8 @@ internal sealed class CustomShortcutEditorWindow : Window
                         delayLabel.Text = "";
                         break;
                     default:
-                        valueLabel.Text = "Nome acessível do campo ou botão";
-                        value.ToolTip = "Ex.: Usuário, Senha, Conectar. O navegador precisa expor o texto à Automação do Windows.";
+                        valueLabel.Text = "Nome acessível ou AutomationId do campo ou botão";
+                        value.ToolTip = "Ex.: Usuário ou ctl00_ContentPlaceHolder1_txtLogin. O controle precisa estar exposto à Automação do Windows.";
                         value.Height = 36; value.AcceptsReturn = false;
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Pausa após focar (ms, opcional)";
@@ -247,6 +318,7 @@ internal sealed class CustomShortcutEditorWindow : Window
                 }
                 delayLabel.Visibility = type.SelectedIndex == 3 ? Visibility.Collapsed : Visibility.Visible;
                 delay.Visibility = type.SelectedIndex == 3 ? Visibility.Collapsed : Visibility.Visible;
+                repeatPanel.Visibility = type.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
             }
             type.SelectionChanged += (_, _) => UpdateKind();
             UpdateKind();
@@ -254,6 +326,7 @@ internal sealed class CustomShortcutEditorWindow : Window
             step.TypeBox = type;
             step.ValueBox = value;
             step.DelayBox = delay;
+            step.RepeatCountBox = repeatCount;
         }
     }
 
@@ -282,17 +355,21 @@ internal sealed class CustomShortcutEditorWindow : Window
             if (step.ValueBox is not null) step.Value = step.ValueBox.Text;
             if (step.DelayBox is not null)
                 step.DelayMilliseconds = int.TryParse(step.DelayBox.Text, out var milliseconds) ? milliseconds : -1;
+            if (step.RepeatCountBox is not null)
+                step.RepeatCount = int.TryParse(step.RepeatCountBox.Text, out var count) ? count : -1;
         }
     }
 
-    private sealed class StepDraft(string action, string value, int delayMilliseconds)
+    private sealed class StepDraft(string action, string value, int delayMilliseconds, int repeatCount = 1)
     {
         public string Action { get; set; } = action;
         public string Value { get; set; } = value;
         public int DelayMilliseconds { get; set; } = delayMilliseconds;
+        public int RepeatCount { get; set; } = repeatCount;
         public ComboBox? TypeBox { get; set; }
         public TextBox? ValueBox { get; set; }
         public TextBox? DelayBox { get; set; }
+        public TextBox? RepeatCountBox { get; set; }
     }
 
     private static TextBox CreateBox(double height, bool multiline = false) => new()
