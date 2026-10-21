@@ -285,6 +285,21 @@ public partial class MainWindow : Window
             "Salva a seleção ou a linha do cursor e limpa o campo.", ShortcutDefaults.ForCommand("draftSave")));
         _commands.Add(new CommandRow("draftRestore", "Usar rascunho",
             "Guarda o conteúdo atual e recupera o último rascunho.", ShortcutDefaults.ForCommand("draftRestore")));
+        _commands.Add(new CommandRow("todoCreate", "Criar tarefa",
+            "Abre o cadastro de uma tarefa e aproveita o texto selecionado na descrição.", GetShortcut("todoCreate"))
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("todoCreate")
+        });
+        _commands.Add(new CommandRow("todoPanel", "Abrir painel de tarefas",
+            "Mostra as tarefas em aberto no painel lateral.", GetShortcut("todoPanel"))
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("todoPanel")
+        });
+        _commands.Add(new CommandRow("todoPanelClose", "Fechar painel de tarefas",
+            "Fecha o painel lateral de tarefas.", GetShortcut("todoPanelClose"))
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("todoPanelClose")
+        });
         _commands.Add(new CommandRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.", "Sem atalho")
         {
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("about")
@@ -352,11 +367,6 @@ public partial class MainWindow : Window
                 !_hotkeys.TryRegister(shortcut.Id, binding!, out _))
                 SetStatus($"Atalho personalizado indisponível: {shortcut.Name}", false);
         }
-        foreach (var (id, shortcut) in new[] { ("todoCreate", "Ctrl+Alt+T"), ("todoPanel", "Ctrl+Alt+Left"), ("todoPanelClose", "Ctrl+Alt+Right") })
-        {
-            if (ShortcutParser.TryParse(shortcut, out var binding, out _) && !_hotkeys.TryRegister(id, binding!, out _))
-                SetStatus($"Atalho de tarefas indisponível: {shortcut}", false);
-        }
     }
 
     private void BuildSettingsPanel()
@@ -395,6 +405,9 @@ public partial class MainWindow : Window
             ("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo."),
             ("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título."),
             ("selection", "Substituir seleção", "Recorta, transforma e cola a seleção atual."),
+            ("todoCreate", "Criar tarefa", "Abre o cadastro de uma tarefa; a seleção atual vira a descrição."),
+            ("todoPanel", "Abrir painel de tarefas", "Mostra as tarefas em aberto no painel lateral."),
+            ("todoPanelClose", "Fechar painel de tarefas", "Fecha o painel lateral de tarefas."),
             ("transcribe", "Transcrever", "Digita o que você disser após o comando; pausa de 3 segundos encerra."),
             ("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.")
         ];
@@ -558,7 +571,10 @@ public partial class MainWindow : Window
         {
             ["about"] = ["abrir sobre", "abrir tela sobre"],
             ["checkUpdates"] = ["verificar atualizações", "verificar atualização", "atualizar jmd"],
-            ["transcribe"] = ["transcrever"]
+            ["transcribe"] = ["transcrever"],
+            ["todoCreate"] = ["criar tarefa"],
+            ["todoPanel"] = ["abrir tarefas", "abrir painel de tarefas"],
+            ["todoPanelClose"] = ["fechar tarefas", "fechar painel de tarefas"]
         };
         var changed = false;
         foreach (var (commandId, phrases) in defaults)
@@ -1271,7 +1287,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "about", "checkUpdates", "transcribe", "createCustomShortcut"];
+    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "about", "checkUpdates", "transcribe", "createCustomShortcut"];
 
     private static bool IsJeyAction(string id) => id is "about" or "checkUpdates" or "transcribe";
 
@@ -1897,7 +1913,7 @@ public partial class MainWindow : Window
         var dialog = new TodoTaskEditWindow(initialDescription: selectedText);
         if (dialog.ShowDialog() != true) return;
         var task = FromTodoTaskEntry(_todoTaskStore.Create(dialog.TaskTitle, dialog.Description, DateTimeOffset.Now,
-            dialog.ReminderIntervalMinutes, dialog.CategoryColor));
+            dialog.ReminderIntervalMinutes, dialog.CategoryColor, dialog.Urls, dialog.Attachments));
         _todoTasks.Add(task);
         RecordTodoTaskChange("criada", task, string.Empty, DescribeTodoTask(task, "Em aberto"));
         _todoTaskPanel?.Refresh();
@@ -1905,7 +1921,7 @@ public partial class MainWindow : Window
 
     private void ShowTodoTaskPanel()
     {
-        _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask);
+        _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask, ReopenTodoTask, () => _ = CreateTodoTaskAsync());
         _todoTaskPanel.Refresh();
         _todoTaskPanel.Show();
         _todoTaskPanel.Activate();
@@ -1917,13 +1933,15 @@ public partial class MainWindow : Window
         var dialog = new TodoTaskEditWindow(task);
         if (dialog.ShowDialog() != true) return;
         var previousDescription = DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída");
-        var changed = task.Title != dialog.TaskTitle || task.Description != dialog.Description;
+        var changed = task.Title != dialog.TaskTitle || task.Description != dialog.Description || task.Urls != dialog.Urls || task.Attachments != dialog.Attachments;
         var reminderChanged = task.ReminderIntervalMinutes != dialog.ReminderIntervalMinutes;
         changed |= reminderChanged || task.CategoryColor != dialog.CategoryColor;
         task.Title = dialog.TaskTitle;
         task.Description = dialog.Description;
         task.ReminderIntervalMinutes = dialog.ReminderIntervalMinutes;
         task.CategoryColor = dialog.CategoryColor;
+        task.Urls = dialog.Urls;
+        task.Attachments = dialog.Attachments;
         if (reminderChanged) task.LastReminderAt = task.ReminderIntervalMinutes is null ? null : DateTimeOffset.Now;
         SaveTodoTasks();
         if (changed) RecordTodoTaskChange("editada", task, previousDescription, DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída"));
@@ -1937,6 +1955,16 @@ public partial class MainWindow : Window
         task.CompletedAt = DateTimeOffset.Now;
         SaveTodoTasks();
         RecordTodoTaskChange("concluída", task, previousDescription, DescribeTodoTask(task, "Concluída"));
+        _todoTaskPanel?.Refresh();
+    }
+
+    private void ReopenTodoTask(TodoTask task)
+    {
+        if (task.CompletedAt is null) return;
+        var previousDescription = DescribeTodoTask(task, "Concluída");
+        task.CompletedAt = null;
+        SaveTodoTasks();
+        RecordTodoTaskChange("reaberta", task, previousDescription, DescribeTodoTask(task, "Em aberto"));
         _todoTaskPanel?.Refresh();
     }
 
@@ -1956,6 +1984,8 @@ public partial class MainWindow : Window
         => $"Estado: {status}\nTítulo: {task.Title}\nDescrição: {task.Description}\nCriada: {task.CreatedAt.LocalDateTime:g}" +
            (task.CompletedAt is null ? string.Empty : $"\nConcluída: {task.CompletedAt.Value.LocalDateTime:g}") +
            $"\nPrioridade: {task.CategoryColor}" +
+           (string.IsNullOrWhiteSpace(task.Urls) ? "" : $"\nURLs: {task.Urls}") +
+           (string.IsNullOrWhiteSpace(task.Attachments) ? "" : $"\nAnexos: {task.Attachments}") +
            (task.ReminderIntervalMinutes is { } interval ? $"\nLembrete: a cada {interval} minutos" : "\nLembrete: desativado");
 
     private void SaveTodoTasks() => _todoTaskStore.SaveAll(_todoTasks.Select(ToTodoTaskEntry));
@@ -1975,12 +2005,12 @@ public partial class MainWindow : Window
 
     private static TodoTaskEntry ToTodoTaskEntry(TodoTask task)
         => new(task.Id, task.Title, task.Description, task.CreatedAt, task.CompletedAt, task.TaskNumber,
-            task.ReminderIntervalMinutes, task.CategoryColor, task.LastReminderAt);
+            task.ReminderIntervalMinutes, task.CategoryColor, task.LastReminderAt, task.Urls, task.Attachments);
 
     private static TodoTask FromTodoTaskEntry(TodoTaskEntry task)
         => new() { Id = task.Id, Title = task.Title, Description = task.Description, CreatedAt = task.CreatedAt, CompletedAt = task.CompletedAt,
             TaskNumber = task.TaskNumber, ReminderIntervalMinutes = task.ReminderIntervalMinutes, CategoryColor = task.CategoryColor,
-            LastReminderAt = task.LastReminderAt };
+            LastReminderAt = task.LastReminderAt, Urls = task.Urls, Attachments = task.Attachments };
 
     private async Task TransformClipboardAsync(VoiceCommandInvocation? voiceCommand = null)
     {
@@ -2358,6 +2388,9 @@ public partial class MainWindow : Window
         else if (id == "createCustomShortcut") CreateCustomShortcutFromDialog();
         else if (id == "draftSave") await SaveDraftAsync();
         else if (id == "draftRestore") await RestoreDraftAsync();
+        else if (id == "todoCreate") await CreateTodoTaskAsync();
+        else if (id == "todoPanel") ShowTodoTaskPanel();
+        else if (id == "todoPanelClose") _todoTaskPanel?.Hide();
         else if (id == "about") AboutMenuItem_Click(this, new RoutedEventArgs());
         else if (id == "checkUpdates")
         {

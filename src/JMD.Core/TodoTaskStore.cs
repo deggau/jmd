@@ -11,7 +11,9 @@ public sealed record TodoTaskEntry(
     int TaskNumber = 0,
     int? ReminderIntervalMinutes = null,
     string CategoryColor = "Verde",
-    DateTimeOffset? LastReminderAt = null);
+    DateTimeOffset? LastReminderAt = null,
+    string Urls = "",
+    string Attachments = "");
 
 public sealed class TodoTaskStore
 {
@@ -35,7 +37,9 @@ public sealed class TodoTaskStore
                 TaskNumber INTEGER NOT NULL DEFAULT 0,
                 ReminderIntervalMinutes INTEGER NULL,
                 CategoryColor TEXT NOT NULL DEFAULT 'Verde',
-                LastReminderAtUtc TEXT NULL
+                LastReminderAtUtc TEXT NULL,
+                Urls TEXT NOT NULL DEFAULT '',
+                Attachments TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS IX_TodoTasks_Status_CreatedAtUtc
                 ON TodoTasks (CompletedAtUtc, CreatedAtUtc, Id);
@@ -51,6 +55,8 @@ public sealed class TodoTaskStore
         EnsureColumn(connection, "ReminderIntervalMinutes", "INTEGER NULL");
         EnsureColumn(connection, "CategoryColor", "TEXT NOT NULL DEFAULT 'Verde'");
         EnsureColumn(connection, "LastReminderAtUtc", "TEXT NULL");
+        EnsureColumn(connection, "Urls", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "Attachments", "TEXT NOT NULL DEFAULT ''");
         MigrateTaskNumbers(connection);
     }
 
@@ -59,7 +65,7 @@ public sealed class TodoTaskStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Title, Description, CreatedAtUtc, CompletedAtUtc, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc
+            SELECT Id, Title, Description, CreatedAtUtc, CompletedAtUtc, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments
             FROM TodoTasks
             ORDER BY CreatedAtUtc, Id;
             """;
@@ -72,7 +78,8 @@ public sealed class TodoTaskStore
                 DateTimeOffset.Parse(reader.GetString(3), System.Globalization.CultureInfo.InvariantCulture),
                 reader.IsDBNull(4) ? null : DateTimeOffset.Parse(reader.GetString(4), System.Globalization.CultureInfo.InvariantCulture),
                 reader.GetInt32(5), reader.IsDBNull(6) ? null : reader.GetInt32(6), reader.GetString(7),
-                reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8), System.Globalization.CultureInfo.InvariantCulture)));
+                reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8), System.Globalization.CultureInfo.InvariantCulture),
+                reader.GetString(9), reader.GetString(10)));
         }
         return tasks;
     }
@@ -94,8 +101,8 @@ public sealed class TodoTaskStore
             using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
             insert.CommandText = """
-                INSERT INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc)
-                VALUES ($id, $title, $description, $createdAt, $completedAt, $localDate, $taskNumber, $reminderInterval, $categoryColor, $lastReminderAt);
+                INSERT INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments)
+                VALUES ($id, $title, $description, $createdAt, $completedAt, $localDate, $taskNumber, $reminderInterval, $categoryColor, $lastReminderAt, $urls, $attachments);
                 """;
             insert.Parameters.AddWithValue("$id", task.Id);
             insert.Parameters.AddWithValue("$title", task.Title);
@@ -107,25 +114,27 @@ public sealed class TodoTaskStore
             insert.Parameters.AddWithValue("$reminderInterval", (object?)task.ReminderIntervalMinutes ?? DBNull.Value);
             insert.Parameters.AddWithValue("$categoryColor", task.CategoryColor);
             insert.Parameters.AddWithValue("$lastReminderAt", (object?)task.LastReminderAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$urls", task.Urls);
+            insert.Parameters.AddWithValue("$attachments", task.Attachments);
             insert.ExecuteNonQuery();
             UpdateSequence(connection, transaction, localDate, taskNumber);
         }
         transaction.Commit();
     }
 
-    public TodoTaskEntry Create(string title, string description, DateTimeOffset createdAt, int? reminderIntervalMinutes = null, string categoryColor = "Verde")
+    public TodoTaskEntry Create(string title, string description, DateTimeOffset createdAt, int? reminderIntervalMinutes = null, string categoryColor = "Verde", string urls = "", string attachments = "")
     {
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
         var localDate = createdAt.ToLocalTime().ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         var taskNumber = AllocateNumber(connection, transaction, localDate);
         var task = new TodoTaskEntry(Guid.NewGuid().ToString("N"), title, description, createdAt,
-            TaskNumber: taskNumber, ReminderIntervalMinutes: reminderIntervalMinutes, CategoryColor: categoryColor);
+            TaskNumber: taskNumber, ReminderIntervalMinutes: reminderIntervalMinutes, CategoryColor: categoryColor, Urls: urls, Attachments: attachments);
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc)
-            VALUES ($id, $title, $description, $createdAt, NULL, $localDate, $taskNumber, $reminderInterval, $categoryColor, NULL);
+            INSERT INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments)
+            VALUES ($id, $title, $description, $createdAt, NULL, $localDate, $taskNumber, $reminderInterval, $categoryColor, NULL, $urls, $attachments);
             """;
         command.Parameters.AddWithValue("$id", task.Id);
         command.Parameters.AddWithValue("$title", task.Title);
@@ -135,6 +144,8 @@ public sealed class TodoTaskStore
         command.Parameters.AddWithValue("$taskNumber", taskNumber);
         command.Parameters.AddWithValue("$reminderInterval", (object?)reminderIntervalMinutes ?? DBNull.Value);
         command.Parameters.AddWithValue("$categoryColor", categoryColor);
+        command.Parameters.AddWithValue("$urls", urls);
+        command.Parameters.AddWithValue("$attachments", attachments);
         command.ExecuteNonQuery();
         transaction.Commit();
         return task;
@@ -161,8 +172,8 @@ public sealed class TodoTaskStore
             using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
             insert.CommandText = """
-                INSERT OR IGNORE INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc)
-                VALUES ($id, $title, $description, $createdAt, $completedAt, $localDate, $taskNumber, $reminderInterval, $categoryColor, $lastReminderAt);
+                INSERT OR IGNORE INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments)
+                VALUES ($id, $title, $description, $createdAt, $completedAt, $localDate, $taskNumber, $reminderInterval, $categoryColor, $lastReminderAt, $urls, $attachments);
                 """;
             insert.Parameters.AddWithValue("$id", task.Id);
             insert.Parameters.AddWithValue("$title", task.Title);
@@ -174,6 +185,8 @@ public sealed class TodoTaskStore
             insert.Parameters.AddWithValue("$reminderInterval", (object?)task.ReminderIntervalMinutes ?? DBNull.Value);
             insert.Parameters.AddWithValue("$categoryColor", task.CategoryColor);
             insert.Parameters.AddWithValue("$lastReminderAt", (object?)task.LastReminderAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$urls", task.Urls);
+            insert.Parameters.AddWithValue("$attachments", task.Attachments);
             insert.ExecuteNonQuery();
             UpdateSequence(connection, transaction, localDate, taskNumber);
         }

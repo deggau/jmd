@@ -182,6 +182,9 @@ internal sealed class UserSettings
         ["saveSnippet"] = ShortcutDefaults.ForCommand("saveSnippet"),
         ["draftSave"] = ShortcutDefaults.ForCommand("draftSave"),
         ["draftRestore"] = ShortcutDefaults.ForCommand("draftRestore"),
+        ["todoCreate"] = "Ctrl+Alt+T",
+        ["todoPanel"] = "Ctrl+Alt+Left",
+        ["todoPanelClose"] = "Ctrl+Alt+Right",
         ["about"] = string.Empty,
         ["checkUpdates"] = string.Empty
     };
@@ -239,6 +242,9 @@ internal sealed class SettingsStore
                 if (loaded is not null)
                 {
                     loaded.Shortcuts ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                    loaded.Shortcuts.TryAdd("todoCreate", "Ctrl+Alt+T");
+                    loaded.Shortcuts.TryAdd("todoPanel", "Ctrl+Alt+Left");
+                    loaded.Shortcuts.TryAdd("todoPanelClose", "Ctrl+Alt+Right");
                     loaded.VoicePhrases ??= new Dictionary<string, List<string>>(StringComparer.Ordinal);
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];

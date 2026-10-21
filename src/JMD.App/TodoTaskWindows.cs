@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Microsoft.Win32;
 using JMD.Core;
 using Button = System.Windows.Controls.Button;
 using TextBox = System.Windows.Controls.TextBox;
@@ -25,6 +26,8 @@ internal sealed class TodoTask
     public int? ReminderIntervalMinutes { get; set; }
     public string CategoryColor { get; set; } = "Verde";
     public DateTimeOffset? LastReminderAt { get; set; }
+    public string Urls { get; set; } = "";
+    public string Attachments { get; set; } = "";
 }
 
 internal static class TodoTaskDisplay
@@ -47,6 +50,8 @@ internal sealed class TodoTaskEditWindow : Window
     private readonly TextBox _title = new();
     private readonly TextBox _description = new();
     private readonly TextBox _reminderInterval = new();
+    private readonly TextBox _urls = new();
+    private readonly TextBox _attachments = new();
     private readonly TextBlock _validation = new();
     private readonly Dictionary<string, Button> _categoryButtons = new(StringComparer.Ordinal);
     private string _categoryColor = "Verde";
@@ -54,6 +59,8 @@ internal sealed class TodoTaskEditWindow : Window
     public string Description => _description.Text.Trim();
     public int? ReminderIntervalMinutes => int.TryParse(_reminderInterval.Text.Trim(), out var interval) ? interval : null;
     public string CategoryColor => _categoryColor;
+    public string Urls => _urls.Text.Trim();
+    public string Attachments => _attachments.Text.Trim();
 
     public TodoTaskEditWindow(TodoTask? task = null, string initialDescription = "")
     {
@@ -68,6 +75,22 @@ internal sealed class TodoTaskEditWindow : Window
         panel.Children.Add(Label("Descrição"));
         StyleBox(_description); _description.AcceptsReturn = true; _description.TextWrapping = TextWrapping.Wrap; _description.Height = 112; _description.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _description.Text = task?.Description ?? initialDescription; _description.Margin = new Thickness(0, 4, 0, 14); panel.Children.Add(_description);
+        panel.Children.Add(Label("URLs (uma por linha)"));
+        StyleBox(_urls); _urls.Text = task?.Urls ?? ""; _urls.Height = 54; _urls.AcceptsReturn = true; _urls.TextWrapping = TextWrapping.Wrap; _urls.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _urls.Margin = new Thickness(0, 4, 0, 10); panel.Children.Add(_urls);
+        panel.Children.Add(Label("Anexos"));
+        StyleBox(_attachments); _attachments.Height = 52; _attachments.AcceptsReturn = true; _attachments.TextWrapping = TextWrapping.Wrap; _attachments.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _attachments.Text = task?.Attachments ?? ""; _attachments.Margin = new Thickness(0, 4, 0, 5); panel.Children.Add(_attachments);
+        var addAttachment = CreateButton("Adicionar arquivo"); addAttachment.Margin = new Thickness(0, 0, 0, 12); addAttachment.HorizontalAlignment = HorizontalAlignment.Left;
+        addAttachment.Click += (_, _) =>
+        {
+            var picker = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = "Selecionar anexos" };
+            if (picker.ShowDialog(this) != true) return;
+            var paths = _attachments.Text.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).ToList();
+            paths.AddRange(picker.FileNames.Where(path => !paths.Contains(path, StringComparer.OrdinalIgnoreCase)));
+            _attachments.Text = string.Join(Environment.NewLine, paths);
+        };
+        panel.Children.Add(addAttachment);
         panel.Children.Add(Label("Prioridade"));
         var categories = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 12) };
         foreach (var category in new[] { "Vermelho", "Laranja", "Amarelo", "Verde" })
@@ -146,12 +169,14 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly Action<TodoTask> _complete;
     private readonly Action<TodoTask> _edit;
     private readonly Action<TodoTask> _delete;
+    private readonly Action<TodoTask> _reopen;
+    private readonly Action _create;
     private readonly StackPanel _list = new();
     private bool _showHistory;
 
-    public TodoTaskPanelWindow(ObservableCollection<TodoTask> tasks, Action<TodoTask> complete, Action<TodoTask> edit, Action<TodoTask> delete)
+    public TodoTaskPanelWindow(ObservableCollection<TodoTask> tasks, Action<TodoTask> complete, Action<TodoTask> edit, Action<TodoTask> delete, Action<TodoTask> reopen, Action onCreate)
     {
-        _tasks = tasks; _complete = complete; _edit = edit; _delete = delete;
+        _tasks = tasks; _complete = complete; _edit = edit; _delete = delete; _reopen = reopen; _create = onCreate;
         Width = 390; Height = SystemParameters.WorkArea.Height; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false; Topmost = true; Background = new SolidColorBrush(Color.FromRgb(23, 25, 31));
         WindowStartupLocation = WindowStartupLocation.Manual; Left = SystemParameters.WorkArea.Right - Width; Top = SystemParameters.WorkArea.Top;
@@ -159,9 +184,13 @@ internal sealed class TodoTaskPanelWindow : Window
         var header = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
         var title = new TextBlock { Text = "Tarefas", FontSize = 21, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
         DockPanel.SetDock(title, Dock.Left); header.Children.Add(title);
+        var collapse = IconButton("\uE76C", "Recolher painel"); collapse.Click += (_, _) => Hide(); DockPanel.SetDock(collapse, Dock.Right); header.Children.Add(collapse);
         var history = IconButton("\uE81C", "Ver tarefas concluídas"); history.Click += (_, _) => { _showHistory = !_showHistory; history.ToolTip = _showHistory ? "Ver tarefas em aberto" : "Ver tarefas concluídas"; Refresh(); };
         DockPanel.SetDock(history, Dock.Right); header.Children.Add(history); DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
-        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _list }; root.Children.Add(scroll);
+        var content = new DockPanel();
+        var newTaskButton = new Button { Content = "＋  Nova tarefa", Height = 40, Margin = new Thickness(0, 12, 0, 0), Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)), Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)), FontWeight = FontWeights.SemiBold, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
+        newTaskButton.Click += (_, _) => _create(); DockPanel.SetDock(newTaskButton, Dock.Bottom); content.Children.Add(newTaskButton);
+        content.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _list }); root.Children.Add(content);
         Content = root; Refresh();
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape || (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Left)) { e.Handled = true; Hide(); } };
     }
@@ -179,6 +208,10 @@ internal sealed class TodoTaskPanelWindow : Window
             {
                 var done = IconButton("\uE73E", "Concluir"); done.Click += (_, _) => _complete(task);
                 actions.Children.Add(done);
+            }
+            else
+            {
+                var reopen = IconButton("\uE777", "Reabrir tarefa"); reopen.Click += (_, _) => _reopen(task); actions.Children.Add(reopen);
             }
             var edit = IconButton("\uE70F", "Editar"); edit.Click += (_, _) => _edit(task); actions.Children.Add(edit);
             var remove = IconButton("\uE74D", "Excluir"); remove.Click += (_, _) => _delete(task); actions.Children.Add(remove);
