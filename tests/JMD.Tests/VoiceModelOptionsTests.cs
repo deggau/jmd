@@ -6,6 +6,7 @@ namespace JMD.Tests;
 public sealed class VoiceModelOptionsTests
 {
     [Theory]
+    [InlineData("disabled")]
     [InlineData("vosk")]
     [InlineData("whisperTiny")]
     [InlineData("whisperBase")]
@@ -28,6 +29,10 @@ public sealed class VoiceModelOptionsTests
     [Fact]
     public void Legacy_whisper_setting_migrates_to_whisper_base()
         => Assert.Equal(VoiceModelOptions.WhisperBase, VoiceModelOptions.NormalizePersisted("whisper"));
+
+    [Fact]
+    public void Disabled_transcription_model_is_preserved_in_settings()
+        => Assert.Equal(VoiceModelOptions.Disabled, VoiceModelOptions.NormalizePersisted(VoiceModelOptions.Disabled));
 
     [Fact]
     public void Gemma_audio_limit_is_thirty_seconds_of_16khz_mono_pcm16()

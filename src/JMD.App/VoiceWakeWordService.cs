@@ -271,7 +271,11 @@ internal sealed class VoiceWakeWordService : IDisposable
         var attempts = new List<VoiceTranscriptionAttemptDebugInfo>();
         int? portugueseElapsedMilliseconds;
         int? englishElapsedMilliseconds;
-        if (VoiceTranscriptionParallelism.CanRunConcurrently(_portugueseModelId, _englishModelId))
+        var portugueseEnabled = _portugueseModelId != VoiceModelOptions.Disabled;
+        var englishEnabled = _englishModelId != VoiceModelOptions.Disabled;
+        (portuguese, portugueseError, portugueseElapsedMilliseconds) = (null, null, null);
+        (english, englishError, englishElapsedMilliseconds) = (null, null, null);
+        if (portugueseEnabled && englishEnabled && VoiceTranscriptionParallelism.CanRunConcurrently(_portugueseModelId, _englishModelId))
         {
             var portugueseTask = Task.Run(() => RunTranscriptionAttempt(audio, length, "pt", _portugueseModelId, measure));
             var englishTask = Task.Run(() => RunTranscriptionAttempt(audio, length, "en", _englishModelId, measure));
@@ -281,8 +285,10 @@ internal sealed class VoiceWakeWordService : IDisposable
         }
         else
         {
-            (portuguese, portugueseError, portugueseElapsedMilliseconds) = RunTranscriptionAttempt(audio, length, "pt", _portugueseModelId, measure);
-            (english, englishError, englishElapsedMilliseconds) = RunTranscriptionAttempt(audio, length, "en", _englishModelId, measure);
+            if (portugueseEnabled)
+                (portuguese, portugueseError, portugueseElapsedMilliseconds) = RunTranscriptionAttempt(audio, length, "pt", _portugueseModelId, measure);
+            if (englishEnabled)
+                (english, englishError, englishElapsedMilliseconds) = RunTranscriptionAttempt(audio, length, "en", _englishModelId, measure);
         }
         var best = ChooseBestTranscription(portuguese, english);
         totalTimer?.Stop();
@@ -464,6 +470,7 @@ internal sealed class VoiceWakeWordService : IDisposable
 
     private static string GetModelDisplayName(string modelId) => modelId switch
     {
+        VoiceModelOptions.Disabled => "Desativado",
         "vosk" => "Vosk",
         "whisperTiny" => "Whisper Tiny",
         "whisperBase" => "Whisper Base",
@@ -644,6 +651,9 @@ internal sealed class VoiceWakeWordService : IDisposable
         VoiceTranscriptionCandidate? portuguese,
         VoiceTranscriptionCandidate? english)
     {
+        if (_portugueseModelId == VoiceModelOptions.Disabled) return english;
+        if (_englishModelId == VoiceModelOptions.Disabled) return portuguese;
+
         var portugueseMatchesCommand = portuguese is not null && MatchesConfiguredVoiceCommand(portuguese);
         var englishMatchesCommand = english is not null && MatchesConfiguredVoiceCommand(english);
         if (portugueseMatchesCommand != englishMatchesCommand)

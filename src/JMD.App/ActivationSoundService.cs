@@ -8,20 +8,53 @@ internal static class ActivationSoundService
     private const int SampleRate = 22050;
     private const double Volume = 0.22;
 
-    public static void PlayShortcutActivated() => Play([740, 988]);
+    public const string Classic = "classic";
+    public const string Soft = "soft";
+    public const string Chime = "chime";
+    public const string Double = "double";
+    public const string None = "none";
 
-    public static void PlayVoiceCommandFound() => Play([587, 740, 988]);
+    public static string Normalize(string? sound, string fallback)
+        => sound is Classic or Soft or Chime or Double or None ? sound : fallback;
 
-    public static void PlayJeyRecognized() => Play([494], 0.10);
+    public static void PlayShortcutActivated(string? sound = null) => Play(sound, Signal.Shortcut);
 
-    private static void Play(int[] notes, double volume = Volume)
+    public static void PlayVoiceCommandFound(string? sound = null) => Play(sound, Signal.VoiceCommand);
+
+    public static void PlayJeyRecognized(string? sound = null) => Play(sound, Signal.JeyActivated);
+
+    public static void PlayTaskReminder(string? sound = null) => Play(sound ?? Soft, Signal.TaskReminder);
+
+    private static void Play(string? sound, Signal signal)
+    {
+        sound = Normalize(sound, signal == Signal.TaskReminder ? Soft : Classic);
+        if (sound == None) return;
+
+        var pattern = sound switch
+        {
+            Soft => new SoundPattern([440], 0.075, 115, 0),
+            Chime => new SoundPattern([784, 1046, 1318], 0.14, 78, 24),
+            Double => new SoundPattern([659, 659], 0.13, 72, 42),
+            _ => signal switch
+            {
+                Signal.Shortcut => new SoundPattern([740, 988], Volume, 72, 18),
+                Signal.VoiceCommand => new SoundPattern([587, 740, 988], Volume, 72, 18),
+                Signal.JeyActivated => new SoundPattern([494], 0.10, 72, 18),
+                Signal.TaskReminder => new SoundPattern([440], 0.075, 115, 0),
+                _ => new SoundPattern([], 0, 72, 18)
+            }
+        };
+        Play(pattern);
+    }
+
+    private static void Play(SoundPattern pattern)
     {
         RawSourceWaveStream? stream = null;
         WaveOutEvent? output = null;
         try
         {
-            stream = new RawSourceWaveStream(new MemoryStream(CreatePcm(notes)), new WaveFormat(SampleRate, 16, 1));
-            output = new WaveOutEvent { Volume = (float)volume };
+            stream = new RawSourceWaveStream(new MemoryStream(CreatePcm(pattern)), new WaveFormat(SampleRate, 16, 1));
+            output = new WaveOutEvent { Volume = (float)pattern.Volume };
             output.PlaybackStopped += (_, _) =>
             {
                 output.Dispose();
@@ -37,16 +70,15 @@ internal static class ActivationSoundService
         }
     }
 
-    private static byte[] CreatePcm(int[] notes)
+    private static byte[] CreatePcm(SoundPattern pattern)
     {
-        const int noteMilliseconds = 72;
-        const int gapMilliseconds = 18;
-        var samplesPerNote = SampleRate * noteMilliseconds / 1000;
-        var gapSamples = SampleRate * gapMilliseconds / 1000;
-        var pcm = new byte[(samplesPerNote * notes.Length + gapSamples * (notes.Length - 1)) * sizeof(short)];
+        var samplesPerNote = SampleRate * pattern.NoteMilliseconds / 1000;
+        var gapSamples = SampleRate * pattern.GapMilliseconds / 1000;
+        var pcm = new byte[(samplesPerNote * pattern.Notes.Length + gapSamples * (pattern.Notes.Length - 1)) * sizeof(short)];
         var offset = 0;
-        foreach (var frequency in notes)
+        for (var noteIndex = 0; noteIndex < pattern.Notes.Length; noteIndex++)
         {
+            var frequency = pattern.Notes[noteIndex];
             for (var sample = 0; sample < samplesPerNote; sample++)
             {
                 var progress = (double)sample / samplesPerNote;
@@ -55,8 +87,12 @@ internal static class ActivationSoundService
                 pcm[offset++] = (byte)(value & 0xff);
                 pcm[offset++] = (byte)((value >> 8) & 0xff);
             }
-            offset += gapSamples * sizeof(short);
+            if (noteIndex < pattern.Notes.Length - 1) offset += gapSamples * sizeof(short);
         }
         return pcm;
     }
+
+    private sealed record SoundPattern(int[] Notes, double Volume, int NoteMilliseconds, int GapMilliseconds);
+
+    private enum Signal { Shortcut, VoiceCommand, JeyActivated, TaskReminder }
 }

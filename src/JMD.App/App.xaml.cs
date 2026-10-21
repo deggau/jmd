@@ -158,6 +158,10 @@ internal sealed class UserSettings
     public bool KeepAwakeEnabled { get; set; }
     public bool HideFromScreenCapture { get; set; }
     public bool UseJmdNotifications { get; set; }
+    public string ShortcutActivatedSound { get; set; } = ActivationSoundService.Classic;
+    public string VoiceCommandFoundSound { get; set; } = ActivationSoundService.Classic;
+    public string JeyRecognizedSound { get; set; } = ActivationSoundService.Classic;
+    public string TaskReminderSound { get; set; } = ActivationSoundService.Soft;
     public bool SilentUpdatesEnabled { get; set; }
     public bool VoiceWakeWordEnabled { get; set; } = true;
     public bool VoiceDebugEnabled { get; set; }

@@ -2,6 +2,7 @@ namespace JMD.Core;
 
 public static class VoiceModelOptions
 {
+    public const string Disabled = "disabled";
     public const string Vosk = "vosk";
     public const string WhisperTiny = "whisperTiny";
     public const string WhisperBase = "whisperBase";
@@ -13,7 +14,7 @@ public static class VoiceModelOptions
     public const int GemmaMaximumPcmBytes = GemmaPcmBytesPerSecond * 30;
 
     public static bool IsSupported(string? modelId)
-        => modelId is Vosk or WhisperTiny or WhisperBase or Gemma4E2B or SherpaParakeetPtBr or SherpaZipformerEn;
+        => modelId is Disabled or Vosk or WhisperTiny or WhisperBase or Gemma4E2B or SherpaParakeetPtBr or SherpaZipformerEn;
 
     public static string NormalizePersisted(string? modelId)
     {

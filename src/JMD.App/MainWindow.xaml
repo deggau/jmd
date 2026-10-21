@@ -477,6 +477,7 @@
           </Grid>
         </Grid>
         <Grid x:Name="AdvancedSettingsPage" Visibility="Collapsed" Background="#FF17191F">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="14">
             <TextBlock Text="Notificações" Foreground="White" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
             <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14">
@@ -488,7 +489,43 @@
                            Foreground="#FF969BA7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
               </StackPanel>
             </Border>
+            <TextBlock Text="Sons de sinalização" Foreground="White" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,10" />
+            <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14">
+              <StackPanel>
+                <TextBlock Text="Escolha um som para cada evento. Use Ouvir para testar; a preferência é salva automaticamente." Foreground="#FF969BA7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="68"/></Grid.ColumnDefinitions>
+                  <TextBlock Text="Atalho executado" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
+                  <ComboBox x:Name="ShortcutSoundCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="AdvancedSoundSelection_Changed">
+                    <ComboBoxItem Content="Clássico" Tag="classic"/><ComboBoxItem Content="Suave" Tag="soft"/><ComboBoxItem Content="Sino" Tag="chime"/><ComboBoxItem Content="Duplo" Tag="double"/><ComboBoxItem Content="Sem som" Tag="none"/>
+                  </ComboBox>
+                  <Button Grid.Column="2" Content="Ouvir" Tag="shortcut" Click="PreviewSignalSound_Click" Margin="6,0,0,0" Padding="6,4" Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                </Grid>
+                <Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="68"/></Grid.ColumnDefinitions>
+                  <TextBlock Text="Comando de voz" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
+                  <ComboBox x:Name="VoiceCommandSoundCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="AdvancedSoundSelection_Changed">
+                    <ComboBoxItem Content="Clássico" Tag="classic"/><ComboBoxItem Content="Suave" Tag="soft"/><ComboBoxItem Content="Sino" Tag="chime"/><ComboBoxItem Content="Duplo" Tag="double"/><ComboBoxItem Content="Sem som" Tag="none"/>
+                  </ComboBox>
+                  <Button Grid.Column="2" Content="Ouvir" Tag="voice" Click="PreviewSignalSound_Click" Margin="6,0,0,0" Padding="6,4" Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                </Grid>
+                <Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="68"/></Grid.ColumnDefinitions>
+                  <TextBlock Text="Jey reconhecido" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
+                  <ComboBox x:Name="JeySoundCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="AdvancedSoundSelection_Changed">
+                    <ComboBoxItem Content="Clássico" Tag="classic"/><ComboBoxItem Content="Suave" Tag="soft"/><ComboBoxItem Content="Sino" Tag="chime"/><ComboBoxItem Content="Duplo" Tag="double"/><ComboBoxItem Content="Sem som" Tag="none"/>
+                  </ComboBox>
+                  <Button Grid.Column="2" Content="Ouvir" Tag="jey" Click="PreviewSignalSound_Click" Margin="6,0,0,0" Padding="6,4" Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                </Grid>
+                <Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="68"/></Grid.ColumnDefinitions>
+                  <TextBlock Text="Lembrete de tarefa" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
+                  <ComboBox x:Name="TaskReminderSoundCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="AdvancedSoundSelection_Changed">
+                    <ComboBoxItem Content="Clássico" Tag="classic"/><ComboBoxItem Content="Suave" Tag="soft"/><ComboBoxItem Content="Sino" Tag="chime"/><ComboBoxItem Content="Duplo" Tag="double"/><ComboBoxItem Content="Sem som" Tag="none"/>
+                  </ComboBox>
+                  <Button Grid.Column="2" Content="Ouvir" Tag="reminder" Click="PreviewSignalSound_Click" Margin="6,0,0,0" Padding="6,4" Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                </Grid>
+                <TextBlock Text="O som do lembrete é independente dos demais. Com notificações padrão do Windows, o próprio Windows também pode emitir seu som de notificação." Foreground="#FF969BA7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+              </StackPanel>
+            </Border>
           </StackPanel>
+          </ScrollViewer>
         </Grid>
       </Grid>
       <Grid x:Name="AboutPage" Grid.Row="2" Visibility="Collapsed" Background="#FF17191F">
@@ -562,13 +599,15 @@
               </ScrollViewer>
             </StackPanel>
           </Border>
-          <TextBlock Text="Modelos de transcrição" Foreground="White" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,8" />
+          <TextBlock Text="Modelos de transcrição após ativar o Jey" Foreground="White" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,8" />
           <Border Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="12">
             <StackPanel>
+              <TextBlock Text="Escolha os idiomas usados para entender o que você fala depois de dizer “Jey”. O Vosk em inglês que escuta continuamente a palavra de ativação permanece ativo." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,12" />
               <Grid Margin="0,0,0,8">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="100"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <TextBlock Text="Português" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
                 <ComboBox x:Name="PortugueseModelCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="JeyTranscriptionModel_Changed">
+                  <ComboBoxItem Content="Desativado" Tag="disabled" />
                   <ComboBoxItem Content="Vosk · incluído" Tag="vosk" />
                   <ComboBoxItem Content="Whisper Tiny · rápido" Tag="whisperTiny" />
                   <ComboBoxItem Content="Whisper Base · equilibrado" Tag="whisperBase" />
@@ -580,6 +619,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="100"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <TextBlock Text="Inglês" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
                 <ComboBox x:Name="EnglishModelCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="JeyTranscriptionModel_Changed">
+                  <ComboBoxItem Content="Desativado" Tag="disabled" />
                   <ComboBoxItem Content="Vosk · incluído" Tag="vosk" />
                   <ComboBoxItem Content="Whisper Tiny · rápido" Tag="whisperTiny" />
                   <ComboBoxItem Content="Whisper Base · equilibrado" Tag="whisperBase" />

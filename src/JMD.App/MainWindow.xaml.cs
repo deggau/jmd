@@ -87,6 +87,7 @@ public partial class MainWindow : Window
     private bool _updatingCaptureExclusionToggle;
     private bool _usesRoundedWindowRegion;
     private bool _loadingAdvancedNotificationToggle;
+    private bool _loadingAdvancedSoundSettings;
     private bool _showingDialog;
     private bool _checkingUpdates;
     private IntPtr _dictationTargetWindow;
@@ -177,6 +178,16 @@ public partial class MainWindow : Window
         _loadingAdvancedNotificationToggle = true;
         AdvancedNotificationsToggle.IsChecked = _settings.UseJmdNotifications;
         _loadingAdvancedNotificationToggle = false;
+        _settings.ShortcutActivatedSound = ActivationSoundService.Normalize(_settings.ShortcutActivatedSound, ActivationSoundService.Classic);
+        _settings.VoiceCommandFoundSound = ActivationSoundService.Normalize(_settings.VoiceCommandFoundSound, ActivationSoundService.Classic);
+        _settings.JeyRecognizedSound = ActivationSoundService.Normalize(_settings.JeyRecognizedSound, ActivationSoundService.Classic);
+        _settings.TaskReminderSound = ActivationSoundService.Normalize(_settings.TaskReminderSound, ActivationSoundService.Soft);
+        _loadingAdvancedSoundSettings = true;
+        SelectAdvancedSound(ShortcutSoundCombo, _settings.ShortcutActivatedSound);
+        SelectAdvancedSound(VoiceCommandSoundCombo, _settings.VoiceCommandFoundSound);
+        SelectAdvancedSound(JeySoundCombo, _settings.JeyRecognizedSound);
+        SelectAdvancedSound(TaskReminderSoundCombo, _settings.TaskReminderSound);
+        _loadingAdvancedSoundSettings = false;
         if (_settings.HistoryRetentionDays is < 1 or > 3650)
             _settings.HistoryRetentionDays = 15;
         try
@@ -1413,9 +1424,9 @@ public partial class MainWindow : Window
         try
         {
             if (voiceCommand is null)
-                ActivationSoundService.PlayShortcutActivated();
+                ActivationSoundService.PlayShortcutActivated(_settings.ShortcutActivatedSound);
             else
-                ActivationSoundService.PlayVoiceCommandFound();
+                ActivationSoundService.PlayVoiceCommandFound(_settings.VoiceCommandFoundSound);
             _previousWindow = _keyboard.GetForegroundWindow();
             switch (id)
             {
@@ -1999,6 +2010,7 @@ public partial class MainWindow : Window
         {
             task.LastReminderAt = now;
             _todoTaskStore.MarkReminderSent(task.Id, now);
+            ActivationSoundService.PlayTaskReminder(_settings.TaskReminderSound);
             Notify("Lembrete de tarefa", $"{TodoTaskDisplay.Reference(task)} {task.Title}", true);
         }
     }
@@ -2553,7 +2565,7 @@ public partial class MainWindow : Window
         {
             if (!ReferenceEquals(_voiceWakeWord, service) || !_settings.VoiceWakeWordEnabled) return;
             ShowJeyProcessingNotification("Jey reconhecido · identificando o comando…");
-            ActivationSoundService.PlayJeyRecognized();
+            ActivationSoundService.PlayJeyRecognized(_settings.JeyRecognizedSound);
         }));
         service.WakeWordProcessingEnded += () => Dispatcher.BeginInvoke(new Action(() =>
         {
@@ -3639,6 +3651,52 @@ public partial class MainWindow : Window
             SetStatus($"Não foi possível salvar a preferência de notificação: {exception.Message}", false);
         }
     }
+
+    private static void SelectAdvancedSound(ComboBox combo, string sound)
+    {
+        combo.SelectedItem = combo.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, sound, StringComparison.Ordinal)) ?? combo.Items[0];
+    }
+
+    private void AdvancedSoundSelection_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingAdvancedSoundSettings || sender is not ComboBox combo || combo.SelectedItem is not ComboBoxItem selected || selected.Tag is not string sound)
+            return;
+
+        switch (combo.Name)
+        {
+            case nameof(ShortcutSoundCombo): _settings.ShortcutActivatedSound = sound; break;
+            case nameof(VoiceCommandSoundCombo): _settings.VoiceCommandFoundSound = sound; break;
+            case nameof(JeySoundCombo): _settings.JeyRecognizedSound = sound; break;
+            case nameof(TaskReminderSoundCombo): _settings.TaskReminderSound = sound; break;
+            default: return;
+        }
+
+        try
+        {
+            _settingsStore.Save(_settings);
+            SetStatus("Preferência de som salva.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"Não foi possível salvar a preferência de som: {exception.Message}", false);
+        }
+    }
+
+    private void PreviewSignalSound_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string signal }) return;
+        switch (signal)
+        {
+            case "shortcut": ActivationSoundService.PlayShortcutActivated(GetSelectedSound(ShortcutSoundCombo)); break;
+            case "voice": ActivationSoundService.PlayVoiceCommandFound(GetSelectedSound(VoiceCommandSoundCombo)); break;
+            case "jey": ActivationSoundService.PlayJeyRecognized(GetSelectedSound(JeySoundCombo)); break;
+            case "reminder": ActivationSoundService.PlayTaskReminder(GetSelectedSound(TaskReminderSoundCombo)); break;
+        }
+    }
+
+    private static string GetSelectedSound(ComboBox combo)
+        => (combo.SelectedItem as ComboBoxItem)?.Tag as string ?? ActivationSoundService.None;
 
     private void ShowAboutPage()
     {
