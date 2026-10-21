@@ -183,6 +183,7 @@ public partial class MainWindow : Window
         CommandsList.ItemsSource = _commands;
         _commandView = CollectionViewSource.GetDefaultView(_commands);
         _commandView.Filter = item => item is CommandRow command && command.Visible;
+        _commandView.SortDescriptions.Add(new SortDescription(nameof(CommandRow.SearchRank), ListSortDirection.Ascending));
         _commandView.SortDescriptions.Add(new SortDescription(nameof(CommandRow.Name), ListSortDirection.Ascending));
         BuildSettingsPanel();
         BuildSnippetManagementPage();
@@ -207,6 +208,20 @@ public partial class MainWindow : Window
         RefreshMemoryStatus();
         _benchmarkRecordingTimer.Tick += BenchmarkRecordingTimer_Tick;
         Closing += MainWindow_Closing;
+        IsVisibleChanged += MainWindow_IsVisibleChanged;
+    }
+
+    private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (!IsVisible || !_settings.HideFromScreenCapture ||
+            !ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version))
+            return;
+
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (IsVisible && _settings.HideFromScreenCapture && !TrySetCaptureExcluded(this, true))
+                SetStatus("O Windows não aceitou ocultar a janela do JMD nas capturas.", false);
+        }));
     }
 
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
@@ -3681,8 +3696,21 @@ public partial class MainWindow : Window
         var query = SearchBox.Text.Trim();
         var dynamicMatch = FindTypedWorkflowMatch(query);
         foreach (var command in _commands)
-            command.Visible = query.Length == 0 || command.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
-                command.Description.Contains(query, StringComparison.CurrentCultureIgnoreCase) || command.Id == dynamicMatch?.CommandId;
+        {
+            var phrases = command.VoicePhrasesDisplay
+                .Replace("Jey:", string.Empty, StringComparison.CurrentCultureIgnoreCase)
+                .Split('·', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var fields = new[] { command.Name, command.Description, command.Shortcut };
+            var exactMatch = fields.Any(field => string.Equals(field, query, StringComparison.CurrentCultureIgnoreCase)) ||
+                phrases.Any(phrase => string.Equals(phrase, query, StringComparison.CurrentCultureIgnoreCase));
+            var startsWithMatch = fields.Any(field => field.StartsWith(query, StringComparison.CurrentCultureIgnoreCase)) ||
+                phrases.Any(phrase => phrase.StartsWith(query, StringComparison.CurrentCultureIgnoreCase));
+            var containsMatch = fields.Any(field => field.Contains(query, StringComparison.CurrentCultureIgnoreCase)) ||
+                phrases.Any(phrase => phrase.Contains(query, StringComparison.CurrentCultureIgnoreCase));
+
+            command.SearchRank = query.Length == 0 || exactMatch ? 0 : startsWithMatch ? 1 : 2;
+            command.Visible = query.Length == 0 || containsMatch || command.Id == dynamicMatch?.CommandId;
+        }
         _commandView?.Refresh();
     }
 
@@ -3751,6 +3779,13 @@ public partial class MainWindow : Window
                 CommandsList.Focus();
                 Keyboard.Focus(CommandsList);
             }
+        }
+        else if (e.Key == Key.Up && CommandsList.IsKeyboardFocusWithin &&
+                 CommandsList.SelectedItem is CommandRow selected &&
+                 ReferenceEquals(selected, _commands.FirstOrDefault(command => command.Visible)))
+        {
+            SearchBox.Focus();
+            Keyboard.Focus(SearchBox);
         }
     }
 
@@ -4110,6 +4145,8 @@ internal sealed class CommandRow(string id, string name, string description, str
     public string Id { get; } = id;
     public string Name { get; } = name;
     public string Description { get; } = description;
+    private int _searchRank;
+    public int SearchRank { get => _searchRank; set { _searchRank = value; Changed(nameof(SearchRank)); } }
     private string _shortcut = shortcut;
     private string _status = "Atalho configurável";
     private Brush _statusBrush = new SolidColorBrush(Color.FromRgb(150, 155, 167));
