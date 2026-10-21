@@ -139,8 +139,30 @@ internal sealed class TodoTaskEditWindow : Window
         buttons.Children.Add(cancel); buttons.Children.Add(save); panel.Children.Add(buttons); Content = panel;
         SelectCategory(task?.CategoryColor ?? "Verde");
         Loaded += (_, _) => { _title.Focus(); Keyboard.Focus(_title); };
+        PreviewKeyDown += TodoTaskEditWindow_PreviewKeyDown;
         _title.KeyDown += (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; _description.Focus(); } };
         _description.KeyDown += (_, e) => { if (e.Key == Key.Enter && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { e.Handled = true; save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); } };
+    }
+
+    private void TodoTaskEditWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            DialogResult = false;
+            return;
+        }
+
+        if (e.Key is not (Key.Up or Key.Down)) return;
+        if (Keyboard.FocusedElement is TextBox { AcceptsReturn: true } textBox)
+        {
+            var currentLine = textBox.GetLineIndexFromCharacterIndex(textBox.CaretIndex);
+            var atBoundary = e.Key == Key.Up ? currentLine == 0 : currentLine >= textBox.LineCount - 1;
+            if (!atBoundary) return;
+        }
+
+        var direction = e.Key == Key.Up ? FocusNavigationDirection.Previous : FocusNavigationDirection.Next;
+        if (MoveFocus(new TraversalRequest(direction))) e.Handled = true;
     }
 
     private static TextBlock Label(string text) => new() { Text = text, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 12 };

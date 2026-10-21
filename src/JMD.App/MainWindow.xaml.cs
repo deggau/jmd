@@ -102,7 +102,7 @@ public partial class MainWindow : Window
     private TodoTaskPanelWindow? _todoTaskPanel;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
 
-    public event Action<string, string, bool, long?>? TrayNotification;
+    public event Action<string, string, bool, long?, TimeSpan>? TrayNotification;
     public bool IsVoiceWakeWordEnabled => _settings.VoiceWakeWordEnabled;
 
     public void ToggleVoiceWakeWordFromTray()
@@ -1915,11 +1915,16 @@ public partial class MainWindow : Window
         var selectedText = string.Empty;
         var oldClipboard = _clipboard.TryGetRichContent();
         var modifiersReleased = await _keyboard.WaitForModifiersReleasedAsync();
-        if (modifiersReleased && _previousWindow != IntPtr.Zero && _keyboard.GetForegroundWindow() == _previousWindow && _keyboard.SendCopy())
+        if (modifiersReleased && _previousWindow != IntPtr.Zero && _keyboard.GetForegroundWindow() == _previousWindow)
         {
-            await Task.Delay(180);
-            selectedText = _clipboard.TryGetRichContent()?.Text ?? string.Empty;
-            if (oldClipboard is not null) _clipboard.TrySetRichContent(oldClipboard);
+            var clipboardSequenceBeforeCopy = _clipboard.SequenceNumber;
+            if (_keyboard.SendCopy())
+            {
+                await Task.Delay(180);
+                if (_clipboard.SequenceNumber != clipboardSequenceBeforeCopy)
+                    selectedText = _clipboard.TryGetRichContent()?.Text ?? string.Empty;
+                if (oldClipboard is not null) _clipboard.TrySetRichContent(oldClipboard);
+            }
         }
         var dialog = new TodoTaskEditWindow(initialDescription: selectedText);
         if (dialog.ShowDialog() != true) return;
@@ -2011,7 +2016,8 @@ public partial class MainWindow : Window
             task.LastReminderAt = now;
             _todoTaskStore.MarkReminderSent(task.Id, now);
             ActivationSoundService.PlayTaskReminder(_settings.TaskReminderSound);
-            Notify("Lembrete de tarefa", $"{TodoTaskDisplay.Reference(task)} {task.Title}", true);
+            Notify("Lembrete de tarefa", $"{TodoTaskDisplay.Reference(task)} {task.Title}", true,
+                displayDuration: TimeSpan.FromSeconds(12));
         }
     }
 
@@ -4165,10 +4171,12 @@ public partial class MainWindow : Window
         Hide();
     }
 
-    private void Notify(string title, string message, bool success, long? historyId = null)
+    private void Notify(string title, string message, bool success, long? historyId = null,
+        TimeSpan? displayDuration = null)
     {
         SetStatus(message, success);
-        TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications, historyId);
+        TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications, historyId,
+            displayDuration ?? TimeSpan.FromSeconds(4));
     }
 
     private void ShowJeyProcessingNotification(string message)

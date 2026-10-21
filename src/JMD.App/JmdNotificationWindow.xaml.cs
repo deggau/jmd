@@ -7,15 +7,20 @@ namespace JMD.App;
 
 public partial class JmdNotificationWindow : Window
 {
-    private readonly DispatcherTimer _dismissTimer = new() { Interval = TimeSpan.FromSeconds(4) };
+    private readonly DispatcherTimer _dismissTimer;
     private readonly long? _historyId;
     private readonly bool _isProcessing;
 
     public event Action<long?>? HistoryRequested;
 
-    public JmdNotificationWindow(string message, long? historyId, bool isProcessing = false)
+    public JmdNotificationWindow(string message, long? historyId, bool isProcessing = false,
+        TimeSpan? displayDuration = null)
     {
         InitializeComponent();
+        _dismissTimer = new DispatcherTimer
+        {
+            Interval = displayDuration ?? TimeSpan.FromSeconds(4)
+        };
         _historyId = historyId;
         _isProcessing = isProcessing;
         NotificationMessage.Text = message;

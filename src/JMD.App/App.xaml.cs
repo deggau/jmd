@@ -60,7 +60,7 @@ public partial class App : System.Windows.Application
             Visible = true
         };
         long? activeBalloonHistoryId = null;
-        _mainWindow.TrayNotification += (title, message, useJmdNotification, historyId) =>
+        _mainWindow.TrayNotification += (title, message, useJmdNotification, historyId, displayDuration) =>
         {
             if (useJmdNotification)
             {
@@ -68,7 +68,8 @@ public partial class App : System.Windows.Application
                 if (window is not null)
                     window.Dispatcher.BeginInvoke(() =>
                     {
-                        var notification = new JmdNotificationWindow(message, historyId);
+                        var notification = new JmdNotificationWindow(message, historyId,
+                            displayDuration: displayDuration);
                         window.PrepareWindowForCaptureExclusion(notification);
                         notification.HistoryRequested += selectedHistoryId => window.Dispatcher.BeginInvoke(
                             new Action(() => window.ShowHistory(selectedHistoryId)));
@@ -80,7 +81,7 @@ public partial class App : System.Windows.Application
             activeBalloonHistoryId = historyId;
             _trayIcon.BalloonTipTitle = title;
             _trayIcon.BalloonTipText = message;
-            _trayIcon.ShowBalloonTip(2200);
+            _trayIcon.ShowBalloonTip((int)displayDuration.TotalMilliseconds);
         };
         _trayIcon.BalloonTipClicked += (_, _) =>
             _mainWindow.Dispatcher.BeginInvoke(new Action(() => _mainWindow.ShowHistory(activeBalloonHistoryId)));
