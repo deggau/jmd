@@ -96,6 +96,10 @@ public partial class MainWindow : Window
     private int _historyPageIndex;
     private int _historyPageCount;
     private readonly ObservableCollection<WakeRecognitionHistoryRow> _wakeRecognitionHistory = [];
+    private readonly TodoTaskStore _todoTaskStore;
+    private readonly ObservableCollection<TodoTask> _todoTasks;
+    private TodoTaskPanelWindow? _todoTaskPanel;
+    private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
 
     public event Action<string, string, bool, long?>? TrayNotification;
     public bool IsVoiceWakeWordEnabled => _settings.VoiceWakeWordEnabled;
@@ -116,6 +120,20 @@ public partial class MainWindow : Window
         VoiceRecognitionDebugHistory.ItemsSource = _wakeRecognitionHistory;
         FooterVersionText.Text = $"v{GetInstalledVersion()}";
         _settings = _settingsStore.Load();
+        var appDataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JMD");
+        _todoTaskStore = new TodoTaskStore(Path.Combine(appDataDirectory, "tasks.db"));
+        var legacyTasksPath = Path.Combine(appDataDirectory, "tasks.json");
+        List<TodoTask> legacyTasks = [];
+        try
+        {
+            if (File.Exists(legacyTasksPath))
+                legacyTasks = JsonSerializer.Deserialize<List<TodoTask>>(File.ReadAllText(legacyTasksPath)) ?? [];
+        }
+        catch (JsonException) { }
+        _todoTaskStore.ImportLegacyOnce(legacyTasks.Select(ToTodoTaskEntry));
+        _todoTasks = new ObservableCollection<TodoTask>(_todoTaskStore.GetAll().Select(FromTodoTaskEntry));
+        _todoReminderTimer.Tick += CheckTodoTaskReminders;
+        _todoReminderTimer.Start();
         HideFromCaptureToggle.Visibility = ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version)
             ? Visibility.Visible : Visibility.Collapsed;
         ConfigureDefaultVoiceCommands();
@@ -333,6 +351,11 @@ public partial class MainWindow : Window
             if (!ShortcutParser.TryParse(shortcut.Shortcut, out var binding, out _) ||
                 !_hotkeys.TryRegister(shortcut.Id, binding!, out _))
                 SetStatus($"Atalho personalizado indisponível: {shortcut.Name}", false);
+        }
+        foreach (var (id, shortcut) in new[] { ("todoCreate", "Ctrl+Alt+T"), ("todoPanel", "Ctrl+Alt+Left"), ("todoPanelClose", "Ctrl+Alt+Right") })
+        {
+            if (ShortcutParser.TryParse(shortcut, out var binding, out _) && !_hotkeys.TryRegister(id, binding!, out _))
+                SetStatus($"Atalho de tarefas indisponível: {shortcut}", false);
         }
     }
 
@@ -1380,6 +1403,15 @@ public partial class MainWindow : Window
             _previousWindow = _keyboard.GetForegroundWindow();
             switch (id)
             {
+                case "todoCreate":
+                    await CreateTodoTaskAsync();
+                    break;
+                case "todoPanel":
+                    ShowTodoTaskPanel();
+                    break;
+                case "todoPanelClose":
+                    _todoTaskPanel?.Hide();
+                    break;
                 case "palette":
                     ShowPalette();
                     if (voiceCommand is not null)
@@ -1851,6 +1883,105 @@ public partial class MainWindow : Window
         Keyboard.Focus(SearchBox);
     }
 
+    private async Task CreateTodoTaskAsync()
+    {
+        var selectedText = string.Empty;
+        var oldClipboard = _clipboard.TryGetRichContent();
+        var modifiersReleased = await _keyboard.WaitForModifiersReleasedAsync();
+        if (modifiersReleased && _previousWindow != IntPtr.Zero && _keyboard.GetForegroundWindow() == _previousWindow && _keyboard.SendCopy())
+        {
+            await Task.Delay(180);
+            selectedText = _clipboard.TryGetRichContent()?.Text ?? string.Empty;
+            if (oldClipboard is not null) _clipboard.TrySetRichContent(oldClipboard);
+        }
+        var dialog = new TodoTaskEditWindow(initialDescription: selectedText);
+        if (dialog.ShowDialog() != true) return;
+        var task = FromTodoTaskEntry(_todoTaskStore.Create(dialog.TaskTitle, dialog.Description, DateTimeOffset.Now,
+            dialog.ReminderIntervalMinutes, dialog.CategoryColor));
+        _todoTasks.Add(task);
+        RecordTodoTaskChange("criada", task, string.Empty, DescribeTodoTask(task, "Em aberto"));
+        _todoTaskPanel?.Refresh();
+    }
+
+    private void ShowTodoTaskPanel()
+    {
+        _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask);
+        _todoTaskPanel.Refresh();
+        _todoTaskPanel.Show();
+        _todoTaskPanel.Activate();
+        Dispatcher.BeginInvoke(new Action(_todoTaskPanel.FocusFirstAction));
+    }
+
+    private void EditTodoTask(TodoTask task)
+    {
+        var dialog = new TodoTaskEditWindow(task);
+        if (dialog.ShowDialog() != true) return;
+        var previousDescription = DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída");
+        var changed = task.Title != dialog.TaskTitle || task.Description != dialog.Description;
+        var reminderChanged = task.ReminderIntervalMinutes != dialog.ReminderIntervalMinutes;
+        changed |= reminderChanged || task.CategoryColor != dialog.CategoryColor;
+        task.Title = dialog.TaskTitle;
+        task.Description = dialog.Description;
+        task.ReminderIntervalMinutes = dialog.ReminderIntervalMinutes;
+        task.CategoryColor = dialog.CategoryColor;
+        if (reminderChanged) task.LastReminderAt = task.ReminderIntervalMinutes is null ? null : DateTimeOffset.Now;
+        SaveTodoTasks();
+        if (changed) RecordTodoTaskChange("editada", task, previousDescription, DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída"));
+        _todoTaskPanel?.Refresh();
+    }
+
+    private void CompleteTodoTask(TodoTask task)
+    {
+        if (task.CompletedAt is not null) return;
+        var previousDescription = DescribeTodoTask(task, "Em aberto");
+        task.CompletedAt = DateTimeOffset.Now;
+        SaveTodoTasks();
+        RecordTodoTaskChange("concluída", task, previousDescription, DescribeTodoTask(task, "Concluída"));
+        _todoTaskPanel?.Refresh();
+    }
+
+    private void DeleteTodoTask(TodoTask task)
+    {
+        var previousDescription = DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída");
+        _todoTasks.Remove(task);
+        SaveTodoTasks();
+        RecordTodoTaskChange("excluída", task, previousDescription, "Tarefa removida da lista.");
+        _todoTaskPanel?.Refresh();
+    }
+
+    private void RecordTodoTaskChange(string change, TodoTask task, string before, string after)
+        => RecordActionHistory($"Tarefa {change} — {TodoTaskDisplay.Reference(task)} {task.Title}", before, after);
+
+    private static string DescribeTodoTask(TodoTask task, string status)
+        => $"Estado: {status}\nTítulo: {task.Title}\nDescrição: {task.Description}\nCriada: {task.CreatedAt.LocalDateTime:g}" +
+           (task.CompletedAt is null ? string.Empty : $"\nConcluída: {task.CompletedAt.Value.LocalDateTime:g}") +
+           $"\nPrioridade: {task.CategoryColor}" +
+           (task.ReminderIntervalMinutes is { } interval ? $"\nLembrete: a cada {interval} minutos" : "\nLembrete: desativado");
+
+    private void SaveTodoTasks() => _todoTaskStore.SaveAll(_todoTasks.Select(ToTodoTaskEntry));
+
+    private void CheckTodoTaskReminders(object? sender, EventArgs e)
+    {
+        var now = DateTimeOffset.Now;
+        var dueTasks = _todoTasks.Where(task => task.CompletedAt is null && task.ReminderIntervalMinutes is { } interval &&
+            now - (task.LastReminderAt ?? task.CreatedAt) >= TimeSpan.FromMinutes(interval)).ToList();
+        foreach (var task in dueTasks)
+        {
+            task.LastReminderAt = now;
+            _todoTaskStore.MarkReminderSent(task.Id, now);
+            Notify("Lembrete de tarefa", $"{TodoTaskDisplay.Reference(task)} {task.Title}", true);
+        }
+    }
+
+    private static TodoTaskEntry ToTodoTaskEntry(TodoTask task)
+        => new(task.Id, task.Title, task.Description, task.CreatedAt, task.CompletedAt, task.TaskNumber,
+            task.ReminderIntervalMinutes, task.CategoryColor, task.LastReminderAt);
+
+    private static TodoTask FromTodoTaskEntry(TodoTaskEntry task)
+        => new() { Id = task.Id, Title = task.Title, Description = task.Description, CreatedAt = task.CreatedAt, CompletedAt = task.CompletedAt,
+            TaskNumber = task.TaskNumber, ReminderIntervalMinutes = task.ReminderIntervalMinutes, CategoryColor = task.CategoryColor,
+            LastReminderAt = task.LastReminderAt };
+
     private async Task TransformClipboardAsync(VoiceCommandInvocation? voiceCommand = null)
     {
         if (_conversionRunning) return;
@@ -2020,7 +2151,7 @@ public partial class MainWindow : Window
             PreviousHistoryPageButton.IsEnabled = _historyPageIndex > 0;
             NextHistoryPageButton.IsEnabled = _historyPageIndex + 1 < _historyPageCount;
             HistoryEmptyText.Text = entries.Count == 0
-                ? string.IsNullOrWhiteSpace(HistorySearchBox?.Text) ? "Nenhuma conversão registrada." : "Nenhum resultado para essa busca."
+                ? string.IsNullOrWhiteSpace(HistorySearchBox?.Text) ? "Nenhuma conversão ou alteração de tarefa registrada." : "Nenhum resultado para essa busca."
                 : string.Empty;
             HistoryEmptyText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
@@ -3972,6 +4103,7 @@ public partial class MainWindow : Window
 
     public void DisposeServices()
     {
+        _todoReminderTimer.Stop();
         _memoryRefreshTimer.Stop();
         _benchmarkRecordingTimer.Stop();
         if (_benchmarkRecorder is { } recorder)
