@@ -217,6 +217,7 @@ internal sealed class TodoTaskPanelWindow : Window
         content.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _list }); root.Children.Add(content);
         Content = root; Refresh();
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape || (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Left)) { e.Handled = true; Hide(); } };
+        Deactivated += (_, _) => Hide();
     }
 
     public void Refresh()
