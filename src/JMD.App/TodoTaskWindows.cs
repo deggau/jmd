@@ -171,6 +171,7 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly Action<TodoTask> _delete;
     private readonly Action<TodoTask> _reopen;
     private readonly Action _create;
+    private readonly Button _historyButton;
     private readonly StackPanel _list = new();
     private bool _showHistory;
 
@@ -185,8 +186,9 @@ internal sealed class TodoTaskPanelWindow : Window
         var title = new TextBlock { Text = "Tarefas", FontSize = 21, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
         DockPanel.SetDock(title, Dock.Left); header.Children.Add(title);
         var collapse = IconButton("\uE76C", "Recolher painel"); collapse.Click += (_, _) => Hide(); DockPanel.SetDock(collapse, Dock.Right); header.Children.Add(collapse);
-        var history = IconButton("\uE81C", "Ver tarefas concluídas"); history.Click += (_, _) => { _showHistory = !_showHistory; history.ToolTip = _showHistory ? "Ver tarefas em aberto" : "Ver tarefas concluídas"; Refresh(); };
-        DockPanel.SetDock(history, Dock.Right); header.Children.Add(history); DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
+        _historyButton = IconButton("\uE81C", "Ver tarefas concluídas");
+        _historyButton.Click += (_, _) => { _showHistory = !_showHistory; _historyButton.ToolTip = _showHistory ? "Ver tarefas em aberto" : "Ver tarefas concluídas"; Refresh(); };
+        DockPanel.SetDock(_historyButton, Dock.Right); header.Children.Add(_historyButton); DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
         var content = new DockPanel();
         var newTaskButton = new Button { Content = "＋  Nova tarefa", Height = 40, Margin = new Thickness(0, 12, 0, 0), Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)), Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)), FontWeight = FontWeights.SemiBold, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
         newTaskButton.Click += (_, _) => _create(); DockPanel.SetDock(newTaskButton, Dock.Bottom); content.Children.Add(newTaskButton);
@@ -228,6 +230,13 @@ internal sealed class TodoTaskPanelWindow : Window
             layout.Children.Add(body); card.Child = layout; _list.Children.Add(card);
         }
         if (_list.Children.Count == 0) _list.Children.Add(new TextBlock { Text = _showHistory ? "Nenhuma tarefa concluída." : "Nenhuma tarefa em aberto.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 10, 0, 0) });
+    }
+
+    public void ShowOpenTasks()
+    {
+        _showHistory = false;
+        _historyButton.ToolTip = "Ver tarefas concluídas";
+        Refresh();
     }
 
     public void FocusFirstAction()

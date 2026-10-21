@@ -1922,7 +1922,7 @@ public partial class MainWindow : Window
     private void ShowTodoTaskPanel()
     {
         _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask, ReopenTodoTask, () => _ = CreateTodoTaskAsync());
-        _todoTaskPanel.Refresh();
+        _todoTaskPanel.ShowOpenTasks();
         _todoTaskPanel.Show();
         _todoTaskPanel.Activate();
         Dispatcher.BeginInvoke(new Action(_todoTaskPanel.FocusFirstAction));
