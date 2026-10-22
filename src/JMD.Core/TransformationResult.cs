@@ -107,7 +107,7 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
 {
     private readonly IAsyncDelay _delay = delay ?? new SystemAsyncDelay();
 
-    public async Task<SelectionTransformResult> ExecuteAsync(Func<string, TransformationResult> transform, CancellationToken cancellationToken = default)
+    public async Task<SelectionTransformResult> ExecuteAsync(Func<string, TransformationResult> transform, CancellationToken cancellationToken = default, bool allowClipboardFallback = true)
     {
         var sourceWindow = keyboard.GetForegroundWindow();
         if (sourceWindow == IntPtr.Zero) return new(false, "Não foi possível identificar a janela ativa.");
@@ -144,6 +144,8 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
                     return new(false, "A janela ativa mudou. O clipboard original foi mantido sem transformação.");
                 if (originalClipboard is null)
                     return new(false, "Nenhuma seleção de texto foi detectada e o clipboard não contém texto Unicode.");
+                if (!allowClipboardFallback)
+                    return new(false, "Nenhuma seleção de texto foi detectada.");
 
                 var clipboardResult = transform(originalClipboard);
                 if (!clipboardResult.Success)

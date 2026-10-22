@@ -140,6 +140,9 @@
         <ScrollViewer x:Name="SettingsPage" VerticalScrollBarVisibility="Auto" Background="#FF17191F">
           <StackPanel x:Name="SettingsPanel" Margin="2,10,2,8" />
         </ScrollViewer>
+        <ScrollViewer x:Name="WorkflowSettingsPage" VerticalScrollBarVisibility="Auto" Background="#FF17191F" Visibility="Collapsed">
+          <StackPanel x:Name="WorkflowSettingsPanel" Margin="2,10,2,8" />
+        </ScrollViewer>
         <Grid x:Name="SqlInTestPage" Visibility="Collapsed" Background="#FF17191F">
           <StackPanel Margin="14">
             <Button Content="← Gerenciar atalhos" Click="BackToShortcutSettings_Click" HorizontalAlignment="Left"

@@ -44,6 +44,9 @@ public static class ShortcutDefaults
         "palette" => "Alt+J",
         "clipboard" => "Ctrl+Shift+I",
         "selection" => "Ctrl+Alt+I",
+        "upperCase" => "Ctrl+Shift+U",
+        "lowerCase" => "Ctrl+Shift+L",
+        "titleCase" => "Ctrl+Shift+T",
         "jsonPretty" => "Ctrl+Alt+B",
         "jsonCompact" => "Alt+Shift+B",
         "snippets" => "Ctrl+Shift+Y",
@@ -70,6 +73,29 @@ public static class ShortcutDefaults
             shortcuts["clipboard"] = ForCommand("clipboard");
             shortcuts["selection"] = ForCommand("selection");
         }
+    }
+}
+
+public static class TextCaseTransform
+{
+    private static readonly HashSet<string> PortuguesePrepositions = new(StringComparer.CurrentCultureIgnoreCase)
+    {
+        "a", "as", "ao", "aos", "à", "às", "com", "da", "das", "de", "do", "dos", "e", "em", "no", "na", "nas", "nos",
+        "o", "os", "ou", "para", "pela", "pelas", "pelo", "pelos", "por", "sem", "sob", "sobre", "num", "nuns", "numa", "numas"
+    };
+
+    public static string Upper(string input) => input.ToUpper(CultureInfo.CurrentCulture);
+    public static string Lower(string input) => input.ToLower(CultureInfo.CurrentCulture);
+
+    public static string Title(string input)
+    {
+        var wordIndex = 0;
+        return Regex.Replace(input.ToLower(CultureInfo.CurrentCulture), @"[\p{L}\p{M}]+", match =>
+        {
+            var word = match.Value;
+            var capitalize = wordIndex++ == 0 || !PortuguesePrepositions.Contains(word);
+            return capitalize ? CultureInfo.CurrentCulture.TextInfo.ToUpper(word[..1]) + word[1..] : word;
+        });
     }
 }
 

@@ -2,6 +2,8 @@ using Microsoft.Data.Sqlite;
 
 namespace JMD.Core;
 
+public sealed record TodoTaskChecklistEntry(string Title, decimal Weight, bool IsCompleted = false);
+
 public sealed record TodoTaskEntry(
     string Id,
     string Title,
@@ -13,7 +15,11 @@ public sealed record TodoTaskEntry(
     string CategoryColor = "Verde",
     DateTimeOffset? LastReminderAt = null,
     string Urls = "",
-    string Attachments = "");
+    string Attachments = "",
+    DateTimeOffset? PausedAt = null,
+    string PauseReason = "",
+    string PausedBy = "",
+    List<TodoTaskChecklistEntry>? Checklist = null);
 
 public sealed class TodoTaskStore
 {
@@ -39,7 +45,11 @@ public sealed class TodoTaskStore
                 CategoryColor TEXT NOT NULL DEFAULT 'Verde',
                 LastReminderAtUtc TEXT NULL,
                 Urls TEXT NOT NULL DEFAULT '',
-                Attachments TEXT NOT NULL DEFAULT ''
+                Attachments TEXT NOT NULL DEFAULT '',
+                PausedAtUtc TEXT NULL,
+                PauseReason TEXT NOT NULL DEFAULT '',
+                PausedBy TEXT NOT NULL DEFAULT '',
+                ChecklistJson TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS IX_TodoTasks_Status_CreatedAtUtc
                 ON TodoTasks (CompletedAtUtc, CreatedAtUtc, Id);
@@ -57,6 +67,10 @@ public sealed class TodoTaskStore
         EnsureColumn(connection, "LastReminderAtUtc", "TEXT NULL");
         EnsureColumn(connection, "Urls", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "Attachments", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "PausedAtUtc", "TEXT NULL");
+        EnsureColumn(connection, "PauseReason", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "PausedBy", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "ChecklistJson", "TEXT NOT NULL DEFAULT ''");
         MigrateTaskNumbers(connection);
     }
 
@@ -65,7 +79,7 @@ public sealed class TodoTaskStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Title, Description, CreatedAtUtc, CompletedAtUtc, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments
+            SELECT Id, Title, Description, CreatedAtUtc, CompletedAtUtc, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments, PausedAtUtc, PauseReason, PausedBy, ChecklistJson
             FROM TodoTasks
             ORDER BY CreatedAtUtc, Id;
             """;
@@ -79,7 +93,10 @@ public sealed class TodoTaskStore
                 reader.IsDBNull(4) ? null : DateTimeOffset.Parse(reader.GetString(4), System.Globalization.CultureInfo.InvariantCulture),
                 reader.GetInt32(5), reader.IsDBNull(6) ? null : reader.GetInt32(6), reader.GetString(7),
                 reader.IsDBNull(8) ? null : DateTimeOffset.Parse(reader.GetString(8), System.Globalization.CultureInfo.InvariantCulture),
-                reader.GetString(9), reader.GetString(10)));
+                reader.GetString(9), reader.GetString(10),
+                reader.IsDBNull(11) ? null : DateTimeOffset.Parse(reader.GetString(11), System.Globalization.CultureInfo.InvariantCulture),
+                reader.GetString(12), reader.GetString(13),
+                string.IsNullOrWhiteSpace(reader.GetString(14)) || reader.GetString(14) == "[]" ? null : System.Text.Json.JsonSerializer.Deserialize<List<TodoTaskChecklistEntry>>(reader.GetString(14))));
         }
         return tasks;
     }
@@ -101,8 +118,8 @@ public sealed class TodoTaskStore
             using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
             insert.CommandText = """
-                INSERT INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments)
-                VALUES ($id, $title, $description, $createdAt, $completedAt, $localDate, $taskNumber, $reminderInterval, $categoryColor, $lastReminderAt, $urls, $attachments);
+                INSERT INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments, PausedAtUtc, PauseReason, PausedBy, ChecklistJson)
+                VALUES ($id, $title, $description, $createdAt, $completedAt, $localDate, $taskNumber, $reminderInterval, $categoryColor, $lastReminderAt, $urls, $attachments, $pausedAt, $pauseReason, $pausedBy, $checklist);
                 """;
             insert.Parameters.AddWithValue("$id", task.Id);
             insert.Parameters.AddWithValue("$title", task.Title);
@@ -116,6 +133,10 @@ public sealed class TodoTaskStore
             insert.Parameters.AddWithValue("$lastReminderAt", (object?)task.LastReminderAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
             insert.Parameters.AddWithValue("$urls", task.Urls);
             insert.Parameters.AddWithValue("$attachments", task.Attachments);
+            insert.Parameters.AddWithValue("$pausedAt", (object?)task.PausedAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$pauseReason", task.PauseReason);
+            insert.Parameters.AddWithValue("$pausedBy", task.PausedBy);
+            insert.Parameters.AddWithValue("$checklist", System.Text.Json.JsonSerializer.Serialize(task.Checklist ?? []));
             insert.ExecuteNonQuery();
             UpdateSequence(connection, transaction, localDate, taskNumber);
         }
@@ -172,8 +193,8 @@ public sealed class TodoTaskStore
             using var insert = connection.CreateCommand();
             insert.Transaction = transaction;
             insert.CommandText = """
-                INSERT OR IGNORE INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments)
-                VALUES ($id, $title, $description, $createdAt, $completedAt, $localDate, $taskNumber, $reminderInterval, $categoryColor, $lastReminderAt, $urls, $attachments);
+                INSERT OR IGNORE INTO TodoTasks (Id, Title, Description, CreatedAtUtc, CompletedAtUtc, CreatedLocalDate, TaskNumber, ReminderIntervalMinutes, CategoryColor, LastReminderAtUtc, Urls, Attachments, PausedAtUtc, PauseReason, PausedBy, ChecklistJson)
+                VALUES ($id, $title, $description, $createdAt, $completedAt, $localDate, $taskNumber, $reminderInterval, $categoryColor, $lastReminderAt, $urls, $attachments, $pausedAt, $pauseReason, $pausedBy, $checklist);
                 """;
             insert.Parameters.AddWithValue("$id", task.Id);
             insert.Parameters.AddWithValue("$title", task.Title);
@@ -187,6 +208,10 @@ public sealed class TodoTaskStore
             insert.Parameters.AddWithValue("$lastReminderAt", (object?)task.LastReminderAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
             insert.Parameters.AddWithValue("$urls", task.Urls);
             insert.Parameters.AddWithValue("$attachments", task.Attachments);
+            insert.Parameters.AddWithValue("$pausedAt", (object?)task.PausedAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$pauseReason", task.PauseReason);
+            insert.Parameters.AddWithValue("$pausedBy", task.PausedBy);
+            insert.Parameters.AddWithValue("$checklist", System.Text.Json.JsonSerializer.Serialize(task.Checklist ?? []));
             insert.ExecuteNonQuery();
             UpdateSequence(connection, transaction, localDate, taskNumber);
         }
@@ -204,7 +229,7 @@ public sealed class TodoTaskStore
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE TodoTasks SET LastReminderAtUtc = $sentAt WHERE Id = $id AND CompletedAtUtc IS NULL;";
+        command.CommandText = "UPDATE TodoTasks SET LastReminderAtUtc = $sentAt WHERE Id = $id AND CompletedAtUtc IS NULL AND PausedAtUtc IS NULL;";
         command.Parameters.AddWithValue("$id", taskId);
         command.Parameters.AddWithValue("$sentAt", sentAt.ToUniversalTime().ToString("O"));
         command.ExecuteNonQuery();

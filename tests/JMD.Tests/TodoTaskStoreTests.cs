@@ -1,4 +1,5 @@
 using JMD.Core;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace JMD.Tests;
@@ -35,6 +36,56 @@ public sealed class TodoTaskStoreTests : IDisposable
         Assert.Equal(20, loaded.ReminderIntervalMinutes);
         Assert.Equal("Vermelho", loaded.CategoryColor);
         Assert.Equal(sentAt, loaded.LastReminderAt);
+    }
+
+    [Fact]
+    public void Paused_task_details_are_persisted_and_reminders_are_not_marked_sent()
+    {
+        var store = new TodoTaskStore(DatabasePath);
+        var created = DateTimeOffset.Now.AddHours(-1);
+        var lastReminder = created.AddMinutes(20);
+        var pausedAt = DateTimeOffset.Now;
+        var task = new TodoTaskEntry("paused-1", "Aguardar aprovação", "", created,
+            TaskNumber: 1, ReminderIntervalMinutes: 30, LastReminderAt: lastReminder,
+            PausedAt: pausedAt, PauseReason: "Aguardando retorno", PausedBy: "Marina");
+
+        store.SaveAll([task]);
+        store.MarkReminderSent(task.Id, DateTimeOffset.Now.AddMinutes(30));
+
+        var loaded = Assert.Single(new TodoTaskStore(DatabasePath).GetAll());
+        Assert.Equal(task, loaded);
+    }
+
+    [Fact]
+    public void Existing_task_database_is_migrated_with_pause_fields_empty()
+    {
+        Directory.CreateDirectory(_directory);
+        using (var connection = new SqliteConnection($"Data Source={DatabasePath}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE TodoTasks (
+                    Id TEXT PRIMARY KEY,
+                    Title TEXT NOT NULL,
+                    Description TEXT NOT NULL,
+                    CreatedAtUtc TEXT NOT NULL,
+                    CompletedAtUtc TEXT NULL,
+                    CreatedLocalDate TEXT NOT NULL DEFAULT '',
+                    TaskNumber INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO TodoTasks (Id, Title, Description, CreatedAtUtc, TaskNumber)
+                VALUES ('old-task', 'Tarefa antiga', 'Descrição preservada', '2026-10-21T12:00:00.0000000+00:00', 1);
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var loaded = Assert.Single(new TodoTaskStore(DatabasePath).GetAll());
+
+        Assert.Equal("Tarefa antiga", loaded.Title);
+        Assert.Null(loaded.PausedAt);
+        Assert.Equal(string.Empty, loaded.PauseReason);
+        Assert.Equal(string.Empty, loaded.PausedBy);
     }
 
     [Fact]

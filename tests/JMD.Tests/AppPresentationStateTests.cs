@@ -33,6 +33,9 @@ public sealed class AppPresentationStateTests
     public void Shortcut_defaults_assign_selection_and_clipboard_to_requested_bindings()
     {
         Assert.Equal("Ctrl+Alt+I", ShortcutDefaults.ForCommand("selection"));
+        Assert.Equal("Ctrl+Shift+U", ShortcutDefaults.ForCommand("upperCase"));
+        Assert.Equal("Ctrl+Shift+L", ShortcutDefaults.ForCommand("lowerCase"));
+        Assert.Equal("Ctrl+Shift+T", ShortcutDefaults.ForCommand("titleCase"));
         Assert.Equal("Ctrl+Shift+I", ShortcutDefaults.ForCommand("clipboard"));
         Assert.Equal("Alt+J", ShortcutDefaults.ForCommand("palette"));
         Assert.Equal("Ctrl+Alt+B", ShortcutDefaults.ForCommand("jsonPretty"));
@@ -48,6 +51,21 @@ public sealed class AppPresentationStateTests
         Assert.Equal(ShortcutModifiers.Control | ShortcutModifiers.Shift, restoreBinding?.Modifiers);
         Assert.Equal(0x28, restoreBinding?.VirtualKey);
     }
+
+    [Theory]
+    [InlineData("já é HORA DE MUDAR", "JÁ É HORA DE MUDAR")]
+    public void Upper_case_transforms_all_letters(string input, string expected)
+        => Assert.Equal(expected, TextCaseTransform.Upper(input));
+
+    [Fact]
+    public void Lower_case_transforms_all_letters()
+        => Assert.Equal("ação rápida", TextCaseTransform.Lower("Ação RÁPIDA"));
+
+    [Theory]
+    [InlineData("um TESTE de TÍTULO para o JMD", "Um Teste de Título para o Jmd")]
+    [InlineData("TEXTO, SOBRE A VIDA", "Texto, sobre a Vida")]
+    public void Title_case_keeps_portuguese_prepositions_lowercase(string input, string expected)
+        => Assert.Equal(expected, TextCaseTransform.Title(input));
 
     [Fact]
     public void Shortcut_migration_updates_only_the_old_draft_defaults()

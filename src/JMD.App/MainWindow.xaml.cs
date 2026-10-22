@@ -284,6 +284,12 @@ public partial class MainWindow : Window
             "Converte os valores copiados em uma lista SQL entre apóstrofos.", ShortcutDefaults.ForCommand("clipboard")));
         _commands.Add(new CommandRow("selection", "Substituir seleção formatada",
             "Recorta o texto selecionado, formata e cola o resultado no lugar.", ShortcutDefaults.ForCommand("selection")));
+        _commands.Add(new CommandRow("upperCase", "UpperCase · Maiúsculas",
+            "Recorta a seleção, transforma em maiúsculas e cola no lugar.", GetShortcut("upperCase")));
+        _commands.Add(new CommandRow("lowerCase", "LowerCase · Minúsculas",
+            "Recorta a seleção, transforma em minúsculas e cola no lugar.", GetShortcut("lowerCase")));
+        _commands.Add(new CommandRow("titleCase", "TitleCase · Título",
+            "Capitaliza as palavras da seleção, mantendo preposições em minúsculas.", GetShortcut("titleCase")));
         _commands.Add(new CommandRow("jsonPretty", "Formatar",
             "Identifica JSON ou XML e aplica indentação ao conteúdo selecionado.", ShortcutDefaults.ForCommand("jsonPretty")));
         _commands.Add(new CommandRow("jsonCompact", "Compactar",
@@ -386,6 +392,7 @@ public partial class MainWindow : Window
         SettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
+        AddManagementNavigation(SettingsPanel, workflowsSelected: false);
         SettingsPanel.Children.Add(new TextBlock
         {
             Text = "Combinações globais",
@@ -410,12 +417,14 @@ public partial class MainWindow : Window
             ("clipboard", "Formatar clipboard", "Transforma o texto copiado para SQL IN."),
             ("jsonPretty", "Formatar", "Identifica JSON ou XML e aplica indentação."),
             ("jsonCompact", "Compactar", "Identifica JSON ou XML e deixa o conteúdo em uma linha."),
-            ("createCustomShortcut", "Criar atalho personalizado", "Cria workflows com etapas de abertura, teclado e texto."),
             ("draftRestore", "Usar rascunho", "Guarda o conteúdo atual e recupera o último rascunho."),
             ("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior."),
             ("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo."),
             ("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título."),
             ("selection", "Substituir seleção", "Recorta, transforma e cola a seleção atual."),
+            ("upperCase", "UpperCase · Maiúsculas", "Transforma a seleção em maiúsculas."),
+            ("lowerCase", "LowerCase · Minúsculas", "Transforma a seleção em minúsculas."),
+            ("titleCase", "TitleCase · Título", "Capitaliza as palavras, exceto preposições."),
             ("todoCreate", "Criar tarefa", "Abre o cadastro de uma tarefa; a seleção atual vira a descrição."),
             ("todoPanel", "Abrir painel de tarefas", "Mostra as tarefas em aberto no painel lateral."),
             ("todoPanelClose", "Fechar painel de tarefas", "Fecha o painel lateral de tarefas."),
@@ -427,18 +436,64 @@ public partial class MainWindow : Window
 
         SettingsPanel.Children.Add(new TextBlock
         {
+            Text = "A pilha de rascunhos usa os atalhos configurados acima. Os rascunhos ficam disponíveis no Histórico.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            FontSize = 12,
+            Margin = new Thickness(2, 12, 2, 4)
+        });
+
+
+        var note = new TextBlock
+        {
+            Text = "Alt+J pode estar em uso por outro aplicativo. Se aparecer como indisponível, escolha outro atalho.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Color.FromRgb(235, 196, 119)),
+            FontSize = 11,
+            Margin = new Thickness(2, 12, 2, 0)
+        };
+        SettingsPanel.Children.Add(note);
+
+        foreach (var row in _shortcutRows)
+        {
+            if (!existingStatuses.TryGetValue(row.Id, out var status)) continue;
+            row.Status = status.Status;
+            row.StatusBrush = status.StatusBrush;
+        }
+        RefreshShortcutStatuses();
+    }
+
+    private void BuildWorkflowSettingsPanel()
+    {
+        var existingStatuses = _shortcutRows.ToDictionary(row => row.Id, row => (row.Status, row.StatusBrush), StringComparer.Ordinal);
+        WorkflowSettingsPanel.Children.Clear();
+        _shortcutRows.Clear();
+        _shortcutStatusLabels.Clear();
+        AddManagementNavigation(WorkflowSettingsPanel, workflowsSelected: true);
+        WorkflowSettingsPanel.Children.Add(new TextBlock
+        {
             Text = "Workflows personalizados",
             Foreground = Brushes.White,
-            FontSize = 15,
+            FontSize = 16,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 12, 0, 6)
+            Margin = new Thickness(0, 0, 0, 5)
         });
+        WorkflowSettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Monte sequências de abertura, teclado e texto, com atalhos e frases de voz próprios.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+            FontSize = 12,
+            Margin = new Thickness(0, 0, 0, 12)
+        });
+        AddShortcutRow("createCustomShortcut", "Criar workflow personalizado", "Configura o atalho global e as frases de voz para abrir o editor de workflows.", WorkflowSettingsPanel);
+
         var addCustomShortcut = new Button
         {
             Content = "+ Criar workflow",
             HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
             Padding = new Thickness(12, 8, 12, 8),
-            Margin = new Thickness(0, 0, 0, 8),
+            Margin = new Thickness(0, 0, 0, 10),
             Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
             Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
             BorderThickness = new Thickness(0)
@@ -446,9 +501,10 @@ public partial class MainWindow : Window
         addCustomShortcut.Click += (_, _) =>
         {
             CreateCustomShortcutFromDialog();
-            BuildSettingsPanel();
+            BuildWorkflowSettingsPanel();
         };
-        SettingsPanel.Children.Add(addCustomShortcut);
+        WorkflowSettingsPanel.Children.Add(addCustomShortcut);
+
         foreach (var customShortcut in _settings.CustomShortcuts.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
         {
             var customCard = new Border
@@ -506,7 +562,7 @@ public partial class MainWindow : Window
             editCustomShortcut.Click += (_, _) =>
             {
                 CreateCustomShortcutFromDialog(customShortcut);
-                BuildSettingsPanel();
+                BuildWorkflowSettingsPanel();
             };
             var removeCustomShortcut = new Button
             {
@@ -524,12 +580,12 @@ public partial class MainWindow : Window
             Grid.SetColumn(customActions, 1);
             customRow.Children.Add(customActions);
             customCard.Child = customRow;
-            SettingsPanel.Children.Add(customCard);
+            WorkflowSettingsPanel.Children.Add(customCard);
         }
 
-        SettingsPanel.Children.Add(new TextBlock
+        WorkflowSettingsPanel.Children.Add(new TextBlock
         {
-            Text = "Variáveis globais para workflows",
+            Text = "Variáveis globais",
             Foreground = Brushes.White,
             FontSize = 15,
             FontWeight = FontWeights.SemiBold,
@@ -545,27 +601,7 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(0)
         };
         manageVariables.Click += (_, _) => ManageWorkflowVariables();
-        SettingsPanel.Children.Add(manageVariables);
-
-        SettingsPanel.Children.Add(new TextBlock
-        {
-            Text = "A pilha de rascunhos usa os atalhos configurados acima. Os rascunhos ficam disponíveis no Histórico.",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            FontSize = 12,
-            Margin = new Thickness(2, 12, 2, 4)
-        });
-
-
-        var note = new TextBlock
-        {
-            Text = "Alt+J pode estar em uso por outro aplicativo. Se aparecer como indisponível, escolha outro atalho.",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(Color.FromRgb(235, 196, 119)),
-            FontSize = 11,
-            Margin = new Thickness(2, 12, 2, 0)
-        };
-        SettingsPanel.Children.Add(note);
+        WorkflowSettingsPanel.Children.Add(manageVariables);
 
         foreach (var row in _shortcutRows)
         {
@@ -574,6 +610,33 @@ public partial class MainWindow : Window
             row.StatusBrush = status.StatusBrush;
         }
         RefreshShortcutStatuses();
+    }
+
+    private void AddManagementNavigation(StackPanel panel, bool workflowsSelected)
+    {
+        var navigation = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 14) };
+        var shortcutButton = new Button
+        {
+            Content = "Atalhos",
+            Padding = new Thickness(12, 7, 12, 7),
+            Margin = new Thickness(0, 0, 6, 0),
+            Background = new SolidColorBrush(workflowsSelected ? Color.FromRgb(48, 52, 62) : Color.FromRgb(180, 243, 106)),
+            Foreground = workflowsSelected ? Brushes.White : new SolidColorBrush(Color.FromRgb(23, 25, 31)),
+            BorderThickness = new Thickness(0)
+        };
+        shortcutButton.Click += (_, _) => ShowShortcutSettings();
+        var workflowButton = new Button
+        {
+            Content = "Workflows personalizados",
+            Padding = new Thickness(12, 7, 12, 7),
+            Background = new SolidColorBrush(workflowsSelected ? Color.FromRgb(180, 243, 106) : Color.FromRgb(48, 52, 62)),
+            Foreground = workflowsSelected ? new SolidColorBrush(Color.FromRgb(23, 25, 31)) : Brushes.White,
+            BorderThickness = new Thickness(0)
+        };
+        workflowButton.Click += (_, _) => ShowWorkflowSettingsPage();
+        navigation.Children.Add(shortcutButton);
+        navigation.Children.Add(workflowButton);
+        panel.Children.Add(navigation);
     }
 
     private void ConfigureDefaultVoiceCommands()
@@ -605,7 +668,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void AddShortcutRow(string id, string name, string description)
+    private void AddShortcutRow(string id, string name, string description, StackPanel? target = null)
     {
         var row = new ShortcutRow(id, name, description, GetShortcut(id), !_settings.DisabledCommands.Contains(id));
         _shortcutRows.Add(row);
@@ -710,7 +773,7 @@ public partial class MainWindow : Window
         voicePhrasesEditor.TextChanged += VoicePhrasesEditor_TextChanged;
         content.Children.Add(voicePhrasesEditor);
         card.Child = content;
-        SettingsPanel.Children.Add(card);
+        (target ?? SettingsPanel).Children.Add(card);
     }
 
     private string GetVoicePhrasesText(string commandId)
@@ -1038,7 +1101,7 @@ public partial class MainWindow : Window
         try
         {
             _settingsStore.Save(_settings);
-            BuildSettingsPanel();
+            BuildWorkflowSettingsPanel();
             SetStatus("Variáveis dos workflows salvas.", true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -1060,13 +1123,14 @@ public partial class MainWindow : Window
         try
         {
             _settingsStore.Save(_settings);
-            BuildSettingsPanel();
+            BuildWorkflowSettingsPanel();
             SetStatus($"Atalho personalizado removido: {entry.Name}.", true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _settings.CustomShortcuts.Add(entry);
             if (savedPhrases is not null) _settings.VoicePhrases[entry.Id] = savedPhrases;
+            BuildWorkflowSettingsPanel();
             _commands.Add(new CommandRow(entry.Id, entry.Name, DescribeCustomWorkflow(entry), entry.Shortcut)
             {
                 IsCustomShortcut = true,
@@ -1298,7 +1362,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "about", "checkUpdates", "transcribe", "createCustomShortcut"];
+    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "about", "checkUpdates", "transcribe", "createCustomShortcut"];
 
     private static bool IsJeyAction(string id) => id is "about" or "checkUpdates" or "transcribe";
 
@@ -1466,6 +1530,11 @@ public partial class MainWindow : Window
                     break;
                 case "selection":
                     await TransformSelectionAsync(voiceCommand);
+                    break;
+                case "upperCase":
+                case "lowerCase":
+                case "titleCase":
+                    await TransformTextCaseAsync(id, voiceCommand);
                     break;
                 case "jsonPretty":
                     await TransformStructuredDataAsync(StructuredDataLayout.Pretty, voiceCommand);
@@ -1886,6 +1955,7 @@ public partial class MainWindow : Window
         CommandsList.Visibility = Visibility.Visible;
         SettingsTabs.Visibility = Visibility.Collapsed;
         SettingsPage.Visibility = Visibility.Collapsed;
+        WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
@@ -1927,17 +1997,20 @@ public partial class MainWindow : Window
             }
         }
         var dialog = new TodoTaskEditWindow(initialDescription: selectedText);
-        if (dialog.ShowDialog() != true) return;
+        if (!ShowTodoTaskDialog(dialog)) return;
         var task = FromTodoTaskEntry(_todoTaskStore.Create(dialog.TaskTitle, dialog.Description, DateTimeOffset.Now,
             dialog.ReminderIntervalMinutes, dialog.CategoryColor, dialog.Urls, dialog.Attachments));
+        task.Checklist = dialog.Checklist.ToList();
         _todoTasks.Add(task);
+        SaveTodoTasks();
         RecordTodoTaskChange("criada", task, string.Empty, DescribeTodoTask(task, "Em aberto"));
         _todoTaskPanel?.Refresh();
     }
 
     private void ShowTodoTaskPanel()
     {
-        _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask, ReopenTodoTask, () => _ = CreateTodoTaskAsync());
+        _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask,
+            ReopenTodoTask, PauseTodoTask, UnpauseTodoTask, ToggleTodoTaskChecklist, () => _ = CreateTodoTaskAsync());
         _todoTaskPanel.ShowOpenTasks();
         _todoTaskPanel.Show();
         _todoTaskPanel.Activate();
@@ -1947,9 +2020,11 @@ public partial class MainWindow : Window
     private void EditTodoTask(TodoTask task)
     {
         var dialog = new TodoTaskEditWindow(task);
-        if (dialog.ShowDialog() != true) return;
+        if (!ShowTodoTaskDialog(dialog)) return;
         var previousDescription = DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída");
-        var changed = task.Title != dialog.TaskTitle || task.Description != dialog.Description || task.Urls != dialog.Urls || task.Attachments != dialog.Attachments;
+        var newChecklist = dialog.Checklist.ToList();
+        var checklistChanged = !task.Checklist.SequenceEqual(newChecklist);
+        var changed = task.Title != dialog.TaskTitle || task.Description != dialog.Description || task.Urls != dialog.Urls || task.Attachments != dialog.Attachments || checklistChanged;
         var reminderChanged = task.ReminderIntervalMinutes != dialog.ReminderIntervalMinutes;
         changed |= reminderChanged || task.CategoryColor != dialog.CategoryColor;
         task.Title = dialog.TaskTitle;
@@ -1958,15 +2033,25 @@ public partial class MainWindow : Window
         task.CategoryColor = dialog.CategoryColor;
         task.Urls = dialog.Urls;
         task.Attachments = dialog.Attachments;
+        task.Checklist = newChecklist;
         if (reminderChanged) task.LastReminderAt = task.ReminderIntervalMinutes is null ? null : DateTimeOffset.Now;
         SaveTodoTasks();
         if (changed) RecordTodoTaskChange("editada", task, previousDescription, DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída"));
         _todoTaskPanel?.Refresh();
     }
 
+    private void ToggleTodoTaskChecklist(TodoTask task, int index)
+    {
+        if (index < 0 || index >= task.Checklist.Count) return;
+        task.Checklist[index] = task.Checklist[index] with { IsCompleted = !task.Checklist[index].IsCompleted };
+        SaveTodoTasks();
+        _todoTaskPanel?.Refresh();
+    }
+
     private void CompleteTodoTask(TodoTask task)
     {
         if (task.CompletedAt is not null) return;
+        if (task.PausedAt is not null) UnpauseTodoTask(task);
         var previousDescription = DescribeTodoTask(task, "Em aberto");
         task.CompletedAt = DateTimeOffset.Now;
         SaveTodoTasks();
@@ -1984,6 +2069,51 @@ public partial class MainWindow : Window
         _todoTaskPanel?.Refresh();
     }
 
+    private void PauseTodoTask(TodoTask task)
+    {
+        if (task.CompletedAt is not null || task.PausedAt is not null) return;
+        var dialog = new TodoTaskPauseWindow($"{TodoTaskDisplay.Reference(task)} {task.Title}");
+        if (!ShowTodoTaskDialog(dialog)) return;
+
+        var previousDescription = DescribeTodoTask(task, "Em aberto");
+        task.PausedAt = DateTimeOffset.Now;
+        task.PauseReason = dialog.Reason;
+        task.PausedBy = dialog.Responsible;
+        SaveTodoTasks();
+        RecordTodoTaskChange("pausada", task, previousDescription, DescribeTodoTask(task, "Em aberto"));
+        _todoTaskPanel?.Refresh();
+    }
+
+    private void UnpauseTodoTask(TodoTask task)
+    {
+        if (task.PausedAt is null) return;
+        var previousDescription = DescribeTodoTask(task, "Em aberto");
+        task.PausedAt = null;
+        task.PauseReason = string.Empty;
+        task.PausedBy = string.Empty;
+        task.LastReminderAt = DateTimeOffset.Now;
+        SaveTodoTasks();
+        RecordTodoTaskChange("destravada", task, previousDescription, DescribeTodoTask(task, "Em aberto"));
+        _todoTaskPanel?.Refresh();
+    }
+
+    private bool ShowTodoTaskDialog(Window dialog)
+    {
+        var panel = _todoTaskPanel;
+        if (panel is null || !panel.IsVisible) return dialog.ShowDialog() == true;
+
+        panel.SetModalChildActive(true);
+        dialog.Owner = panel;
+        try
+        {
+            return dialog.ShowDialog() == true;
+        }
+        finally
+        {
+            panel.SetModalChildActive(false);
+        }
+    }
+
     private void DeleteTodoTask(TodoTask task)
     {
         var previousDescription = DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída");
@@ -1997,7 +2127,8 @@ public partial class MainWindow : Window
         => RecordActionHistory($"Tarefa {change} — {TodoTaskDisplay.Reference(task)} {task.Title}", before, after);
 
     private static string DescribeTodoTask(TodoTask task, string status)
-        => $"Estado: {status}\nTítulo: {task.Title}\nDescrição: {task.Description}\nCriada: {task.CreatedAt.LocalDateTime:g}" +
+        => $"Estado: {(task.PausedAt is null ? status : "Pausada")}\nTítulo: {task.Title}\nDescrição: {task.Description}\nCriada: {task.CreatedAt.LocalDateTime:g}" +
+           (task.PausedAt is null ? string.Empty : $"\nPausada em: {task.PausedAt.Value.LocalDateTime:g}\nResponsável pela pausa: {task.PausedBy}\nMotivo da pausa: {task.PauseReason}") +
            (task.CompletedAt is null ? string.Empty : $"\nConcluída: {task.CompletedAt.Value.LocalDateTime:g}") +
            $"\nPrioridade: {task.CategoryColor}" +
            (string.IsNullOrWhiteSpace(task.Urls) ? "" : $"\nURLs: {task.Urls}") +
@@ -2009,7 +2140,7 @@ public partial class MainWindow : Window
     private void CheckTodoTaskReminders(object? sender, EventArgs e)
     {
         var now = DateTimeOffset.Now;
-        var dueTasks = _todoTasks.Where(task => task.CompletedAt is null && task.ReminderIntervalMinutes is { } interval &&
+        var dueTasks = _todoTasks.Where(task => task.CompletedAt is null && task.PausedAt is null && task.ReminderIntervalMinutes is { } interval &&
             now - (task.LastReminderAt ?? task.CreatedAt) >= TimeSpan.FromMinutes(interval)).ToList();
         foreach (var task in dueTasks)
         {
@@ -2023,12 +2154,14 @@ public partial class MainWindow : Window
 
     private static TodoTaskEntry ToTodoTaskEntry(TodoTask task)
         => new(task.Id, task.Title, task.Description, task.CreatedAt, task.CompletedAt, task.TaskNumber,
-            task.ReminderIntervalMinutes, task.CategoryColor, task.LastReminderAt, task.Urls, task.Attachments);
+            task.ReminderIntervalMinutes, task.CategoryColor, task.LastReminderAt, task.Urls, task.Attachments,
+            task.PausedAt, task.PauseReason, task.PausedBy, task.Checklist);
 
     private static TodoTask FromTodoTaskEntry(TodoTaskEntry task)
         => new() { Id = task.Id, Title = task.Title, Description = task.Description, CreatedAt = task.CreatedAt, CompletedAt = task.CompletedAt,
             TaskNumber = task.TaskNumber, ReminderIntervalMinutes = task.ReminderIntervalMinutes, CategoryColor = task.CategoryColor,
-            LastReminderAt = task.LastReminderAt, Urls = task.Urls, Attachments = task.Attachments };
+            LastReminderAt = task.LastReminderAt, Urls = task.Urls, Attachments = task.Attachments, PausedAt = task.PausedAt,
+            PauseReason = task.PauseReason, PausedBy = task.PausedBy, Checklist = task.Checklist ?? [] };
 
     private async Task TransformClipboardAsync(VoiceCommandInvocation? voiceCommand = null)
     {
@@ -2397,6 +2530,7 @@ public partial class MainWindow : Window
         {
             await TransformSelectionFromPaletteAsync();
         }
+        else if (id is "upperCase" or "lowerCase" or "titleCase") await TransformTextCaseFromPaletteAsync(id);
         else if (id is "jsonPretty" or "jsonCompact")
         {
             await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
@@ -2438,9 +2572,11 @@ public partial class MainWindow : Window
     public void ShowShortcutSettings()
     {
         _navigation.ShowShortcutSettings();
+        BuildSettingsPanel();
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Visible;
+        WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
@@ -2461,6 +2597,31 @@ public partial class MainWindow : Window
         Activate();
     }
 
+    private void ShowWorkflowSettingsPage()
+    {
+        _navigation.ShowShortcutSettings();
+        BuildWorkflowSettingsPanel();
+        CommandsList.Visibility = Visibility.Collapsed;
+        SettingsTabs.Visibility = Visibility.Visible;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        WorkflowSettingsPage.Visibility = Visibility.Visible;
+        SqlInTestPage.Visibility = Visibility.Collapsed;
+        SnippetManagementPage.Visibility = Visibility.Collapsed;
+        HistoryPage.Visibility = Visibility.Collapsed;
+        AboutPage.Visibility = Visibility.Collapsed;
+        JeySettingsPage.Visibility = Visibility.Collapsed;
+        AdvancedSettingsPage.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Visible;
+        FooterHints.Visibility = Visibility.Collapsed;
+        SearchBox.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos comandos";
+        PageTitle.Text = "Workflows personalizados";
+        PageSubtitle.Text = "Crie fluxos de ações e gerencie as variáveis usadas por eles";
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
     private void ShortcutToolsButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string id }) return;
@@ -2472,6 +2633,7 @@ public partial class MainWindow : Window
     {
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Visible;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
@@ -2488,6 +2650,7 @@ public partial class MainWindow : Window
         BuildSnippetManagementPage();
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Visible;
         HistoryPage.Visibility = Visibility.Collapsed;
@@ -2799,6 +2962,7 @@ public partial class MainWindow : Window
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Visible;
@@ -3625,6 +3789,7 @@ public partial class MainWindow : Window
     {
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
@@ -4046,6 +4211,8 @@ public partial class MainWindow : Window
         if (id == "clipboard") await TransformClipboardAsync();
         if (id == "selection")
             await TransformSelectionFromPaletteAsync();
+        if (id is "upperCase" or "lowerCase" or "titleCase")
+            await TransformTextCaseFromPaletteAsync(id);
         if (id is "jsonPretty" or "jsonCompact")
             await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
         if (id == "snippets") await InsertSavedSnippetAsync();
@@ -4073,6 +4240,46 @@ public partial class MainWindow : Window
             return;
         }
         await TransformSelectionAsync();
+    }
+
+    private async Task TransformTextCaseFromPaletteAsync(string id)
+    {
+        if (_previousWindow == IntPtr.Zero || _keyboard.GetForegroundWindow() != _previousWindow)
+        {
+            if (_previousWindow == IntPtr.Zero || !SetForegroundWindow(_previousWindow))
+            {
+                Notify("JMD", "Não foi possível devolver o foco ao aplicativo com a seleção.", false);
+                return;
+            }
+            await Task.Delay(80);
+        }
+        if (_keyboard.GetForegroundWindow() != _previousWindow)
+        {
+            Notify("JMD", "Não foi possível devolver o foco ao aplicativo com a seleção.", false);
+            return;
+        }
+        await TransformTextCaseAsync(id);
+    }
+
+    private async Task TransformTextCaseAsync(string id, VoiceCommandInvocation? voiceCommand = null)
+    {
+        if (_conversionRunning) return;
+        var (name, transform) = id switch
+        {
+            "upperCase" => ("UpperCase", (Func<string, string>)TextCaseTransform.Upper),
+            "lowerCase" => ("LowerCase", (Func<string, string>)TextCaseTransform.Lower),
+            _ => ("TitleCase", (Func<string, string>)TextCaseTransform.Title)
+        };
+        _conversionRunning = true;
+        try
+        {
+            var result = await _selectionTransformer.ExecuteAsync(
+                input => TransformationResult.Ok(transform(input)), allowClipboardFallback: false);
+            var historyId = result.Success ? RecordSelectionHistory(name, result, voiceCommand) : null;
+            Notify("JMD", result.Success ? $"Texto selecionado transformado para {name}." : result.Message, result.Success, historyId);
+        }
+        catch (Exception exception) { Notify("JMD", $"Falha ao transformar a seleção: {exception.Message}", false); }
+        finally { _conversionRunning = false; }
     }
 
     private async Task TransformStructuredDataFromPaletteAsync(StructuredDataLayout layout)

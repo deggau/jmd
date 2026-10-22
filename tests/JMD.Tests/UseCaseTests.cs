@@ -275,6 +275,20 @@ public sealed class UseCaseTests
         Assert.Equal(new[] { "wait", "cut" }, keyboard.CallOrder);
     }
 
+    [Fact]
+    public async Task Selection_case_command_does_not_change_clipboard_when_no_selection_exists()
+    {
+        var clipboard = new FakeClipboard { Text = "original clipboard" };
+        var keyboard = new FakeKeyboard(clipboard);
+        var transformer = new SelectionTransformer(clipboard, keyboard, new ImmediateDelay());
+
+        var result = await transformer.ExecuteAsync(input => TransformationResult.Ok(input.ToUpperInvariant()), allowClipboardFallback: false);
+
+        Assert.False(result.Success);
+        Assert.Equal("original clipboard", clipboard.Text);
+        Assert.DoesNotContain("paste", keyboard.Events);
+    }
+
     [Theory]
     [InlineData("{\"a\":1}", StructuredDataLayout.Pretty, StructuredDataFormat.Json)]
     [InlineData("{ \"a\": 1 }", StructuredDataLayout.Compact, StructuredDataFormat.Json)]

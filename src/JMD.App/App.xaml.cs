@@ -182,6 +182,9 @@ internal sealed class UserSettings
         ["palette"] = ShortcutDefaults.ForCommand("palette"),
         ["clipboard"] = ShortcutDefaults.ForCommand("clipboard"),
         ["selection"] = ShortcutDefaults.ForCommand("selection"),
+        ["upperCase"] = ShortcutDefaults.ForCommand("upperCase"),
+        ["lowerCase"] = ShortcutDefaults.ForCommand("lowerCase"),
+        ["titleCase"] = ShortcutDefaults.ForCommand("titleCase"),
         ["jsonPretty"] = ShortcutDefaults.ForCommand("jsonPretty"),
         ["jsonCompact"] = ShortcutDefaults.ForCommand("jsonCompact"),
         ["snippets"] = ShortcutDefaults.ForCommand("snippets"),
@@ -251,6 +254,9 @@ internal sealed class SettingsStore
                     loaded.Shortcuts.TryAdd("todoCreate", "Ctrl+Alt+T");
                     loaded.Shortcuts.TryAdd("todoPanel", "Ctrl+Alt+Left");
                     loaded.Shortcuts.TryAdd("todoPanelClose", "Ctrl+Alt+Right");
+                    loaded.Shortcuts.TryAdd("upperCase", ShortcutDefaults.ForCommand("upperCase"));
+                    loaded.Shortcuts.TryAdd("lowerCase", ShortcutDefaults.ForCommand("lowerCase"));
+                    loaded.Shortcuts.TryAdd("titleCase", ShortcutDefaults.ForCommand("titleCase"));
                     loaded.VoicePhrases ??= new Dictionary<string, List<string>>(StringComparer.Ordinal);
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];
