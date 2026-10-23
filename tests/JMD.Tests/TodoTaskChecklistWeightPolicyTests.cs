@@ -5,6 +5,38 @@ namespace JMD.Tests;
 
 public sealed class TodoTaskChecklistWeightPolicyTests
 {
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, true)]
+    public void Checklist_is_complete_only_when_nonempty_completed_weights_reach_100_percent(
+        bool firstCompleted, bool secondCompleted, bool expected)
+    {
+        var checklist = new[]
+        {
+            new TodoTaskChecklistEntry("Primeira etapa", 40m, firstCompleted),
+            new TodoTaskChecklistEntry("Segunda etapa", 60m, secondCompleted)
+        };
+
+        Assert.Equal(expected, TodoTaskChecklistWeightPolicy.IsComplete(checklist));
+    }
+
+    [Fact]
+    public void Empty_checklist_does_not_complete_a_task()
+        => Assert.False(TodoTaskChecklistWeightPolicy.IsComplete([]));
+
+    [Fact]
+    public void Completed_percent_uses_only_checked_items()
+    {
+        var checklist = new[]
+        {
+            new TodoTaskChecklistEntry("Primeira etapa", 35m, true),
+            new TodoTaskChecklistEntry("Segunda etapa", 65m, false)
+        };
+
+        Assert.Equal(35m, TodoTaskChecklistWeightPolicy.CompletedPercent(checklist));
+    }
+
     [Fact]
     public void Editing_an_item_preserves_earlier_weights_and_redistributes_only_later_items()
     {

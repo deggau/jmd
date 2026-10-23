@@ -4,7 +4,7 @@ Unicode true
 ${StrStr}
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.79"
+  !define APP_VERSION "0.1.80"
 !endif
 !ifndef PUBLISH_DIR
   !error "PUBLISH_DIR must point to the published application directory"

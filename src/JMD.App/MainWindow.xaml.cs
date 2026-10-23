@@ -2049,10 +2049,15 @@ public partial class MainWindow : Window
     {
         if (index < 0 || index >= task.Checklist.Count) return;
         task.Checklist[index] = task.Checklist[index] with { IsCompleted = !task.Checklist[index].IsCompleted };
-        SaveTodoTasks();
-        var completedPercent = Math.Clamp(task.Checklist.Where(entry => entry.IsCompleted).Sum(entry => entry.Weight), 0m, 100m);
+        var completedPercent = TodoTaskChecklistWeightPolicy.CompletedPercent(task.Checklist);
         RecordTodoTaskChange("checklist", task,
             $"Item \"{task.Checklist[index].Title}\" {(task.Checklist[index].IsCompleted ? "concluído" : "reaberto")} na tarefa {TodoTaskDisplay.Reference(task)} {task.Title} — {completedPercent:0.#}% concluído");
+        if (task.CompletedAt is null && TodoTaskChecklistWeightPolicy.IsComplete(task.Checklist))
+        {
+            CompleteTodoTask(task);
+            return;
+        }
+        SaveTodoTasks();
         _todoTaskPanel?.Refresh();
     }
 

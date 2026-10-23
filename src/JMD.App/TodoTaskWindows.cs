@@ -175,9 +175,10 @@ internal sealed class TodoTaskEditWindow : Window
             FontSize = 12, Padding = new Thickness(6), TextWrapping = TextWrapping.Wrap,
             AcceptsReturn = true, VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
-        StyleBox(titleBox); titleBox.Text = title;
-        var weightBox = new TextBox { Width = 54, Height = 31, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0), ToolTip = "Peso percentual", FontSize = 12, Padding = new Thickness(6) };
-        StyleBox(weightBox); weightBox.Text = weight.ToString("0.##", System.Globalization.CultureInfo.CurrentCulture);
+        StyleBox(titleBox); titleBox.FontSize = 12; titleBox.Padding = new Thickness(6); titleBox.Text = title;
+        var weightBox = new TextBox { Width = 66, Height = 31, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0), ToolTip = "Peso percentual" };
+        StyleBox(weightBox); weightBox.FontSize = 12; weightBox.Padding = new Thickness(5, 4, 5, 4);
+        weightBox.Text = weight.ToString("0.##", System.Globalization.CultureInfo.CurrentCulture);
         (TextBox Title, TextBox Weight, bool Completed) row = (titleBox, weightBox, completed);
         _checklistRows.Add(row);
         var line = new Grid { Margin = new Thickness(0, 0, 0, 5) };
@@ -427,7 +428,7 @@ internal sealed class TodoTaskPanelWindow : Window
             body.Children.Add(titleRow);
             if (task.Checklist.Count > 0)
             {
-                var progress = Math.Clamp(task.Checklist.Where(entry => entry.IsCompleted).Sum(entry => entry.Weight), 0m, 100m);
+                var progress = TodoTaskChecklistWeightPolicy.CompletedPercent(task.Checklist);
                 var progressRow = new DockPanel { Margin = new Thickness(0, 7, 0, 4) };
                 var percent = new TextBlock { Text = $"{progress:0.#}%", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, VerticalAlignment = VerticalAlignment.Center };
                 DockPanel.SetDock(percent, Dock.Right); progressRow.Children.Add(percent);

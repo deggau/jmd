@@ -6,6 +6,15 @@ public sealed record TodoTaskChecklistEntry(string Title, decimal Weight, bool I
 
 public static class TodoTaskChecklistWeightPolicy
 {
+    public static decimal CompletedPercent(IEnumerable<TodoTaskChecklistEntry> checklist)
+        => Math.Clamp(checklist.Where(entry => entry.IsCompleted).Sum(entry => entry.Weight), 0m, 100m);
+
+    public static bool IsComplete(IEnumerable<TodoTaskChecklistEntry> checklist)
+    {
+        var entries = checklist.ToList();
+        return entries.Count > 0 && CompletedPercent(entries) >= 100m;
+    }
+
     public static IReadOnlyList<decimal> RebalanceAfterEdit(IReadOnlyList<decimal> weights, int changedIndex, decimal requestedWeight)
     {
         if (changedIndex < 0 || changedIndex >= weights.Count || weights.Count == 0)
