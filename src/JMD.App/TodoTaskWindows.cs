@@ -81,7 +81,7 @@ internal sealed class TodoTaskEditWindow : Window
         Width = 440; SizeToContent = SizeToContent.Height; WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true;
         Background = new SolidColorBrush(Color.FromRgb(23, 25, 31)); WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        var panel = new StackPanel { Margin = new Thickness(22) };
+        var panel = new StackPanel { Margin = new Thickness(18) };
         panel.Children.Add(new TextBlock { Text = Title, FontSize = 18, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, Margin = new Thickness(0, 0, 0, 14) });
         panel.Children.Add(Label("Título"));
         StyleBox(_title); _title.Text = task?.Title ?? ""; _title.Margin = new Thickness(0, 4, 0, 12); panel.Children.Add(_title);
@@ -169,9 +169,14 @@ internal sealed class TodoTaskEditWindow : Window
 
     private void AddChecklistRow(string title, decimal weight, bool completed)
     {
-        var titleBox = new TextBox { MinWidth = 0, Height = 31, VerticalContentAlignment = VerticalAlignment.Center };
+        var titleBox = new TextBox
+        {
+            MinWidth = 0, MinHeight = 31, MaxHeight = 64, VerticalContentAlignment = VerticalAlignment.Center,
+            FontSize = 12, Padding = new Thickness(6), TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = true, VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
         StyleBox(titleBox); titleBox.Text = title;
-        var weightBox = new TextBox { Width = 58, Height = 31, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0), ToolTip = "Peso percentual" };
+        var weightBox = new TextBox { Width = 54, Height = 31, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0), ToolTip = "Peso percentual", FontSize = 12, Padding = new Thickness(6) };
         StyleBox(weightBox); weightBox.Text = weight.ToString("0.##", System.Globalization.CultureInfo.CurrentCulture);
         (TextBox Title, TextBox Weight, bool Completed) row = (titleBox, weightBox, completed);
         _checklistRows.Add(row);
@@ -179,7 +184,7 @@ internal sealed class TodoTaskEditWindow : Window
         line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        titleBox.Margin = new Thickness(0, 0, 6, 0);
+        titleBox.Margin = new Thickness(0, 0, 4, 0);
         line.Children.Add(titleBox);
         Grid.SetColumn(weightBox, 1); line.Children.Add(weightBox);
         var percentLabel = new TextBlock { Text = "%", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) };
