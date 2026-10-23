@@ -2015,11 +2015,22 @@ public partial class MainWindow : Window
     private void ShowTodoTaskPanel()
     {
         _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask,
-            ReopenTodoTask, PauseTodoTask, UnpauseTodoTask, ToggleTodoTaskChecklist, () => _ = CreateTodoTaskAsync());
+            ReopenTodoTask, PauseTodoTask, UnpauseTodoTask, ToggleTodoTaskChecklist, () => _ = CreateTodoTaskAsync(), ShowTodoTaskReport);
         _todoTaskPanel.ShowOpenTasks();
         _todoTaskPanel.Show();
         _todoTaskPanel.Activate();
         Dispatcher.BeginInvoke(new Action(_todoTaskPanel.FocusFirstAction));
+    }
+
+    private void ShowTodoTaskReport()
+    {
+        var panel = _todoTaskPanel;
+        if (panel is null) return;
+        var report = new TodoTaskReportWindow(_historyStore?.Search("Tarefa") ?? []);
+        report.Owner = panel;
+        panel.SetModalChildActive(true);
+        try { report.ShowDialog(); }
+        finally { panel.SetModalChildActive(false); }
     }
 
     private void EditTodoTask(TodoTask task)
@@ -2090,7 +2101,12 @@ public partial class MainWindow : Window
         task.PauseReason = dialog.Reason;
         task.PausedBy = dialog.Responsible;
         SaveTodoTasks();
-        RecordTodoTaskChange("pausada", task, $"Tarefa pausada por {task.PausedBy} - Motivo: {task.PauseReason}");
+        var pauseDetails = string.Join(" - ", new[]
+        {
+            string.IsNullOrWhiteSpace(task.PausedBy) ? null : $"Responsável: {task.PausedBy}",
+            string.IsNullOrWhiteSpace(task.PauseReason) ? null : $"Motivo: {task.PauseReason}"
+        }.Where(detail => detail is not null));
+        RecordTodoTaskChange("pausada", task, $"Tarefa pausada: {TodoTaskDisplay.Reference(task)} {task.Title}" + (pauseDetails.Length == 0 ? "" : $" - {pauseDetails}"));
         _todoTaskPanel?.Refresh();
     }
 

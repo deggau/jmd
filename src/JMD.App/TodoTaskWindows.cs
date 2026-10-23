@@ -34,6 +34,93 @@ internal sealed class TodoTask
     public List<TodoTaskChecklistEntry> Checklist { get; set; } = [];
 }
 
+internal sealed class TodoTaskReportWindow : Window
+{
+    private readonly IReadOnlyList<ConversionHistoryEntry> _events;
+    private readonly StackPanel _timeline = new() { Orientation = Orientation.Horizontal };
+    private readonly StackPanel _report = new();
+    private readonly TextBlock _rangeLabel = new();
+    private DateTime _endDate = DateTime.Today;
+    private int _rangeDays = DateTime.Today.Day;
+
+    public TodoTaskReportWindow(IReadOnlyList<ConversionHistoryEntry> events)
+    {
+        _events = events.Where(entry => entry.CommandName.StartsWith("Tarefa ", StringComparison.Ordinal))
+            .OrderBy(entry => entry.OccurredAt).ToList();
+        Title = "Relatório de tarefas"; Width = Math.Min(1100, SystemParameters.WorkArea.Width - 80);
+        Height = Math.Min(820, SystemParameters.WorkArea.Height - 80); MinWidth = 680; MinHeight = 480;
+        WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.CanResize; ShowInTaskbar = false; Topmost = true;
+        Background = new SolidColorBrush(Color.FromRgb(23, 25, 31)); WindowStartupLocation = WindowStartupLocation.CenterScreen;
+
+        var root = new DockPanel { Margin = new Thickness(24) };
+        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var close = ReportButton("Fechar"); close.Click += (_, _) => Close(); DockPanel.SetDock(close, Dock.Right); header.Children.Add(close);
+        header.Children.Add(new TextBlock { Text = "Relatório de tarefas", FontSize = 22, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center });
+        DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
+
+        var timelinePanel = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var controls = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+        var rangeButtons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var zoomOut = ReportButton("−"); zoomOut.ToolTip = "Diminuir intervalo"; zoomOut.Click += (_, _) => { _rangeDays = Math.Min(366, _rangeDays * 2); RefreshReport(); };
+        var zoomIn = ReportButton("+"); zoomIn.ToolTip = "Aumentar intervalo"; zoomIn.Click += (_, _) => { _rangeDays = Math.Max(1, (_rangeDays + 1) / 2); RefreshReport(); };
+        rangeButtons.Children.Add(zoomOut); rangeButtons.Children.Add(zoomIn); DockPanel.SetDock(rangeButtons, Dock.Right); controls.Children.Add(rangeButtons);
+        var previous = ReportButton("‹"); previous.ToolTip = "Período anterior"; previous.Click += (_, _) => { _endDate = _endDate.AddDays(-_rangeDays); RefreshReport(); };
+        var next = ReportButton("›"); next.ToolTip = "Próximo período"; next.Margin = new Thickness(4, 0, 0, 0); next.Click += (_, _) => { _endDate = _endDate.AddDays(_rangeDays); RefreshReport(); };
+        var nav = new StackPanel { Orientation = Orientation.Horizontal }; nav.Children.Add(previous); nav.Children.Add(next); DockPanel.SetDock(nav, Dock.Left); controls.Children.Add(nav);
+        _rangeLabel.Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)); _rangeLabel.VerticalAlignment = VerticalAlignment.Center; _rangeLabel.Margin = new Thickness(12, 0, 0, 0); controls.Children.Add(_rangeLabel);
+        timelinePanel.Children.Add(controls);
+        timelinePanel.Children.Add(new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = _timeline });
+        DockPanel.SetDock(timelinePanel, Dock.Top); root.Children.Add(timelinePanel);
+        root.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _report });
+        Content = root;
+        PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { e.Handled = true; Close(); } };
+        RefreshReport();
+    }
+
+    private void RefreshReport()
+    {
+        var startDate = _endDate.AddDays(-_rangeDays + 1);
+        _rangeLabel.Text = $"{startDate:dd/MM/yyyy} – {_endDate:dd/MM/yyyy}  ·  {_rangeDays} dia(s)";
+        var visible = _events.Select(entry => (Entry: entry, LocalTime: entry.OccurredAt.ToLocalTime()))
+            .Where(item => item.LocalTime.Date >= startDate.Date && item.LocalTime.Date <= _endDate.Date).ToList();
+        _timeline.Children.Clear();
+        for (var day = startDate.Date; day <= _endDate.Date; day = day.AddDays(1))
+        {
+            var date = day;
+            var count = visible.Count(item => item.LocalTime.Date == date);
+            var tile = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 0, 5, 0), MinWidth = 58 };
+            tile.Child = new StackPanel { Children =
+            {
+                new TextBlock { Text = date.ToString("dd/MM", System.Globalization.CultureInfo.CurrentCulture), Foreground = Brushes.White, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center },
+                new TextBlock { Text = count == 1 ? "1 evento" : $"{count} eventos", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center }
+            }};
+            _timeline.Children.Add(tile);
+        }
+
+        _report.Children.Clear();
+        foreach (var dayGroup in visible.GroupBy(item => item.LocalTime.Date).OrderBy(group => group.Key))
+        {
+            _report.Children.Add(new TextBlock { Text = dayGroup.Key.ToString("dddd, dd 'de' MMMM 'de' yyyy", System.Globalization.CultureInfo.CurrentCulture), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 8) });
+            foreach (var period in dayGroup.GroupBy(item => item.LocalTime.Hour < 12 && item.LocalTime.Hour >= 5 ? "Manhã" : item.LocalTime.Hour < 18 && item.LocalTime.Hour >= 12 ? "Tarde" : "Noite").OrderBy(group => group.Min(item => item.LocalTime)))
+            {
+                _report.Children.Add(new TextBlock { Text = period.Key, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 12, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 4, 0, 4) });
+                foreach (var item in period.OrderBy(value => value.LocalTime))
+                {
+                    var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 5) };
+                    var content = new StackPanel();
+                    content.Children.Add(new TextBlock { Text = $"{item.LocalTime:HH:mm}  ·  {item.Entry.CommandName}", Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                    if (!string.IsNullOrWhiteSpace(item.Entry.AfterValue))
+                        content.Children.Add(new TextBlock { Text = item.Entry.AfterValue, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
+                    card.Child = content; _report.Children.Add(card);
+                }
+            }
+        }
+        if (visible.Count == 0) _report.Children.Add(new TextBlock { Text = "Nenhuma atividade de tarefa neste período.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 16, 0, 0) });
+    }
+
+    private static Button ReportButton(string text) => new() { Content = text, Padding = new Thickness(10, 6, 10, 6), Margin = new Thickness(4, 0, 0, 0), Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
+}
+
 internal static class TodoTaskDisplay
 {
     public static string Reference(TodoTask task)
@@ -53,6 +140,7 @@ internal static class TodoTaskDisplay
 
 internal sealed class TodoTaskEditWindow : Window
 {
+    private readonly TextBlock _validation = new();
     private readonly TextBox _title = new();
     private readonly TextBox _description = new();
     private readonly TextBox _reminderInterval = new();
@@ -60,7 +148,6 @@ internal sealed class TodoTaskEditWindow : Window
     private readonly TextBox _attachments = new();
     private readonly StackPanel _checklistPanel = new();
     private readonly List<(TextBox Title, TextBox Weight, bool Completed)> _checklistRows = [];
-    private readonly TextBlock _validation = new();
     private readonly Dictionary<string, Button> _categoryButtons = new(StringComparer.Ordinal);
     private string _categoryColor = "Verde";
     public string TaskTitle => _title.Text.Trim();
@@ -285,7 +372,6 @@ internal sealed class TodoTaskPauseWindow : Window
 {
     private readonly TextBox _reason = new();
     private readonly TextBox _responsible = new();
-    private readonly TextBlock _validation = new();
 
     public string Reason => _reason.Text.Trim();
     public string Responsible => _responsible.Text.Trim();
@@ -306,8 +392,6 @@ internal sealed class TodoTaskPauseWindow : Window
         panel.Children.Add(Label("Responsável"));
         StyleBox(_responsible); _responsible.Margin = new Thickness(0, 4, 0, 8); panel.Children.Add(_responsible);
 
-        _validation.Foreground = new SolidColorBrush(Color.FromRgb(255, 145, 135));
-        _validation.FontSize = 11; _validation.Margin = new Thickness(0, 0, 0, 8); panel.Children.Add(_validation);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var cancel = CreateDialogButton("Cancelar");
         cancel.Click += (_, _) => { DialogResult = false; Close(); };
@@ -315,8 +399,6 @@ internal sealed class TodoTaskPauseWindow : Window
         save.IsDefault = true;
         save.Click += (_, _) =>
         {
-            if (Reason.Length == 0) { _validation.Text = "Informe o motivo da pausa."; _reason.Focus(); return; }
-            if (Responsible.Length == 0) { _validation.Text = "Informe quem é responsável."; _responsible.Focus(); return; }
             DialogResult = true;
             Close();
         };
@@ -354,16 +436,17 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly Action<TodoTask> _unpause;
     private readonly Action<TodoTask, int> _toggleChecklist;
     private readonly Action _create;
+    private readonly Action _showReport;
     private readonly Button _historyButton;
     private readonly StackPanel _list = new();
     private bool _showHistory;
     private bool _modalChildActive;
 
     public TodoTaskPanelWindow(ObservableCollection<TodoTask> tasks, Action<TodoTask> complete, Action<TodoTask> edit,
-        Action<TodoTask> delete, Action<TodoTask> reopen, Action<TodoTask> pause, Action<TodoTask> unpause, Action<TodoTask, int> toggleChecklist, Action onCreate)
+        Action<TodoTask> delete, Action<TodoTask> reopen, Action<TodoTask> pause, Action<TodoTask> unpause, Action<TodoTask, int> toggleChecklist, Action onCreate, Action showReport)
     {
         _tasks = tasks; _complete = complete; _edit = edit; _delete = delete; _reopen = reopen;
-        _pause = pause; _unpause = unpause; _toggleChecklist = toggleChecklist; _create = onCreate;
+        _pause = pause; _unpause = unpause; _toggleChecklist = toggleChecklist; _create = onCreate; _showReport = showReport;
         Width = 390; Height = SystemParameters.WorkArea.Height; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false; Topmost = true; Background = new SolidColorBrush(Color.FromRgb(23, 25, 31));
         WindowStartupLocation = WindowStartupLocation.Manual; Left = SystemParameters.WorkArea.Right - Width; Top = SystemParameters.WorkArea.Top;
@@ -375,6 +458,7 @@ internal sealed class TodoTaskPanelWindow : Window
         _historyButton = IconButton("\uE81C", "Ver tarefas concluídas");
         _historyButton.Click += (_, _) => { _showHistory = !_showHistory; _historyButton.ToolTip = _showHistory ? "Ver tarefas em aberto" : "Ver tarefas concluídas"; Refresh(); };
         DockPanel.SetDock(_historyButton, Dock.Right); header.Children.Add(_historyButton); DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
+        var reportButton = IconButton("\uE9D2", "Relatório de tarefas"); reportButton.Click += (_, _) => _showReport(); DockPanel.SetDock(reportButton, Dock.Right); header.Children.Add(reportButton);
         var content = new DockPanel();
         var newTaskButton = new Button { Content = "＋  Nova tarefa", Height = 40, Margin = new Thickness(0, 12, 0, 0), Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)), Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)), FontWeight = FontWeights.SemiBold, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
         newTaskButton.Click += (_, _) => _create(); DockPanel.SetDock(newTaskButton, Dock.Bottom); content.Children.Add(newTaskButton);
@@ -392,7 +476,8 @@ internal sealed class TodoTaskPanelWindow : Window
         foreach (var task in entries)
         {
             var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(9), Padding = new Thickness(12), Margin = new Thickness(0, 0, 0, 9) };
-            var layout = new DockPanel(); var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Top };
+            var layout = new StackPanel();
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, 0, 4) };
             if (!_showHistory)
             {
                 var done = IconButton("\uE73E", "Concluir"); done.Click += (_, _) => _complete(task);
@@ -419,12 +504,12 @@ internal sealed class TodoTaskPanelWindow : Window
             }
             var edit = IconButton("\uE70F", "Editar"); edit.Click += (_, _) => _edit(task); actions.Children.Add(edit);
             var remove = IconButton("\uE74D", "Excluir"); remove.Click += (_, _) => _delete(task); actions.Children.Add(remove);
-            DockPanel.SetDock(actions, Dock.Right); layout.Children.Add(actions);
-            var body = new StackPanel { Margin = new Thickness(0, 0, 10, 0) };
+            layout.Children.Add(actions);
+            var body = new StackPanel();
             body.Children.Add(new TextBlock { Text = TodoTaskDisplay.Reference(task), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, Margin = new Thickness(0, 0, 0, 3) });
             var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
             titleRow.Children.Add(new Border { Width = 10, Height = 10, Background = TodoTaskEditWindow.CategoryBrush(task.CategoryColor), CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 4, 7, 0), ToolTip = $"Prioridade {task.CategoryColor}" });
-            titleRow.Children.Add(new TextBlock { Text = task.Title, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, FontSize = 14, TextWrapping = TextWrapping.Wrap });
+            titleRow.Children.Add(new TextBlock { Text = task.Title, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, FontSize = 14, TextWrapping = TextWrapping.Wrap, MaxHeight = 51, TextTrimming = TextTrimming.CharacterEllipsis });
             body.Children.Add(titleRow);
             if (task.Checklist.Count > 0)
             {
@@ -451,8 +536,8 @@ internal sealed class TodoTaskPanelWindow : Window
             }
             else if (!string.IsNullOrWhiteSpace(task.Description)) body.Children.Add(new TextBlock { Text = task.Description.Length > 100 ? "…" + task.Description[^100..] : task.Description, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 5) });
             body.Children.Add(new TextBlock { Text = $"Criada {task.CreatedAt.LocalDateTime:g}" + (task.CompletedAt is null ? "" : $" · Concluída {task.CompletedAt.Value.LocalDateTime:g}") + (task.PausedAt is null ? "" : $" · Pausada {task.PausedAt.Value.LocalDateTime:g}"), Foreground = new SolidColorBrush(Color.FromRgb(135, 140, 151)), FontSize = 10 });
-            if (task.PausedAt is not null)
-                body.Children.Add(new TextBlock { Text = $"Pausada por {task.PausedBy}: {task.PauseReason}", Foreground = new SolidColorBrush(Color.FromRgb(255, 204, 0)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
+            if (task.PausedAt is not null && (!string.IsNullOrWhiteSpace(task.PausedBy) || !string.IsNullOrWhiteSpace(task.PauseReason)))
+                body.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { string.IsNullOrWhiteSpace(task.PausedBy) ? null : $"Responsável: {task.PausedBy}", string.IsNullOrWhiteSpace(task.PauseReason) ? null : $"Motivo: {task.PauseReason}" }.Where(value => value is not null)), Foreground = new SolidColorBrush(Color.FromRgb(255, 204, 0)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
             if (task.ReminderIntervalMinutes is not null) body.Children.Add(new TextBlock { Text = TodoTaskDisplay.ReminderLabel(task), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, Margin = new Thickness(0, 3, 0, 0) });
             layout.Children.Add(body); card.Child = layout; _list.Children.Add(card);
         }
@@ -475,13 +560,13 @@ internal sealed class TodoTaskPanelWindow : Window
     public void FocusFirstAction()
     {
         var firstAction = _list.Children.OfType<Border>()
-            .Select(card => card.Child as DockPanel)
+            .Select(card => card.Child as StackPanel)
             .Where(layout => layout is not null)
-            .SelectMany(layout => layout!.Children.OfType<StackPanel>())
+            .SelectMany(layout => layout!.Children.OfType<StackPanel>().Take(1))
             .SelectMany(actions => actions.Children.OfType<Button>())
             .FirstOrDefault();
         if (firstAction is not null) Keyboard.Focus(firstAction);
     }
 
-    private static Button IconButton(string glyph, string hint) => new() { Content = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 15, Width = 32, Height = 32, Margin = new Thickness(2), ToolTip = hint, Focusable = true, Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+    private static Button IconButton(string glyph, string hint) => new() { Content = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13, Width = 28, Height = 28, Margin = new Thickness(1), ToolTip = hint, Focusable = true, Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
 }
