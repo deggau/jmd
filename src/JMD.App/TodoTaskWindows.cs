@@ -169,15 +169,21 @@ internal sealed class TodoTaskEditWindow : Window
 
     private void AddChecklistRow(string title, decimal weight, bool completed)
     {
-        var titleBox = new TextBox { MinWidth = 190, Height = 31, VerticalContentAlignment = VerticalAlignment.Center };
+        var titleBox = new TextBox { MinWidth = 0, Height = 31, VerticalContentAlignment = VerticalAlignment.Center };
         StyleBox(titleBox); titleBox.Text = title;
-        var weightBox = new TextBox { Width = 54, Height = 31, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0), ToolTip = "Peso percentual" };
+        var weightBox = new TextBox { Width = 58, Height = 31, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0), ToolTip = "Peso percentual" };
         StyleBox(weightBox); weightBox.Text = weight.ToString("0.##", System.Globalization.CultureInfo.CurrentCulture);
         (TextBox Title, TextBox Weight, bool Completed) row = (titleBox, weightBox, completed);
         _checklistRows.Add(row);
-        var line = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
-        line.Children.Add(titleBox); line.Children.Add(weightBox);
-        line.Children.Add(new TextBlock { Text = "%", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) });
+        var line = new Grid { Margin = new Thickness(0, 0, 0, 5) };
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        titleBox.Margin = new Thickness(0, 0, 6, 0);
+        line.Children.Add(titleBox);
+        Grid.SetColumn(weightBox, 1); line.Children.Add(weightBox);
+        var percentLabel = new TextBlock { Text = "%", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) };
+        Grid.SetColumn(percentLabel, 2); line.Children.Add(percentLabel);
         _checklistPanel.Children.Add(line);
         titleBox.TextChanged += (_, _) =>
         {
@@ -191,10 +197,12 @@ internal sealed class TodoTaskEditWindow : Window
                 _checklistRows.Remove(row); _checklistPanel.Children.Remove(line); RedistributeChecklistWeights();
             }
         };
-        weightBox.TextChanged += (_, _) =>
+        weightBox.LostFocus += (_, _) => CommitChecklistWeight(weightBox);
+        weightBox.KeyDown += (_, e) =>
         {
-            if (_updatingChecklistRows || string.IsNullOrWhiteSpace(titleBox.Text) || !decimal.TryParse(weightBox.Text, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out var value) || value is < 0 or > 100) return;
-            RedistributeOtherWeights(titleBox, value);
+            if (e.Key != Key.Enter) return;
+            e.Handled = true;
+            CommitChecklistWeight(weightBox);
         };
     }
 
@@ -209,13 +217,20 @@ internal sealed class TodoTaskEditWindow : Window
         _updatingChecklistRows = false;
     }
 
-    private void RedistributeOtherWeights(TextBox changedBox, decimal value)
+    private void CommitChecklistWeight(TextBox changedBox)
     {
-        var others = _checklistRows.Where(row => !string.IsNullOrWhiteSpace(row.Title.Text) && !ReferenceEquals(row.Weight, changedBox)).ToList();
-        if (others.Count == 0) { if (value != 100m) { _updatingChecklistRows = true; changedBox.Text = "100"; _updatingChecklistRows = false; } return; }
-        var baseWeight = decimal.Floor((100m - value) / others.Count * 100m) / 100m;
+        if (_updatingChecklistRows || !decimal.TryParse(changedBox.Text, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.CurrentCulture, out var requestedWeight)) return;
+        var active = _checklistRows.Where(row => !string.IsNullOrWhiteSpace(row.Title.Text)).ToList();
+        var changedIndex = active.FindIndex(row => ReferenceEquals(row.Weight, changedBox));
+        if (changedIndex < 0) return;
+        var weights = TodoTaskChecklistWeightPolicy.RebalanceAfterEdit(active.Select(row =>
+            decimal.TryParse(row.Weight.Text, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.CurrentCulture, out var currentWeight) ? currentWeight : 0m).ToArray(),
+            changedIndex, requestedWeight);
         _updatingChecklistRows = true;
-        for (var i = 0; i < others.Count; i++) others[i].Weight.Text = (i == others.Count - 1 ? 100m - value - baseWeight * (others.Count - 1) : baseWeight).ToString("0.##", System.Globalization.CultureInfo.CurrentCulture);
+        for (var i = 0; i < active.Count; i++)
+            active[i].Weight.Text = weights[i].ToString("0.##", System.Globalization.CultureInfo.CurrentCulture);
         _updatingChecklistRows = false;
     }
 
@@ -416,7 +431,13 @@ internal sealed class TodoTaskPanelWindow : Window
                 for (var index = 0; index < task.Checklist.Count; index++)
                 {
                     var entry = task.Checklist[index];
-                    var check = new System.Windows.Controls.CheckBox { IsChecked = entry.IsCompleted, Content = $"{entry.Title} ({entry.Weight:0.#}%)", Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 11, Margin = new Thickness(0, 2, 0, 2) };
+                    var check = new System.Windows.Controls.CheckBox
+                    {
+                        IsChecked = entry.IsCompleted,
+                        Content = new TextBlock { Text = $"{entry.Title} ({entry.Weight:0.#}%)", TextWrapping = TextWrapping.Wrap, MaxWidth = 220 },
+                        Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 11, Margin = new Thickness(0, 2, 0, 2),
+                        HorizontalContentAlignment = HorizontalAlignment.Left
+                    };
                     var itemIndex = index;
                     check.Click += (_, _) => _toggleChecklist(task, itemIndex);
                     body.Children.Add(check);

@@ -1,8 +1,10 @@
 Unicode true
 !include "MUI2.nsh"
+!include "StrFunc.nsh"
+${StrStr}
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.77"
+  !define APP_VERSION "0.1.78"
 !endif
 !ifndef PUBLISH_DIR
   !error "PUBLISH_DIR must point to the published application directory"
@@ -53,6 +55,29 @@ Section "Install" SEC_INSTALL
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk" "$INSTDIR\Uninstall.exe"
 
+  FileOpen $0 "$INSTDIR\jmd.cmd" w
+  FileWrite $0 "@echo off$\r$\n"
+  FileWrite $0 "$\"%~dp0${APP_EXE}$\" --cli %*$\r$\n"
+  FileClose $0
+
+  DetailPrint "Configuring PowerShell command completion..."
+  ExecWait '"$INSTDIR\${APP_EXE}" --cli -install-completion' $0
+  StrCmp $0 "0" completionConfigured
+  DetailPrint "PowerShell completion could not be configured automatically. Run jmd -install-completion later."
+completionConfigured:
+
+  ReadRegStr $0 HKCU "Environment" "Path"
+  ${StrStr} $1 $0 "$INSTDIR"
+  StrCmp $1 "" addJmdToPath pathUpdated
+addJmdToPath:
+  StrCmp $0 "" emptyUserPath
+  WriteRegExpandStr HKCU "Environment" "Path" "$INSTDIR;$0"
+  Goto pathUpdated
+emptyUserPath:
+  WriteRegExpandStr HKCU "Environment" "Path" "$INSTDIR"
+pathUpdated:
+  System::Call 'user32::SendMessageTimeoutW(p 0xffff, i 0x001A, p 0, w "Environment", i 0x0002, i 5000, *p .r1)'
+
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\${APP_NAME}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_NAME}"
@@ -67,8 +92,25 @@ Section "Install" SEC_INSTALL
 SectionEnd
 
 Section "Uninstall" un.Uninstall
+  ExecWait '"$INSTDIR\${APP_EXE}" --cli -uninstall-completion' $0
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk"
+  Delete "$INSTDIR\jmd.cmd"
+  ReadRegStr $0 HKCU "Environment" "Path"
+  StrLen $1 "$INSTDIR;"
+  StrCpy $2 $0 $1
+  StrCmp $2 "$INSTDIR;" removeJmdFromPath
+  StrCmp $0 "$INSTDIR" removeOnlyJmdPath
+  Goto pathRemovalDone
+removeJmdFromPath:
+  StrCpy $0 $0 "" $1
+  StrCmp $0 "" removeOnlyJmdPath
+  WriteRegExpandStr HKCU "Environment" "Path" $0
+  Goto pathRemovalDone
+removeOnlyJmdPath:
+  DeleteRegValue HKCU "Environment" "Path"
+pathRemovalDone:
+  System::Call 'user32::SendMessageTimeoutW(p 0xffff, i 0x001A, p 0, w "Environment", i 0x0002, i 5000, *p .r1)'
   RMDir "$SMPROGRAMS\${APP_NAME}"
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
   DeleteRegKey HKCU "Software\${APP_NAME}"

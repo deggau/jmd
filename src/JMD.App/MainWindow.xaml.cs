@@ -90,6 +90,7 @@ public partial class MainWindow : Window
     private bool _loadingAdvancedSoundSettings;
     private bool _showingDialog;
     private bool _checkingUpdates;
+    private readonly AsyncLocal<CliCommandExecutionState?> _cliCommandExecution = new();
     private IntPtr _dictationTargetWindow;
     private bool _dictationHasInsertedText;
     private string _wakeRecognitionPartial = string.Empty;
@@ -266,7 +267,7 @@ public partial class MainWindow : Window
             _settings.HideFromScreenCapture && !TrySetCaptureExcluded(true))
             SetStatus("A preferência para ocultar o JMD foi carregada, mas o Windows não aceitou a solicitação.", false);
         _hotkeys = new GlobalHotkeyService(source);
-        _hotkeys.HotkeyPressed += id => Dispatcher.BeginInvoke(() => HandleHotkeyAsync(id));
+        _hotkeys.HotkeyPressed += id => Dispatcher.BeginInvoke(new Action(() => _ = HandleHotkeyAsync(id)));
         RegisterConfiguredShortcuts();
         RefreshCommandStatuses();
         RefreshShortcutStatuses();
@@ -1483,7 +1484,8 @@ public partial class MainWindow : Window
         if (saved) SetStatus($"Atalho atualizado: {shortcut}", true);
     }
 
-    private async void HandleHotkeyAsync(string id, VoiceCommandInvocation? voiceCommand = null)
+    private async Task<bool> HandleHotkeyAsync(string id, VoiceCommandInvocation? voiceCommand = null,
+        IReadOnlyDictionary<string, string>? dynamicVariables = null)
     {
         try
         {
@@ -1492,6 +1494,7 @@ public partial class MainWindow : Window
             else
                 ActivationSoundService.PlayVoiceCommandFound(_settings.VoiceCommandFoundSound);
             _previousWindow = _keyboard.GetForegroundWindow();
+            var succeeded = true;
             switch (id)
             {
                 case "todoCreate":
@@ -1556,13 +1559,15 @@ public partial class MainWindow : Window
                     break;
                 default:
                     var customShortcut = _settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id);
-                    if (customShortcut is not null) await RunCustomWorkflowAsync(customShortcut, voiceCommand);
+                    if (customShortcut is not null) succeeded = await RunCustomWorkflowAsync(customShortcut, voiceCommand, dynamicVariables);
                     break;
             }
+            return succeeded;
         }
         catch (Exception exception)
         {
             SetStatus($"Operação falhou: {exception.Message}", false);
+            return false;
         }
     }
 
@@ -2003,7 +2008,7 @@ public partial class MainWindow : Window
         task.Checklist = dialog.Checklist.ToList();
         _todoTasks.Add(task);
         SaveTodoTasks();
-        RecordTodoTaskChange("criada", task, string.Empty, DescribeTodoTask(task, "Em aberto"));
+        RecordTodoTaskChange("criada", task, $"Tarefa criada: {TodoTaskDisplay.Reference(task)} {task.Title}");
         _todoTaskPanel?.Refresh();
     }
 
@@ -2021,7 +2026,7 @@ public partial class MainWindow : Window
     {
         var dialog = new TodoTaskEditWindow(task);
         if (!ShowTodoTaskDialog(dialog)) return;
-        var previousDescription = DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída");
+        var previousTask = FromTodoTaskEntry(ToTodoTaskEntry(task));
         var newChecklist = dialog.Checklist.ToList();
         var checklistChanged = !task.Checklist.SequenceEqual(newChecklist);
         var changed = task.Title != dialog.TaskTitle || task.Description != dialog.Description || task.Urls != dialog.Urls || task.Attachments != dialog.Attachments || checklistChanged;
@@ -2036,7 +2041,7 @@ public partial class MainWindow : Window
         task.Checklist = newChecklist;
         if (reminderChanged) task.LastReminderAt = task.ReminderIntervalMinutes is null ? null : DateTimeOffset.Now;
         SaveTodoTasks();
-        if (changed) RecordTodoTaskChange("editada", task, previousDescription, DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída"));
+        if (changed) RecordTodoTaskChange("editada", task, DescribeTodoTaskChanges(previousTask, task));
         _todoTaskPanel?.Refresh();
     }
 
@@ -2045,6 +2050,9 @@ public partial class MainWindow : Window
         if (index < 0 || index >= task.Checklist.Count) return;
         task.Checklist[index] = task.Checklist[index] with { IsCompleted = !task.Checklist[index].IsCompleted };
         SaveTodoTasks();
+        var completedPercent = Math.Clamp(task.Checklist.Where(entry => entry.IsCompleted).Sum(entry => entry.Weight), 0m, 100m);
+        RecordTodoTaskChange("checklist", task,
+            $"Item \"{task.Checklist[index].Title}\" {(task.Checklist[index].IsCompleted ? "concluído" : "reaberto")} na tarefa {TodoTaskDisplay.Reference(task)} {task.Title} — {completedPercent:0.#}% concluído");
         _todoTaskPanel?.Refresh();
     }
 
@@ -2052,20 +2060,18 @@ public partial class MainWindow : Window
     {
         if (task.CompletedAt is not null) return;
         if (task.PausedAt is not null) UnpauseTodoTask(task);
-        var previousDescription = DescribeTodoTask(task, "Em aberto");
         task.CompletedAt = DateTimeOffset.Now;
         SaveTodoTasks();
-        RecordTodoTaskChange("concluída", task, previousDescription, DescribeTodoTask(task, "Concluída"));
+        RecordTodoTaskChange("concluída", task, $"Tarefa concluída: {TodoTaskDisplay.Reference(task)} {task.Title}");
         _todoTaskPanel?.Refresh();
     }
 
     private void ReopenTodoTask(TodoTask task)
     {
         if (task.CompletedAt is null) return;
-        var previousDescription = DescribeTodoTask(task, "Concluída");
         task.CompletedAt = null;
         SaveTodoTasks();
-        RecordTodoTaskChange("reaberta", task, previousDescription, DescribeTodoTask(task, "Em aberto"));
+        RecordTodoTaskChange("reaberta", task, $"Tarefa reaberta: {TodoTaskDisplay.Reference(task)} {task.Title}");
         _todoTaskPanel?.Refresh();
     }
 
@@ -2075,25 +2081,24 @@ public partial class MainWindow : Window
         var dialog = new TodoTaskPauseWindow($"{TodoTaskDisplay.Reference(task)} {task.Title}");
         if (!ShowTodoTaskDialog(dialog)) return;
 
-        var previousDescription = DescribeTodoTask(task, "Em aberto");
         task.PausedAt = DateTimeOffset.Now;
         task.PauseReason = dialog.Reason;
         task.PausedBy = dialog.Responsible;
         SaveTodoTasks();
-        RecordTodoTaskChange("pausada", task, previousDescription, DescribeTodoTask(task, "Em aberto"));
+        RecordTodoTaskChange("pausada", task, $"Tarefa pausada por {task.PausedBy} - Motivo: {task.PauseReason}");
         _todoTaskPanel?.Refresh();
     }
 
     private void UnpauseTodoTask(TodoTask task)
     {
         if (task.PausedAt is null) return;
-        var previousDescription = DescribeTodoTask(task, "Em aberto");
+        var pausedBy = task.PausedBy;
         task.PausedAt = null;
         task.PauseReason = string.Empty;
         task.PausedBy = string.Empty;
         task.LastReminderAt = DateTimeOffset.Now;
         SaveTodoTasks();
-        RecordTodoTaskChange("destravada", task, previousDescription, DescribeTodoTask(task, "Em aberto"));
+        RecordTodoTaskChange("destravada", task, $"Tarefa destravada por {pausedBy}: {TodoTaskDisplay.Reference(task)} {task.Title}");
         _todoTaskPanel?.Refresh();
     }
 
@@ -2116,24 +2121,49 @@ public partial class MainWindow : Window
 
     private void DeleteTodoTask(TodoTask task)
     {
-        var previousDescription = DescribeTodoTask(task, task.CompletedAt is null ? "Em aberto" : "Concluída");
         _todoTasks.Remove(task);
         SaveTodoTasks();
-        RecordTodoTaskChange("excluída", task, previousDescription, "Tarefa removida da lista.");
+        RecordTodoTaskChange("excluída", task, $"Tarefa excluída: {TodoTaskDisplay.Reference(task)} {task.Title}");
         _todoTaskPanel?.Refresh();
     }
 
-    private void RecordTodoTaskChange(string change, TodoTask task, string before, string after)
-        => RecordActionHistory($"Tarefa {change} — {TodoTaskDisplay.Reference(task)} {task.Title}", before, after);
+    private void RecordTodoTaskChange(string change, TodoTask task, string summary)
+        => RecordActionHistory($"Tarefa {change} — {TodoTaskDisplay.Reference(task)} {task.Title}", string.Empty, summary);
 
-    private static string DescribeTodoTask(TodoTask task, string status)
-        => $"Estado: {(task.PausedAt is null ? status : "Pausada")}\nTítulo: {task.Title}\nDescrição: {task.Description}\nCriada: {task.CreatedAt.LocalDateTime:g}" +
-           (task.PausedAt is null ? string.Empty : $"\nPausada em: {task.PausedAt.Value.LocalDateTime:g}\nResponsável pela pausa: {task.PausedBy}\nMotivo da pausa: {task.PauseReason}") +
-           (task.CompletedAt is null ? string.Empty : $"\nConcluída: {task.CompletedAt.Value.LocalDateTime:g}") +
-           $"\nPrioridade: {task.CategoryColor}" +
-           (string.IsNullOrWhiteSpace(task.Urls) ? "" : $"\nURLs: {task.Urls}") +
-           (string.IsNullOrWhiteSpace(task.Attachments) ? "" : $"\nAnexos: {task.Attachments}") +
-           (task.ReminderIntervalMinutes is { } interval ? $"\nLembrete: a cada {interval} minutos" : "\nLembrete: desativado");
+    private static string DescribeTodoTaskChanges(TodoTask before, TodoTask after)
+    {
+        var changes = new List<string>();
+        var taskLabel = $"na tarefa {TodoTaskDisplay.Reference(after)} {after.Title}";
+        if (before.Title != after.Title) changes.Add($"Título alterado para: {after.Title}");
+        if (before.Description != after.Description) changes.Add("Descrição alterada");
+        if (before.CategoryColor != after.CategoryColor) changes.Add($"Prioridade alterada para {after.CategoryColor}");
+        if (before.ReminderIntervalMinutes != after.ReminderIntervalMinutes)
+            changes.Add(after.ReminderIntervalMinutes is { } interval ? $"Lembrete alterado para cada {interval} minutos" : "Lembrete desativado");
+        changes.AddRange(DescribeLineChanges(before.Attachments, after.Attachments, "anexo", taskLabel));
+        changes.AddRange(DescribeLineChanges(before.Urls, after.Urls, "URL", taskLabel));
+
+        var beforeByTitle = before.Checklist.GroupBy(item => item.Title, StringComparer.CurrentCultureIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.CurrentCultureIgnoreCase);
+        var afterByTitle = after.Checklist.GroupBy(item => item.Title, StringComparer.CurrentCultureIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.CurrentCultureIgnoreCase);
+        changes.AddRange(after.Checklist.Where(item => !beforeByTitle.ContainsKey(item.Title)).Select(item => $"Etapa adicionada: {item.Title}"));
+        changes.AddRange(before.Checklist.Where(item => !afterByTitle.ContainsKey(item.Title)).Select(item => $"Etapa removida: {item.Title}"));
+        foreach (var item in after.Checklist.Where(item => beforeByTitle.ContainsKey(item.Title)))
+        {
+            var previous = beforeByTitle[item.Title];
+            if (previous.Weight != item.Weight) changes.Add($"Peso da etapa \"{item.Title}\" alterado para {item.Weight:0.#}%");
+            if (previous.IsCompleted != item.IsCompleted) changes.Add($"Etapa \"{item.Title}\" {(item.IsCompleted ? "concluída" : "reaberta")}");
+        }
+        return changes.Count == 0 ? "Nenhuma alteração registrada" : string.Join(Environment.NewLine, changes);
+    }
+
+    private static IEnumerable<string> DescribeLineChanges(string before, string after, string itemType, string taskLabel)
+    {
+        var oldItems = before.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).Select(item => item.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var newItems = after.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).Select(item => item.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return newItems.Except(oldItems).Select(item => $"Adicionado {itemType} {item} {taskLabel}")
+            .Concat(oldItems.Except(newItems).Select(item => $"Removido {itemType} {item} {taskLabel}"));
+    }
 
     private void SaveTodoTasks() => _todoTaskStore.SaveAll(_todoTasks.Select(ToTodoTaskEntry));
 
@@ -2318,6 +2348,7 @@ public partial class MainWindow : Window
                     new HistoryAudioPlaybackRequest(entry.Id, true),
                     HistoryEntryDisplayPolicy.IsApplicationLaunch(entry.CommandName, entry.BeforeValue, entry.AfterValue),
                     HistoryEntryDisplayPolicy.IsWorkflowExecution(entry.CommandName),
+                    entry.CommandName.StartsWith("Tarefa ", StringComparison.OrdinalIgnoreCase),
                     entry.IsFailure,
                     entry.FailureDetails ?? string.Empty,
                     entry.CommandName.EndsWith(DraftStack.SavedCommandName, StringComparison.Ordinal),
@@ -2495,6 +2526,7 @@ public partial class MainWindow : Window
         HistoryAudioPlaybackRequest TranscriptionAudioRequest,
         bool IsApplicationLaunch,
         bool IsWorkflowExecution,
+        bool IsTaskAction,
         bool IsFailure,
         string FailureDetails,
         bool IsDraftSaved,
@@ -2822,7 +2854,7 @@ public partial class MainWindow : Window
                 {
                     CloseJeyProcessingNotification();
                     var commandName = GetVoiceCommandName(voiceMatch.CommandId);
-                    HandleHotkeyAsync(voiceMatch.CommandId, new VoiceCommandInvocation(commandName, transcript, audioWav, debugInfo, voiceMatch.Variables));
+                    _ = HandleHotkeyAsync(voiceMatch.CommandId, new VoiceCommandInvocation(commandName, transcript, audioWav, debugInfo, voiceMatch.Variables));
                     return;
                 }
 
@@ -4222,6 +4254,80 @@ public partial class MainWindow : Window
             await RunCustomWorkflowAsync(customShortcut, dynamicVariables: dynamicVariables);
     }
 
+    internal async Task<JmdCliResponse> ExecuteCliRequestAsync(JmdCliRequest request)
+    {
+        if (!Dispatcher.CheckAccess())
+            return await Dispatcher.InvokeAsync(() => ExecuteCliRequestAsync(request)).Task.Unwrap();
+        if (request.Operation == "list")
+        {
+            var lines = _commands.OrderBy(command => command.Name, StringComparer.CurrentCultureIgnoreCase)
+                .Select((command, index) => request.Verbose
+                    ? $"{index + 1}. {command.Name}{Environment.NewLine}   Atalho: {command.Shortcut}{Environment.NewLine}   Estado: {(_settings.DisabledCommands.Contains(command.Id) ? "desativado" : "ativo")}{Environment.NewLine}   {command.Description}"
+                    : $"{index + 1}. {command.Name} [{command.Shortcut}]");
+            return new JmdCliResponse(true, string.Join(Environment.NewLine, lines), 0);
+        }
+        if (request.Operation == "invalid")
+            return new JmdCliResponse(false, request.Query, 2);
+        if ((request.Operation is "search" or "execute" or "run") && string.IsNullOrWhiteSpace(request.Query) && request.Operation != "run")
+            return new JmdCliResponse(false, "Informe o texto para a busca. Use jmd -help para ver as opções.", 2);
+        if (request.Operation is not ("search" or "execute" or "run" or "complete"))
+            return new JmdCliResponse(false, "Opção da CLI desconhecida. Use jmd -help.", 2);
+
+        var results = request.Operation == "complete"
+            ? _commands.Where(command => command.Name.StartsWith(request.Query, StringComparison.CurrentCultureIgnoreCase)).OrderBy(command => command.Name, StringComparer.CurrentCultureIgnoreCase).ToList()
+            : string.IsNullOrWhiteSpace(request.Query)
+                ? _commands.OrderBy(command => command.Name, StringComparer.CurrentCultureIgnoreCase).ToList()
+                : GetCliSearchResults(request.Query);
+        if (request.Operation == "complete")
+            return new JmdCliResponse(true, string.Join(Environment.NewLine, results.Select(command => command.Name)), 0);
+        if (results.Count == 0)
+            return new JmdCliResponse(false, $"Comando não encontrado: {request.Query}", 1);
+        if (request.Operation == "search")
+            return new JmdCliResponse(true, string.Join(Environment.NewLine, results.Select((command, index) => $"{index + 1}. {command.Name} [{command.Shortcut}]")), 0);
+
+        var selectedIndex = JmdCommandLinePolicy.ResolveSelectedIndex(request.Operation, request.Index);
+        if (!JmdCommandLinePolicy.IsValidSelectedIndex(selectedIndex, results.Count))
+            return new JmdCliResponse(false, $"Não existe resultado número {request.Index}.", 1);
+        var command = results[selectedIndex];
+        if (_settings.DisabledCommands.Contains(command.Id))
+            return new JmdCliResponse(false, $"O comando ‘{command.Name}’ está desativado.", 2);
+
+        var dynamicMatch = FindTypedWorkflowMatch(request.Query);
+        Hide();
+        var executionState = new CliCommandExecutionState();
+        var previousExecutionState = _cliCommandExecution.Value;
+        _cliCommandExecution.Value = executionState;
+        bool succeeded;
+        try
+        {
+            succeeded = await HandleHotkeyAsync(command.Id,
+                dynamicVariables: dynamicMatch?.CommandId == command.Id ? dynamicMatch.Variables : null);
+        }
+        finally { _cliCommandExecution.Value = previousExecutionState; }
+        if (!succeeded || executionState.Failed)
+            return new JmdCliResponse(false, $"Falha ao executar o comando: {command.Name}", 2);
+        return new JmdCliResponse(true, $"Comando acionado: {command.Name}", 0);
+    }
+
+    private List<CommandRow> GetCliSearchResults(string query)
+    {
+        var exactWorkflow = _settings.CustomShortcuts.FirstOrDefault(shortcut =>
+            string.Equals(shortcut.Name.Trim(), query.Trim(), StringComparison.CurrentCultureIgnoreCase));
+        SearchBox.Text = query.Trim();
+        var results = CommandsList.Items.OfType<CommandRow>().ToList();
+        if (exactWorkflow is not null && _commands.FirstOrDefault(command => command.Id == exactWorkflow.Id) is { } exactCommand)
+        {
+            results.Remove(exactCommand);
+            results.Insert(0, exactCommand);
+        }
+        else if (FindTypedWorkflowMatch(query) is { } dynamicMatch && _commands.FirstOrDefault(command => command.Id == dynamicMatch.CommandId) is { } dynamicCommand)
+        {
+            results.Remove(dynamicCommand);
+            results.Insert(0, dynamicCommand);
+        }
+        return results;
+    }
+
     private async Task TransformSelectionFromPaletteAsync()
     {
         if (_previousWindow == IntPtr.Zero)
@@ -4381,9 +4487,15 @@ public partial class MainWindow : Window
     private void Notify(string title, string message, bool success, long? historyId = null,
         TimeSpan? displayDuration = null)
     {
+        if (!success && _cliCommandExecution.Value is { } executionState) executionState.Failed = true;
         SetStatus(message, success);
         TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications, historyId,
             displayDuration ?? TimeSpan.FromSeconds(4));
+    }
+
+    private sealed class CliCommandExecutionState
+    {
+        public bool Failed { get; set; }
     }
 
     private void ShowJeyProcessingNotification(string message)

@@ -4,6 +4,42 @@ namespace JMD.Core;
 
 public sealed record TodoTaskChecklistEntry(string Title, decimal Weight, bool IsCompleted = false);
 
+public static class TodoTaskChecklistWeightPolicy
+{
+    public static IReadOnlyList<decimal> RebalanceAfterEdit(IReadOnlyList<decimal> weights, int changedIndex, decimal requestedWeight)
+    {
+        if (changedIndex < 0 || changedIndex >= weights.Count || weights.Count == 0)
+            return weights.ToArray();
+
+        var result = weights.ToArray();
+        var prefixTotal = result.Take(changedIndex).Sum();
+        var maximumChangedWeight = changedIndex == result.Length - 1 ? 100m : Math.Max(0m, 100m - prefixTotal);
+        var changedWeight = Math.Clamp(requestedWeight, 0m, maximumChangedWeight);
+        result[changedIndex] = changedWeight;
+
+        var affectedIndices = changedIndex == result.Length - 1
+            ? Enumerable.Range(0, changedIndex).ToArray()
+            : Enumerable.Range(changedIndex + 1, result.Length - changedIndex - 1).ToArray();
+        if (affectedIndices.Length == 0)
+        {
+            result[changedIndex] = 100m;
+            return result;
+        }
+
+        var fixedTotal = changedIndex == result.Length - 1
+            ? changedWeight
+            : result.Take(changedIndex + 1).Sum();
+        var remainder = Math.Max(0m, 100m - fixedTotal);
+        var share = decimal.Floor(remainder / affectedIndices.Length * 100m) / 100m;
+        for (var i = 0; i < affectedIndices.Length; i++)
+            result[affectedIndices[i]] = i == affectedIndices.Length - 1
+                ? remainder - share * (affectedIndices.Length - 1)
+                : share;
+
+        return result;
+    }
+}
+
 public sealed record TodoTaskEntry(
     string Id,
     string Title,

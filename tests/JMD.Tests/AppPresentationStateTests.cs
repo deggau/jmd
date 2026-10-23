@@ -21,6 +21,68 @@ public sealed class AppPresentationStateTests
     }
 
     [Theory]
+    [MemberData(nameof(CommandLineInputs))]
+    public void Command_line_arguments_parse_to_help_list_or_search(string[] args, JmdCommandLineRequest expected)
+        => Assert.Equal(expected, JmdCommandLinePolicy.Parse(args));
+
+    public static IEnumerable<object[]> CommandLineInputs =>
+    [
+        [Array.Empty<string>(), new JmdCommandLineRequest("help")],
+        [new[] { "-help" }, new JmdCommandLineRequest("help")],
+        [new[] { "--ls" }, new JmdCommandLineRequest("list")],
+        [new[] { "-LS" }, new JmdCommandLineRequest("list")],
+        [new[] { "-ls", "--verbose" }, new JmdCommandLineRequest("list", Verbose: true)],
+        [new[] { "-search", "upper", "case" }, new JmdCommandLineRequest("search", "upper case")],
+        [new[] { "-run", "2", "UpperCase" }, new JmdCommandLineRequest("run", "UpperCase", 2)],
+        [new[] { "-run", "2" }, new JmdCommandLineRequest("run", Index: 2)],
+        [new[] { "-run", "zero" }, new JmdCommandLineRequest("invalid", "Use -run <número> [texto da busca].")],
+        [new[] { "-complete", "Upper" }, new JmdCommandLineRequest("complete", "Upper")],
+        [new[] { "-install-completion" }, new JmdCommandLineRequest("installCompletion")],
+        [new[] { "-uninstall-completion" }, new JmdCommandLineRequest("uninstallCompletion")],
+        [new[] { "formatar", "clipboard" }, new JmdCommandLineRequest("execute", "formatar clipboard")]
+    ];
+
+    [Theory]
+    [InlineData("run", 1, 0)]
+    [InlineData("run", 3, 2)]
+    [InlineData("execute", null, 0)]
+    [InlineData("search", null, 0)]
+    [InlineData("RUN", 2, 1)]
+    public void Command_line_resolves_one_based_run_numbers_to_zero_based_result_indexes(
+        string operation, int? requestedIndex, int expectedIndex)
+        => Assert.Equal(expectedIndex, JmdCommandLinePolicy.ResolveSelectedIndex(operation, requestedIndex));
+
+    [Theory]
+    [InlineData(0, 3, true)]
+    [InlineData(-1, 3, false)]
+    [InlineData(2, 3, true)]
+    [InlineData(3, 3, false)]
+    [InlineData(0, 0, false)]
+    public void Command_line_checks_selected_result_against_available_results(
+        int selectedIndex, int resultCount, bool expected)
+        => Assert.Equal(expected, JmdCommandLinePolicy.IsValidSelectedIndex(selectedIndex, resultCount));
+
+    [Theory]
+    [InlineData("-search", "", "search", "")]
+    [InlineData("--search", "texto com espaço", "search", "texto com espaço")]
+    [InlineData("-complete", "Upper", "complete", "Upper")]
+    [InlineData("-run", "01", "run", "")]
+    public void Command_line_keeps_empty_queries_and_completion_prefixes_intact(
+        string option, string value, string expectedOperation, string expectedQuery)
+    {
+        var request = JmdCommandLinePolicy.Parse([option, value]);
+        Assert.Equal(expectedOperation, request.Operation);
+        Assert.Equal(expectedQuery, request.Query);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    public void Command_line_rejects_invalid_run_indexes(string index)
+        => Assert.Equal("invalid", JmdCommandLinePolicy.Parse(["-run", index]).Operation);
+
+    [Theory]
     [InlineData("--update", true)]
     [InlineData("--UPDATE", true)]
     [InlineData("--settings", false)]

@@ -37,6 +37,48 @@ public static class AppStartupOptions
         => arguments.Any(argument => string.Equals(argument, UpdateArgument, StringComparison.OrdinalIgnoreCase));
 }
 
+public sealed record JmdCommandLineRequest(string Operation, string Query = "", int? Index = null, bool Verbose = false);
+
+public static class JmdCommandLinePolicy
+{
+    public static int ResolveSelectedIndex(string operation, int? oneBasedIndex)
+        => string.Equals(operation, "run", StringComparison.OrdinalIgnoreCase)
+            ? oneBasedIndex.GetValueOrDefault() - 1
+            : 0;
+
+    public static bool IsValidSelectedIndex(int selectedIndex, int resultCount)
+        => selectedIndex >= 0 && selectedIndex < resultCount;
+
+    public static JmdCommandLineRequest Parse(IEnumerable<string> arguments)
+    {
+        var args = arguments.ToArray();
+        if (args.Length == 0 || args.Any(argument =>
+                argument.Equals("-help", StringComparison.OrdinalIgnoreCase) ||
+                argument.Equals("--help", StringComparison.OrdinalIgnoreCase) ||
+                argument.Equals("-h", StringComparison.OrdinalIgnoreCase)))
+            return new JmdCommandLineRequest("help");
+        if (args[0].Equals("-ls", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--ls", StringComparison.OrdinalIgnoreCase))
+            return args.Length == 1
+                ? new JmdCommandLineRequest("list")
+                : args.Length == 2 && args[1].Equals("--verbose", StringComparison.OrdinalIgnoreCase)
+                    ? new JmdCommandLineRequest("list", Verbose: true)
+                    : new JmdCommandLineRequest("invalid", "Use -ls [--verbose].");
+        if (args[0].Equals("-search", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--search", StringComparison.OrdinalIgnoreCase))
+            return new JmdCommandLineRequest("search", string.Join(' ', args.Skip(1)));
+        if (args[0].Equals("-run", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--run", StringComparison.OrdinalIgnoreCase))
+            return args.Length >= 2 && int.TryParse(args[1], NumberStyles.None, CultureInfo.InvariantCulture, out var index) && index > 0
+                ? new JmdCommandLineRequest("run", string.Join(' ', args.Skip(2)), index)
+                : new JmdCommandLineRequest("invalid", "Use -run <número> [texto da busca].");
+        if (args[0].Equals("-complete", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--complete", StringComparison.OrdinalIgnoreCase))
+            return new JmdCommandLineRequest("complete", string.Join(' ', args.Skip(1)));
+        if (args.Length == 1 && (args[0].Equals("-install-completion", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--install-completion", StringComparison.OrdinalIgnoreCase)))
+            return new JmdCommandLineRequest("installCompletion");
+        if (args.Length == 1 && (args[0].Equals("-uninstall-completion", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--uninstall-completion", StringComparison.OrdinalIgnoreCase)))
+            return new JmdCommandLineRequest("uninstallCompletion");
+        return new JmdCommandLineRequest("execute", string.Join(' ', args));
+    }
+}
+
 public static class ShortcutDefaults
 {
     public static string ForCommand(string commandId) => commandId switch

@@ -2,6 +2,9 @@ using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text;
+using System.IO.Pipes;
+using System.Diagnostics;
 using System.Windows;
 using JMD.Core;
 using Forms = System.Windows.Forms;
@@ -16,10 +19,22 @@ public partial class App : System.Windows.Application
     private MainWindow? _mainWindow;
     private EventWaitHandle? _updateSignal;
     private CancellationTokenSource? _updateListenerCancellation;
+    private CancellationTokenSource? _cliServerCancellation;
+    private const string CliPipeName = "JMD.CLI.v1";
+    private const string CliFlag = "--cli";
+    private const string BackgroundFlag = "--background";
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.FirstOrDefault() == CliFlag)
+        {
+            AttachParentConsole();
+            var exitCode = await RunCliAsync(e.Args.Skip(1).ToArray());
+            Shutdown(exitCode);
+            return;
+        }
+        var backgroundOnStartup = e.Args.Contains(BackgroundFlag, StringComparer.OrdinalIgnoreCase);
         var updateOnStartup = AppStartupOptions.StartsUpdate(e.Args);
         _updateSignal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\JMD.UpdateRequested");
         _instanceMutex = new Mutex(true, @"Local\JMD.SingleInstance", out var isFirstInstance);
@@ -86,13 +101,180 @@ public partial class App : System.Windows.Application
         _trayIcon.BalloonTipClicked += (_, _) =>
             _mainWindow.Dispatcher.BeginInvoke(new Action(() => _mainWindow.ShowHistory(activeBalloonHistoryId)));
         StartUpdateSignalListener();
+        StartCliServer();
         if (updateOnStartup)
-            _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.UpdateFromCommandLineAsync()));
+            _ = _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.UpdateFromCommandLineAsync()));
         else if (openSettingsOnStartup)
-            _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowShortcutSettings));
-        else
-            _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowPalette));
+            _ = _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowShortcutSettings));
+        else if (!backgroundOnStartup)
+            _ = _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowPalette));
     }
+
+    private async Task<int> RunCliAsync(string[] arguments)
+    {
+        var parsed = JmdCommandLinePolicy.Parse(arguments);
+        if (parsed.Operation == "help")
+        {
+            Console.WriteLine("Uso: jmd <comando> | jmd -ls | jmd -help");
+            Console.WriteLine("  jmd -ls --verbose             Lista descrições, atalhos e comandos desativados.");
+            Console.WriteLine("  jmd -search <texto>           Mostra resultados numerados sem executar.");
+            Console.WriteLine("  jmd -run <n> [texto]          Executa o item n da lista ou dos resultados de busca.");
+            Console.WriteLine("  jmd <texto>  Procura comandos com as regras da busca da paleta e executa o primeiro resultado.");
+            Console.WriteLine("  jmd -ls      Lista os comandos disponíveis.");
+            Console.WriteLine("  jmd -install-completion       Ativa autocomplete no perfil do PowerShell.");
+            Console.WriteLine("  jmd -uninstall-completion     Remove o autocomplete do perfil do PowerShell.");
+            Console.WriteLine("  jmd -help    Exibe estas dicas.");
+            return 0;
+        }
+
+        if (parsed.Operation is "installCompletion" or "uninstallCompletion")
+        {
+            var result = UpdatePowerShellCompletion(parsed.Operation == "installCompletion");
+            Console.WriteLine(result.Output);
+            return result.ExitCode;
+        }
+
+        var request = new JmdCliRequest(parsed.Operation, parsed.Query, parsed.Index, parsed.Verbose);
+        try
+        {
+            var response = await SendCliRequestAsync(request, TimeSpan.FromMinutes(5));
+            Console.WriteLine(response.Output);
+            return response.ExitCode;
+        }
+        catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException or OperationCanceledException or System.ComponentModel.Win32Exception or JsonException)
+        {
+            Console.Error.WriteLine($"Não foi possível iniciar ou contatar o JMD: {exception.Message}");
+            return 2;
+        }
+    }
+
+    private static JmdCliResponse UpdatePowerShellCompletion(bool install)
+    {
+        var completionScript = Path.Combine(AppContext.BaseDirectory, "Assets", "JMD.PowerShellCompletion.ps1");
+        if (install && !File.Exists(completionScript))
+            return new JmdCliResponse(false, "O script de autocomplete não foi instalado junto com o JMD.", 2);
+        var escapedScript = completionScript.Replace("'", "''", StringComparison.Ordinal);
+        var profileLine = $"if (Test-Path -LiteralPath '{escapedScript}') {{ . '{escapedScript}' }}";
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var profiles = new[]
+        {
+            Path.Combine(documents, "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+            Path.Combine(documents, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1")
+        };
+        try
+        {
+            foreach (var profile in profiles)
+            {
+                if (install)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(profile)!);
+                    var lines = File.Exists(profile) ? File.ReadAllLines(profile) : [];
+                    if (!lines.Contains(profileLine, StringComparer.OrdinalIgnoreCase))
+                    {
+                        var updatedLines = lines.Append(profileLine);
+                        File.WriteAllLines(profile, updatedLines, new UTF8Encoding(true));
+                    }
+                }
+                else if (File.Exists(profile))
+                {
+                    var lines = File.ReadAllLines(profile).Where(line => !string.Equals(line.Trim(), profileLine, StringComparison.OrdinalIgnoreCase));
+                    File.WriteAllLines(profile, lines, new UTF8Encoding(true));
+                }
+            }
+            return new JmdCliResponse(true, install
+                ? "Autocomplete do JMD instalado nos perfis do PowerShell. Abra um novo terminal para usar Tab."
+                : "Autocomplete do JMD removido dos perfis do PowerShell.", 0);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return new JmdCliResponse(false, $"Não foi possível atualizar o perfil do PowerShell: {exception.Message}", 2);
+        }
+    }
+
+    private static async Task<JmdCliResponse> SendCliRequestAsync(JmdCliRequest request, TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        var response = await TrySendCliRequestAsync(request, cancellation.Token);
+        if (response is null)
+        {
+            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("Não foi possível localizar o executável do JMD.");
+            var startInfo = new ProcessStartInfo(executable) { UseShellExecute = true, WorkingDirectory = AppContext.BaseDirectory, Arguments = BackgroundFlag };
+            _ = Process.Start(startInfo) ?? throw new InvalidOperationException("Não foi possível iniciar o JMD em segundo plano.");
+
+            var deadline = Stopwatch.StartNew();
+            while (deadline.Elapsed < timeout)
+            {
+                cancellation.Token.ThrowIfCancellationRequested();
+                response = await TrySendCliRequestAsync(request, cancellation.Token);
+                if (response is not null) return response;
+                await Task.Delay(150, cancellation.Token);
+            }
+            throw new TimeoutException("O JMD não respondeu dentro do tempo esperado.");
+        }
+        return response!;
+    }
+
+    private static async Task<JmdCliResponse?> TrySendCliRequestAsync(JmdCliRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var pipe = new NamedPipeClientStream(".", CliPipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(250, cancellationToken);
+            using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
+            await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+            await writer.WriteLineAsync(JsonSerializer.Serialize(request).AsMemory(), cancellationToken);
+            var responseLine = await reader.ReadLineAsync(cancellationToken);
+            return responseLine is null
+                ? new JmdCliResponse(false, "O JMD encerrou a conexão sem responder.", 1)
+                : JsonSerializer.Deserialize<JmdCliResponse>(responseLine) ?? new JmdCliResponse(false, "Resposta inválida do JMD.", 1);
+        }
+        catch (TimeoutException) { return null; }
+        catch (IOException) { return null; }
+        catch (JsonException) { return new JmdCliResponse(false, "Resposta inválida do JMD.", 1); }
+    }
+
+    private void StartCliServer()
+    {
+        _cliServerCancellation = new CancellationTokenSource();
+        var cancellationToken = _cliServerCancellation.Token;
+        _ = Task.Run(async () =>
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await using var pipe = new NamedPipeServerStream(CliPipeName, PipeDirection.InOut, 1,
+                        PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                    await pipe.WaitForConnectionAsync(cancellationToken);
+                    using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
+                    await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+                    var line = await reader.ReadLineAsync(cancellationToken);
+                    var request = line is null ? null : JsonSerializer.Deserialize<JmdCliRequest>(line);
+                    var response = request is null
+                        ? new JmdCliResponse(false, "Solicitação inválida.", 1)
+                        : await _mainWindow!.ExecuteCliRequestAsync(request);
+                    await writer.WriteLineAsync(JsonSerializer.Serialize(response).AsMemory(), cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    // Keep the local command endpoint available after a malformed request.
+                }
+            }
+        }, cancellationToken);
+    }
+
+    private static void AttachParentConsole()
+    {
+        if (!AttachConsole(uint.MaxValue)) return;
+        Console.OutputEncoding = new UTF8Encoding(false);
+        Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+        Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AttachConsole(uint processId);
 
     private void StartUpdateSignalListener()
     {
@@ -133,6 +315,8 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _cliServerCancellation?.Cancel();
+        _cliServerCancellation?.Dispose();
         _updateListenerCancellation?.Cancel();
         _updateListenerCancellation?.Dispose();
         _updateSignal?.Dispose();
@@ -149,6 +333,9 @@ public partial class App : System.Windows.Application
     }
 
 }
+
+internal sealed record JmdCliRequest(string Operation, string Query, int? Index = null, bool Verbose = false);
+internal sealed record JmdCliResponse(bool Success, string Output, int ExitCode);
 
 internal sealed class UserSettings
 {
