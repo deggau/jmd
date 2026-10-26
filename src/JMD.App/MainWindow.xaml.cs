@@ -247,11 +247,8 @@ public partial class MainWindow : Window
             !ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version))
             return;
 
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
-        {
-            if (IsVisible && _settings.HideFromScreenCapture && !TrySetCaptureExcluded(this, true))
-                SetStatus("O Windows não aceitou ocultar a janela do JMD nas capturas.", false);
-        }));
+        if (!TryRefreshCaptureExclusion(this))
+            SetStatus("O Windows não aceitou ocultar a janela do JMD nas capturas.", false);
     }
 
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
@@ -263,9 +260,6 @@ public partial class MainWindow : Window
             ApplyRoundedWindowRegion();
             SizeChanged += (_, _) => Dispatcher.BeginInvoke(new Action(ApplyRoundedWindowRegion));
         }
-        if (ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version) &&
-            _settings.HideFromScreenCapture && !TrySetCaptureExcluded(true))
-            SetStatus("A preferência para ocultar o JMD foi carregada, mas o Windows não aceitou a solicitação.", false);
         _hotkeys = new GlobalHotkeyService(source);
         _hotkeys.HotkeyPressed += id => Dispatcher.BeginInvoke(new Action(() => _ = HandleHotkeyAsync(id)));
         RegisterConfiguredShortcuts();
@@ -2393,6 +2387,7 @@ public partial class MainWindow : Window
                     new HistoryAudioPlaybackRequest(entry.Id, true),
                     HistoryEntryDisplayPolicy.IsApplicationLaunch(entry.CommandName, entry.BeforeValue, entry.AfterValue),
                     HistoryEntryDisplayPolicy.IsWorkflowExecution(entry.CommandName),
+                    HistoryEntryDisplayPolicy.IsVersionUpdate(entry.CommandName),
                     entry.CommandName.StartsWith("Tarefa ", StringComparison.OrdinalIgnoreCase),
                     entry.IsFailure,
                     entry.FailureDetails ?? string.Empty,
@@ -2571,12 +2566,16 @@ public partial class MainWindow : Window
         HistoryAudioPlaybackRequest TranscriptionAudioRequest,
         bool IsApplicationLaunch,
         bool IsWorkflowExecution,
+        bool IsVersionUpdate,
         bool IsTaskAction,
         bool IsFailure,
         string FailureDetails,
         bool IsDraftSaved,
         bool IsDraftRestored,
-        bool IsNotificationTarget);
+        bool IsNotificationTarget)
+    {
+        public string VersionChangeDisplay => $"v{BeforeValue} → v{AfterValue}";
+    }
 
     private static string FormatSourceDisplay(string? applicationName, string? windowTitle)
     {
@@ -3153,20 +3152,22 @@ public partial class MainWindow : Window
 
     internal void PrepareWindowForCaptureExclusion(Window window)
     {
-        window.SourceInitialized += (_, _) =>
+        window.IsVisibleChanged += (_, e) =>
         {
-            if (ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version) &&
-                _settings.HideFromScreenCapture && !TrySetCaptureExcluded(window, true))
+            if (e.NewValue is true && _settings.HideFromScreenCapture &&
+                ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version) &&
+                !TryRefreshCaptureExclusion(window))
                 SetStatus("O Windows não aceitou ocultar uma janela do JMD nas capturas.", false);
         };
     }
 
-    private static bool TrySetCaptureExcluded(Window window, bool enabled)
+    private static bool TryRefreshCaptureExclusion(Window window)
     {
-        if (enabled && !ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version)) return false;
+        if (!ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version)) return false;
         var handle = new WindowInteropHelper(window).Handle;
-        return handle != IntPtr.Zero && SetWindowDisplayAffinity(handle,
-            enabled ? WindowDisplayAffinityExcludeFromCapture : WindowDisplayAffinityNone);
+        return handle != IntPtr.Zero &&
+               SetWindowDisplayAffinity(handle, WindowDisplayAffinityNone) &&
+               SetWindowDisplayAffinity(handle, WindowDisplayAffinityExcludeFromCapture);
     }
 
     private void VoiceWakeWordToggle_Changed(object sender, RoutedEventArgs e)
@@ -4146,6 +4147,7 @@ public partial class MainWindow : Window
             if (startedProcess is null)
                 throw new InvalidOperationException("O Windows não iniciou o instalador.");
             installerStarted = true;
+            RecordActionHistory("Atualização do JMD", GetInstalledVersion(), version);
             UpdateProgressText.Text = "Checksum válido. Iniciando o instalador…";
             PrepareForExit();
             System.Windows.Application.Current.Shutdown();

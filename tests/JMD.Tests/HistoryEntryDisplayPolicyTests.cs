@@ -28,4 +28,13 @@ public sealed class HistoryEntryDisplayPolicyTests
     {
         Assert.Equal(expected, HistoryEntryDisplayPolicy.IsWorkflowExecution(commandName));
     }
+
+    [Theory]
+    [InlineData("Atualização do JMD", true)]
+    [InlineData("Ativação por voz (Jey) - Atualização do JMD", false)]
+    [InlineData("Verificar atualizações JMD", false)]
+    public void IsVersionUpdate_Recognizes_version_update_history_rows(string commandName, bool expected)
+    {
+        Assert.Equal(expected, HistoryEntryDisplayPolicy.IsVersionUpdate(commandName));
+    }
 }

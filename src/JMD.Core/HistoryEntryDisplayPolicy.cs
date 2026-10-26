@@ -23,4 +23,7 @@ public static class HistoryEntryDisplayPolicy
         return actionName.StartsWith("Executar ", StringComparison.OrdinalIgnoreCase) ||
                actionName.StartsWith("Testar ", StringComparison.OrdinalIgnoreCase);
     }
+
+    public static bool IsVersionUpdate(string commandName)
+        => commandName.StartsWith("Atualização do JMD", StringComparison.OrdinalIgnoreCase);
 }

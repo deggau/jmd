@@ -289,6 +289,18 @@
                               </Style>
                             </TextBlock.Style>
                           </TextBlock>
+                          <TextBlock Text="{Binding VersionChangeDisplay}" Foreground="White" FontSize="13" Margin="0,0,0,8">
+                            <TextBlock.Style>
+                              <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding IsVersionUpdate}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </TextBlock.Style>
+                          </TextBlock>
                           <StackPanel Margin="0,0,0,8">
                             <StackPanel.Style>
                               <Style TargetType="StackPanel">
@@ -433,6 +445,9 @@
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
                                   <DataTrigger Binding="{Binding IsWorkflowExecution}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
+                                  <DataTrigger Binding="{Binding IsVersionUpdate}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
                                   <DataTrigger Binding="{Binding IsTaskAction}" Value="True">
