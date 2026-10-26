@@ -63,8 +63,13 @@ public static class JmdCommandLinePolicy
                 : args.Length == 2 && args[1].Equals("--verbose", StringComparison.OrdinalIgnoreCase)
                     ? new JmdCommandLineRequest("list", Verbose: true)
                     : new JmdCommandLineRequest("invalid", "Use -ls [--verbose].");
-        if (args[0].Equals("-search", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--search", StringComparison.OrdinalIgnoreCase))
-            return new JmdCommandLineRequest("search", string.Join(' ', args.Skip(1)));
+        if (args[0].Equals("-search", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--search", StringComparison.OrdinalIgnoreCase) || args[0].Equals("-s", StringComparison.OrdinalIgnoreCase))
+        {
+            var searchArguments = args.Skip(1).ToArray();
+            var verbose = searchArguments.Any(argument => argument.Equals("--verbose", StringComparison.OrdinalIgnoreCase));
+            var query = string.Join(' ', searchArguments.Where(argument => !argument.Equals("--verbose", StringComparison.OrdinalIgnoreCase)));
+            return new JmdCommandLineRequest("search", query, Verbose: verbose);
+        }
         if (args[0].Equals("-run", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--run", StringComparison.OrdinalIgnoreCase))
             return args.Length >= 2 && int.TryParse(args[1], NumberStyles.None, CultureInfo.InvariantCulture, out var index) && index > 0
                 ? new JmdCommandLineRequest("run", string.Join(' ', args.Skip(2)), index)

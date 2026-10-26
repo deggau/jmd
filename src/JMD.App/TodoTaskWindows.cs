@@ -101,19 +101,34 @@ internal sealed class TodoTaskReportWindow : Window
         foreach (var dayGroup in visible.GroupBy(item => item.LocalTime.Date).OrderBy(group => group.Key))
         {
             _report.Children.Add(new TextBlock { Text = dayGroup.Key.ToString("dddd, dd 'de' MMMM 'de' yyyy", System.Globalization.CultureInfo.CurrentCulture), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 8) });
-            foreach (var period in dayGroup.GroupBy(item => item.LocalTime.Hour < 12 && item.LocalTime.Hour >= 5 ? "Manhã" : item.LocalTime.Hour < 18 && item.LocalTime.Hour >= 12 ? "Tarde" : "Noite").OrderBy(group => group.Min(item => item.LocalTime)))
+            var periods = new[] { "Manhã", "Tarde", "Noite" };
+            var columns = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+            foreach (var _ in periods) columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var periodIndex = 0; periodIndex < periods.Length; periodIndex++)
             {
-                _report.Children.Add(new TextBlock { Text = period.Key, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 12, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 4, 0, 4) });
-                foreach (var item in period.OrderBy(value => value.LocalTime))
+                var periodName = periods[periodIndex];
+                var periodPanel = new StackPanel { Margin = new Thickness(periodIndex == 0 ? 0 : 5, 0, periodIndex == periods.Length - 1 ? 0 : 5, 0) };
+                periodPanel.Children.Add(new TextBlock { Text = periodName, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 12, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 4, 0, 4) });
+                var periodEvents = dayGroup.Where(item =>
+                {
+                    var hour = item.LocalTime.Hour;
+                    var itemPeriod = hour >= 5 && hour < 12 ? "Manhã" : hour >= 12 && hour < 18 ? "Tarde" : "Noite";
+                    return itemPeriod == periodName;
+                }).OrderBy(item => item.LocalTime).ToList();
+                foreach (var item in periodEvents)
                 {
                     var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 5) };
                     var content = new StackPanel();
                     content.Children.Add(new TextBlock { Text = $"{item.LocalTime:HH:mm}  ·  {item.Entry.CommandName}", Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
                     if (!string.IsNullOrWhiteSpace(item.Entry.AfterValue))
                         content.Children.Add(new TextBlock { Text = item.Entry.AfterValue, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
-                    card.Child = content; _report.Children.Add(card);
+                    card.Child = content; periodPanel.Children.Add(card);
                 }
+                if (periodEvents.Count == 0)
+                    periodPanel.Children.Add(new TextBlock { Text = "—", Foreground = new SolidColorBrush(Color.FromRgb(100, 104, 114)), FontSize = 12, Margin = new Thickness(2, 5, 0, 0) });
+                Grid.SetColumn(periodPanel, periodIndex); columns.Children.Add(periodPanel);
             }
+            _report.Children.Add(columns);
         }
         if (visible.Count == 0) _report.Children.Add(new TextBlock { Text = "Nenhuma atividade de tarefa neste período.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 16, 0, 0) });
     }

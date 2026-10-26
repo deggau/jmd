@@ -33,6 +33,9 @@ public sealed class AppPresentationStateTests
         [new[] { "-LS" }, new JmdCommandLineRequest("list")],
         [new[] { "-ls", "--verbose" }, new JmdCommandLineRequest("list", Verbose: true)],
         [new[] { "-search", "upper", "case" }, new JmdCommandLineRequest("search", "upper case")],
+        [new[] { "-s", "upper", "case" }, new JmdCommandLineRequest("search", "upper case")],
+        [new[] { "-search", "--verbose", "upper", "case" }, new JmdCommandLineRequest("search", "upper case", Verbose: true)],
+        [new[] { "-s", "upper", "case", "--verbose" }, new JmdCommandLineRequest("search", "upper case", Verbose: true)],
         [new[] { "-run", "2", "UpperCase" }, new JmdCommandLineRequest("run", "UpperCase", 2)],
         [new[] { "-run", "2" }, new JmdCommandLineRequest("run", Index: 2)],
         [new[] { "-run", "zero" }, new JmdCommandLineRequest("invalid", "Use -run <número> [texto da busca].")],
@@ -65,6 +68,7 @@ public sealed class AppPresentationStateTests
     [Theory]
     [InlineData("-search", "", "search", "")]
     [InlineData("--search", "texto com espaço", "search", "texto com espaço")]
+    [InlineData("-s", "texto com espaço", "search", "texto com espaço")]
     [InlineData("-complete", "Upper", "complete", "Upper")]
     [InlineData("-run", "01", "run", "")]
     public void Command_line_keeps_empty_queries_and_completion_prefixes_intact(

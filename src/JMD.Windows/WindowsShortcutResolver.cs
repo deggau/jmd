@@ -18,17 +18,25 @@ public static class WindowsShortcutResolver
         object? shortcut = null;
         try
         {
+            var fullShortcutPath = Path.GetFullPath(shortcutPath);
+            var shortcutDirectory = Path.GetDirectoryName(fullShortcutPath)!;
             shell = Activator.CreateInstance(shellType)
                 ?? throw new InvalidOperationException("Não foi possível iniciar o leitor de atalhos do Windows.");
             dynamic shellObject = shell;
-            shortcut = shellObject.CreateShortcut(Path.GetFullPath(shortcutPath));
+            shortcut = shellObject.CreateShortcut(fullShortcutPath);
             if (shortcut is null) throw new InvalidOperationException("Não foi possível ler o arquivo de atalho.");
 
             dynamic shortcutObject = shortcut;
-            var targetPath = Convert.ToString(shortcutObject.TargetPath)?.Trim() ?? string.Empty;
+            var targetPath = Environment.ExpandEnvironmentVariables(Convert.ToString(shortcutObject.TargetPath)?.Trim() ?? string.Empty);
             if (targetPath.Length == 0) throw new InvalidOperationException("O arquivo .lnk não possui um destino válido.");
-            var arguments = Convert.ToString(shortcutObject.Arguments) ?? string.Empty;
-            var workingDirectory = Convert.ToString(shortcutObject.WorkingDirectory)?.Trim() ?? string.Empty;
+            if (!Path.IsPathRooted(targetPath) && File.Exists(Path.Combine(shortcutDirectory, targetPath)))
+                targetPath = Path.GetFullPath(targetPath, shortcutDirectory);
+            var arguments = Environment.ExpandEnvironmentVariables(Convert.ToString(shortcutObject.Arguments) ?? string.Empty);
+            var workingDirectory = Environment.ExpandEnvironmentVariables(Convert.ToString(shortcutObject.WorkingDirectory)?.Trim() ?? string.Empty);
+            if (workingDirectory.Length > 0)
+                workingDirectory = Path.GetFullPath(workingDirectory, shortcutDirectory);
+            else if (Path.IsPathRooted(targetPath))
+                workingDirectory = Path.GetDirectoryName(targetPath) ?? string.Empty;
             return new WindowsShortcutTarget(targetPath, arguments, workingDirectory);
         }
         catch (Exception exception) when (exception is COMException or System.Reflection.TargetInvocationException)

@@ -26,6 +26,11 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        DispatcherUnhandledException += (_, args) => CriticalErrorLog.Write("Dispatcher WPF", args.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, args) => CriticalErrorLog.Write(
+            $"Exceção não tratada do processo (terminando: {args.IsTerminating})",
+            args.ExceptionObject as Exception ?? new Exception(Convert.ToString(args.ExceptionObject) ?? "Exceção desconhecida."));
+        TaskScheduler.UnobservedTaskException += (_, args) => CriticalErrorLog.Write("Task sem exceção observada", args.Exception);
         base.OnStartup(e);
         if (e.Args.FirstOrDefault() == CliFlag)
         {
@@ -118,6 +123,8 @@ public partial class App : System.Windows.Application
             Console.WriteLine("Uso: jmd <comando> | jmd -ls | jmd -help");
             Console.WriteLine("  jmd -ls --verbose             Lista descrições, atalhos e comandos desativados.");
             Console.WriteLine("  jmd -search <texto>           Mostra resultados numerados sem executar.");
+            Console.WriteLine("  jmd -s <texto>                Alias de -search.");
+            Console.WriteLine("  jmd -search <texto> --verbose Mostra descrições, atalhos e estado dos resultados.");
             Console.WriteLine("  jmd -run <n> [texto]          Executa o item n da lista ou dos resultados de busca.");
             Console.WriteLine("  jmd <texto>  Procura comandos com as regras da busca da paleta e executa o primeiro resultado.");
             Console.WriteLine("  jmd -ls      Lista os comandos disponíveis.");

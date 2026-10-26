@@ -90,7 +90,7 @@ public partial class MainWindow : Window
     private bool _loadingAdvancedSoundSettings;
     private bool _showingDialog;
     private bool _checkingUpdates;
-    private readonly AsyncLocal<CliCommandExecutionState?> _cliCommandExecution = new();
+    private readonly AsyncLocal<CommandExecutionContext?> _commandExecutionContext = new();
     private IntPtr _dictationTargetWindow;
     private bool _dictationHasInsertedText;
     private string _wakeRecognitionPartial = string.Empty;
@@ -850,7 +850,11 @@ public partial class MainWindow : Window
                 SetStatus("Essa frase está associada a mais de um comando. Deixe-a em apenas um comando para usá-la por voz.", false);
                 return null;
             }
-            matchedCommand = new VoiceCommandMatch(commandId, phraseMatch);
+            var matchedPhrase = phrases.FirstOrDefault(phrase =>
+                VoicePhrasePolicy.TryMatchTemplate(phrase, transcript, out _) ||
+                VoicePhrasePolicy.Matches(phrase, transcript) ||
+                commandId == "transcribe" && VoicePhrasePolicy.StartsWith(phrase, transcript)) ?? string.Empty;
+            matchedCommand = new VoiceCommandMatch(commandId, phraseMatch, matchedPhrase);
         }
         return matchedCommand;
     }
@@ -872,7 +876,7 @@ public partial class MainWindow : Window
             {
                 if (!VoicePhrasePolicy.TryMatchTemplate(phrase, input, out var variables)) continue;
                 if (result is not null) return null;
-                result = new VoiceCommandMatch(shortcut.Id, variables);
+                result = new VoiceCommandMatch(shortcut.Id, variables, phrase);
             }
         }
         return result;
@@ -1485,7 +1489,7 @@ public partial class MainWindow : Window
     }
 
     private async Task<bool> HandleHotkeyAsync(string id, VoiceCommandInvocation? voiceCommand = null,
-        IReadOnlyDictionary<string, string>? dynamicVariables = null)
+        IReadOnlyDictionary<string, string>? dynamicVariables = null, string? matchedPhrase = null)
     {
         try
         {
@@ -1559,14 +1563,20 @@ public partial class MainWindow : Window
                     break;
                 default:
                     var customShortcut = _settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id);
-                    if (customShortcut is not null) succeeded = await RunCustomWorkflowAsync(customShortcut, voiceCommand, dynamicVariables);
+                    if (customShortcut is not null) succeeded = await RunCustomWorkflowAsync(customShortcut, voiceCommand, dynamicVariables, matchedPhrase);
                     break;
             }
             return succeeded;
         }
         catch (Exception exception)
         {
-            SetStatus($"Operação falhou: {exception.Message}", false);
+            if (_commandExecutionContext.Value is { } executionContext)
+            {
+                executionContext.Failed = true;
+                executionContext.FailureMessage = exception.ToString();
+            }
+            CriticalErrorLog.Write($"Executar comando {id}", exception);
+            SetStatus($"Operação falhou: {exception.Message}", false, exception.ToString());
             return false;
         }
     }
@@ -1608,7 +1618,7 @@ public partial class MainWindow : Window
     }
 
     private async Task<bool> RunCustomWorkflowAsync(CustomShortcutEntry shortcut, VoiceCommandInvocation? voiceCommand = null,
-        IReadOnlyDictionary<string, string>? dynamicVariables = null, bool isTestExecution = false)
+        IReadOnlyDictionary<string, string>? dynamicVariables = null, string? matchedPhrase = null, bool isTestExecution = false)
     {
         var currentStepDescription = "Preparação do workflow";
         var restoreInitialFocus = _focusedText.CaptureFocusRestorer(isTestExecution ? IntPtr.Zero : _previousWindow);
@@ -1753,15 +1763,24 @@ public partial class MainWindow : Window
                 if (step.Action is not ("Wait" or "Open") && step.DelayMilliseconds > 0)
                     await Task.Delay(Math.Clamp(step.DelayMilliseconds, 1, 60000));
             }
-            RecordActionHistory($"{(isTestExecution ? "Testar" : "Executar")} {shortcut.Name}", string.Empty, string.Empty, voiceCommand);
+            var searchFilterNote = voiceCommand is null && matchedPhrase is not null && _commandExecutionContext.Value is null
+                ? $"Filtro Jey: {matchedPhrase}"
+                : string.Empty;
+            RecordActionHistory($"{(isTestExecution ? "Testar" : "Executar")} {shortcut.Name}", string.Empty, searchFilterNote, voiceCommand);
             if (!isTestExecution) Notify("JMD", $"Workflow concluído: {shortcut.Name}.", true);
             return true;
         }
         catch (Exception exception)
         {
+            if (exception is not OperationCanceledException)
+                CriticalErrorLog.Write($"Workflow {shortcut.Name} · {currentStepDescription}", exception);
             var focusRestored = !launchedProgram && restoreInitialFocus?.Invoke() == true;
             var failureDetails = $"{currentStepDescription}: {exception.Message}" +
                                  (focusRestored ? " O foco anterior foi restaurado." : string.Empty);
+            if (voiceCommand?.MatchedPhrase is { Length: > 0 } voicePhrase)
+                failureDetails += $" Filtro Jey: {voicePhrase}";
+            else if (matchedPhrase is not null && _commandExecutionContext.Value is null)
+                failureDetails += $" Filtro Jey: {matchedPhrase}";
             RecordActionHistory($"{(isTestExecution ? "Testar" : "Executar")} {shortcut.Name}", string.Empty, string.Empty,
                 voiceCommand, isFailure: true, failureDetails: failureDetails);
             SetStatus($"Workflow interrompido ({shortcut.Name}): {exception.Message}", false, failureDetails);
@@ -2324,7 +2343,11 @@ public partial class MainWindow : Window
         if (_historyStore is null) return null;
         var historyCommandName = voiceCommand is null
             ? commandName
-            : $"Ativação por voz (Jey) - {voiceCommand.CommandName}";
+            : $"Ativação por voz (Jey) - {voiceCommand.CommandName}" +
+              (string.IsNullOrWhiteSpace(voiceCommand.MatchedPhrase) ? string.Empty : $" · frase: {voiceCommand.MatchedPhrase}");
+        var executionContext = _commandExecutionContext.Value;
+        if (executionContext is not null)
+            historyCommandName += $" · {executionContext.FilterDescription}";
         var historyId = _historyStore.Add(historyCommandName, beforeValue, afterValue,
             source: GetConversionSource(), isVoiceTriggered: voiceCommand is not null,
             voiceTranscript: voiceCommand?.Transcript, voiceAudioWav: voiceCommand?.AudioWav,
@@ -2335,6 +2358,7 @@ public partial class MainWindow : Window
             englishTranscriptionTimeMilliseconds: voiceCommand?.DebugInfo?.EnglishTranscriptionTimeMilliseconds,
             isFailure: isFailure,
             failureDetails: failureDetails);
+        if (executionContext is not null) executionContext.HistoryRecorded = true;
         RefreshHistory();
         return historyId;
     }
@@ -2521,9 +2545,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private sealed record VoiceCommandMatch(string CommandId, IReadOnlyDictionary<string, string> Variables);
+    private sealed record VoiceCommandMatch(string CommandId, IReadOnlyDictionary<string, string> Variables, string MatchedPhrase);
     private sealed record VoiceCommandInvocation(string CommandName, string Transcript, byte[] AudioWav, VoiceCaptureDebugInfo? DebugInfo,
-        IReadOnlyDictionary<string, string>? Variables = null);
+        IReadOnlyDictionary<string, string>? Variables = null, string? MatchedPhrase = null);
     private sealed record WakeRecognitionHistoryRow(string Time, string Message);
     private sealed record HistoryAudioPlaybackRequest(long HistoryId, bool IsTranscriptionAudio);
 
@@ -2875,7 +2899,7 @@ public partial class MainWindow : Window
                 {
                     CloseJeyProcessingNotification();
                     var commandName = GetVoiceCommandName(voiceMatch.CommandId);
-                    _ = HandleHotkeyAsync(voiceMatch.CommandId, new VoiceCommandInvocation(commandName, transcript, audioWav, debugInfo, voiceMatch.Variables));
+                    _ = HandleHotkeyAsync(voiceMatch.CommandId, new VoiceCommandInvocation(commandName, transcript, audioWav, debugInfo, voiceMatch.Variables, voiceMatch.MatchedPhrase));
                     return;
                 }
 
@@ -3859,6 +3883,20 @@ public partial class MainWindow : Window
         Activate();
     }
 
+    private void OpenCriticalLogs_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            CriticalErrorLog.EnsureExists();
+            Process.Start(new ProcessStartInfo(CriticalErrorLog.FilePath) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            CriticalErrorLog.Write("Ao abrir o log de falhas críticas", exception);
+            SetStatus($"Não foi possível abrir o log de falhas: {exception.Message}", false, exception.ToString());
+        }
+    }
+
     private void AdvancedNotificationsToggle_Changed(object sender, RoutedEventArgs e)
     {
         if (_loadingAdvancedNotificationToggle) return;
@@ -4221,7 +4259,7 @@ public partial class MainWindow : Window
             var dynamicMatch = FindTypedWorkflowMatch(SearchBox.Text);
             if (dynamicMatch is not null)
             {
-                _ = ExecuteCommandAsync(dynamicMatch.CommandId, dynamicMatch.Variables);
+                _ = ExecuteCommandAsync(dynamicMatch.CommandId, dynamicMatch.Variables, dynamicMatch.MatchedPhrase);
                 e.Handled = true;
                 return;
             }
@@ -4253,7 +4291,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task ExecuteCommandAsync(string id, IReadOnlyDictionary<string, string>? dynamicVariables = null)
+    private async Task ExecuteCommandAsync(string id, IReadOnlyDictionary<string, string>? dynamicVariables = null, string? matchedPhrase = null)
     {
         Hide();
         if (_settings.DisabledCommands.Contains(id))
@@ -4261,18 +4299,36 @@ public partial class MainWindow : Window
             Notify("JMD", "Esse comando está desativado. Ative-o em Gerenciar atalhos.", false);
             return;
         }
-        if (id == "clipboard") await TransformClipboardAsync();
-        if (id == "selection")
-            await TransformSelectionFromPaletteAsync();
-        if (id is "upperCase" or "lowerCase" or "titleCase")
-            await TransformTextCaseFromPaletteAsync(id);
-        if (id is "jsonPretty" or "jsonCompact")
-            await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
-        if (id == "snippets") await InsertSavedSnippetAsync();
-        if (id == "saveSnippet") await CaptureSnippetAsync();
-        if (id == "createCustomShortcut") CreateCustomShortcutFromDialog();
-        if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
-            await RunCustomWorkflowAsync(customShortcut, dynamicVariables: dynamicVariables);
+        var commandName = _commands.FirstOrDefault(command => command.Id == id)?.Name ?? id;
+        var filterDescription = DescribeCommandFilter(SearchBox.Text.Trim(), matchedPhrase);
+        var executionContext = new CommandExecutionContext { FilterDescription = filterDescription };
+        var previousExecutionContext = _commandExecutionContext.Value;
+        _commandExecutionContext.Value = executionContext;
+        try
+        {
+            if (id == "clipboard") await TransformClipboardAsync();
+            if (id == "selection") await TransformSelectionFromPaletteAsync();
+            if (id is "upperCase" or "lowerCase" or "titleCase") await TransformTextCaseFromPaletteAsync(id);
+            if (id is "jsonPretty" or "jsonCompact")
+                await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
+            if (id == "snippets") await InsertSavedSnippetAsync();
+            if (id == "saveSnippet") await CaptureSnippetAsync();
+            if (id == "createCustomShortcut") CreateCustomShortcutFromDialog();
+            if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
+                await RunCustomWorkflowAsync(customShortcut, dynamicVariables: dynamicVariables, matchedPhrase: matchedPhrase);
+        }
+        catch (Exception exception)
+        {
+            executionContext.Failed = true;
+            executionContext.FailureMessage = exception.ToString();
+            CriticalErrorLog.Write($"Executar comando pela paleta ({commandName})", exception);
+            SetStatus($"Falha ao executar {commandName}: {exception.Message}", false, exception.ToString());
+        }
+        finally { _commandExecutionContext.Value = previousExecutionContext; }
+
+        if (!executionContext.HistoryRecorded)
+            RecordActionHistory(executionContext.Failed ? $"Falha ao executar: {commandName}" : $"Executar: {commandName}",
+                string.Empty, filterDescription, isFailure: executionContext.Failed, failureDetails: executionContext.FailureMessage);
     }
 
     internal async Task<JmdCliResponse> ExecuteCliRequestAsync(JmdCliRequest request)
@@ -4304,7 +4360,12 @@ public partial class MainWindow : Window
         if (results.Count == 0)
             return new JmdCliResponse(false, $"Comando não encontrado: {request.Query}", 1);
         if (request.Operation == "search")
-            return new JmdCliResponse(true, string.Join(Environment.NewLine, results.Select((command, index) => $"{index + 1}. {command.Name} [{command.Shortcut}]")), 0);
+        {
+            var lines = results.Select((command, index) => request.Verbose
+                ? $"{index + 1}. {command.Name}{Environment.NewLine}   Atalho: {command.Shortcut}{Environment.NewLine}   Estado: {(_settings.DisabledCommands.Contains(command.Id) ? "desativado" : "ativo")}{Environment.NewLine}   {command.Description}"
+                : $"{index + 1}. {command.Name} [{command.Shortcut}]");
+            return new JmdCliResponse(true, string.Join(Environment.NewLine, lines), 0);
+        }
 
         var selectedIndex = JmdCommandLinePolicy.ResolveSelectedIndex(request.Operation, request.Index);
         if (!JmdCommandLinePolicy.IsValidSelectedIndex(selectedIndex, results.Count))
@@ -4314,21 +4375,36 @@ public partial class MainWindow : Window
             return new JmdCliResponse(false, $"O comando ‘{command.Name}’ está desativado.", 2);
 
         var dynamicMatch = FindTypedWorkflowMatch(request.Query);
+        var isJeyPhraseMatch = dynamicMatch?.CommandId == command.Id;
+        var filterDescription = DescribeCommandFilter(request.Query, isJeyPhraseMatch ? dynamicMatch!.MatchedPhrase : null);
         Hide();
-        var executionState = new CliCommandExecutionState();
-        var previousExecutionState = _cliCommandExecution.Value;
-        _cliCommandExecution.Value = executionState;
+        var executionState = new CommandExecutionContext { FilterDescription = filterDescription };
+        var previousExecutionState = _commandExecutionContext.Value;
+        _commandExecutionContext.Value = executionState;
         bool succeeded;
         try
         {
             succeeded = await HandleHotkeyAsync(command.Id,
-                dynamicVariables: dynamicMatch?.CommandId == command.Id ? dynamicMatch.Variables : null);
+                dynamicVariables: isJeyPhraseMatch ? dynamicMatch!.Variables : null,
+                matchedPhrase: isJeyPhraseMatch ? dynamicMatch!.MatchedPhrase : null);
         }
-        finally { _cliCommandExecution.Value = previousExecutionState; }
+        finally { _commandExecutionContext.Value = previousExecutionState; }
         if (!succeeded || executionState.Failed)
-            return new JmdCliResponse(false, $"Falha ao executar o comando: {command.Name}", 2);
-        return new JmdCliResponse(true, $"Comando acionado: {command.Name}", 0);
+        {
+            if (!executionState.HistoryRecorded)
+                RecordActionHistory($"Falha ao executar pela CLI: {command.Name}", string.Empty, filterDescription,
+                    isFailure: true, failureDetails: executionState.FailureMessage);
+            return new JmdCliResponse(false, $"Falha ao executar o comando: {command.Name}{Environment.NewLine}{filterDescription}", 2);
+        }
+        if (!executionState.HistoryRecorded)
+            RecordActionHistory($"Executar pela CLI: {command.Name}", string.Empty, filterDescription);
+        return new JmdCliResponse(true, $"Comando acionado: {command.Name}{Environment.NewLine}{filterDescription}", 0);
     }
+
+    private static string DescribeCommandFilter(string query, string? matchedPhrase)
+        => !string.IsNullOrWhiteSpace(matchedPhrase)
+            ? $"Filtro Jey: \"{matchedPhrase}\" (busca: \"{query.Trim()}\")"
+            : string.IsNullOrWhiteSpace(query) ? "Filtro: lista completa" : $"Filtro: \"{query.Trim()}\"";
 
     private List<CommandRow> GetCliSearchResults(string query)
     {
@@ -4508,15 +4584,22 @@ public partial class MainWindow : Window
     private void Notify(string title, string message, bool success, long? historyId = null,
         TimeSpan? displayDuration = null)
     {
-        if (!success && _cliCommandExecution.Value is { } executionState) executionState.Failed = true;
+        if (!success && _commandExecutionContext.Value is { } executionState)
+        {
+            executionState.Failed = true;
+            executionState.FailureMessage = message;
+        }
         SetStatus(message, success);
         TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications, historyId,
             displayDuration ?? TimeSpan.FromSeconds(4));
     }
 
-    private sealed class CliCommandExecutionState
+    private sealed class CommandExecutionContext
     {
         public bool Failed { get; set; }
+        public bool HistoryRecorded { get; set; }
+        public string FilterDescription { get; set; } = string.Empty;
+        public string? FailureMessage { get; set; }
     }
 
     private void ShowJeyProcessingNotification(string message)
@@ -4554,6 +4637,24 @@ public partial class MainWindow : Window
         StatusText.Foreground = success
             ? new SolidColorBrush(Color.FromRgb(180, 243, 106))
             : new SolidColorBrush(Color.FromRgb(255, 145, 135));
+    }
+
+    private void StatusText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2 || string.IsNullOrWhiteSpace(StatusText.Text)) return;
+        var details = StatusText.ToolTip as string;
+        var message = string.IsNullOrWhiteSpace(details) || details == StatusText.Text
+            ? StatusText.Text
+            : $"{StatusText.Text}{Environment.NewLine}{Environment.NewLine}{details}";
+        try
+        {
+            System.Windows.Clipboard.SetText(message);
+            e.Handled = true;
+        }
+        catch (Exception exception)
+        {
+            StatusText.ToolTip = $"Não foi possível copiar a mensagem: {exception.Message}";
+        }
     }
 
     public void PrepareForExit() => _closingForExit = true;

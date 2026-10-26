@@ -27,6 +27,7 @@ internal sealed class CustomShortcutEditorWindow : Window
     private readonly List<StepDraft> _steps = [];
     private readonly Func<CustomShortcutEditorWindow, string?>? _validate;
     private readonly Func<CustomShortcutEditorWindow, Task<bool>>? _testWorkflow;
+    private bool _closed;
     private readonly TextBlock _testStatus = new()
     {
         Text = "O teste executa as etapas no programa selecionado.",
@@ -93,13 +94,14 @@ internal sealed class CustomShortcutEditorWindow : Window
             Padding = new Thickness(18)
         };
         Content = outer;
+        Closed += (_, _) => _closed = true;
         var layout = new DockPanel();
         outer.Child = layout;
         var footer = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
         DockPanel.SetDock(footer, Dock.Bottom);
         layout.Children.Add(footer);
         var cancel = MakeButton("Cancelar", false);
-        cancel.Click += (_, _) => { DialogResult = false; Close(); };
+        cancel.Click += (_, _) => DialogResult = false;
         var save = MakeButton("Salvar comando", true);
         save.Margin = new Thickness(8, 0, 0, 0);
         save.Click += (_, _) =>
@@ -111,7 +113,6 @@ internal sealed class CustomShortcutEditorWindow : Window
                 return;
             }
             DialogResult = true;
-            Close();
         };
         footer.Children.Add(cancel);
         footer.Children.Add(save);
@@ -174,23 +175,33 @@ internal sealed class CustomShortcutEditorWindow : Window
                 Hide();
                 await Task.Delay(120);
                 var succeeded = await runTest(this);
-                _testStatus.Text = succeeded
-                    ? "Teste concluído. Confira o programa; você pode continuar editando o workflow."
-                    : "O teste falhou. Confira o detalhe exibido no JMD ou no Histórico.";
-                _testStatus.Foreground = succeeded
-                    ? new SolidColorBrush(Color.FromRgb(180, 243, 106))
-                    : Brushes.OrangeRed;
+                if (!_closed)
+                {
+                    _testStatus.Text = succeeded
+                        ? "Teste concluído. Confira o programa; você pode continuar editando o workflow."
+                        : "O teste falhou. Confira o detalhe exibido no JMD ou no Histórico.";
+                    _testStatus.Foreground = succeeded
+                        ? new SolidColorBrush(Color.FromRgb(180, 243, 106))
+                        : Brushes.OrangeRed;
+                }
             }
             catch (Exception exception)
             {
-                _testStatus.Text = $"O teste falhou: {exception.Message}";
-                _testStatus.Foreground = Brushes.OrangeRed;
+                CriticalErrorLog.Write("Testar workflow pelo editor", exception);
+                if (!_closed)
+                {
+                    _testStatus.Text = $"O teste falhou: {exception.Message}";
+                    _testStatus.Foreground = Brushes.OrangeRed;
+                }
             }
             finally
             {
-                if (!IsVisible) Show();
-                Activate();
-                testButton.IsEnabled = true;
+                if (!_closed)
+                {
+                    if (!IsVisible) Show();
+                    Activate();
+                    testButton.IsEnabled = true;
+                }
             }
         };
         testButton.Margin = new Thickness(0, 0, 6, 0);

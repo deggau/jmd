@@ -542,6 +542,15 @@
                 <TextBlock Text="O som do lembrete é independente dos demais. Com notificações padrão do Windows, o próprio Windows também pode emitir seu som de notificação." Foreground="#FF969BA7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
               </StackPanel>
             </Border>
+            <TextBlock Text="Diagnóstico" Foreground="White" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,10" />
+            <Border Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" Padding="14">
+              <StackPanel>
+                <TextBlock Text="Falhas críticas e exceções não tratadas são registradas com detalhes técnicos." Foreground="#FF969BA7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <Button Content="Abrir log de falhas críticas" Click="OpenCriticalLogs_Click" HorizontalAlignment="Left"
+                        Padding="11,7" Background="#FF30343E" Foreground="White" BorderThickness="0" />
+                <TextBlock Text="%LOCALAPPDATA%\JMD\logs\critical.log" Foreground="#FF777D89" FontSize="10" TextWrapping="Wrap" Margin="0,8,0,0" />
+              </StackPanel>
+            </Border>
           </StackPanel>
           </ScrollViewer>
         </Grid>
@@ -810,7 +819,8 @@
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <TextBlock x:Name="StatusText" Grid.Column="0" Text="Atalhos prontos" Foreground="{StaticResource MutedBrush}"
-                   FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
+                   FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,10,0"
+                   ToolTip="Dê um duplo clique para copiar esta mensagem." MouseLeftButtonDown="StatusText_MouseLeftButtonDown" />
         <Button x:Name="SettingsRetryButton" Grid.Column="1" Content="Registrar atalhos novamente" Click="RetryShortcuts_Click"
                 Visibility="Collapsed" Padding="11,7" Margin="0,0,10,0" Background="#FF30343E" Foreground="White"
                 BorderThickness="0" VerticalAlignment="Center" />
