@@ -41,32 +41,74 @@ public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
     }
 
     /// <summary>Finds a visible control by its accessible name or AutomationId and moves keyboard focus to it.</summary>
-    public bool FocusControlByName(string accessibleName)
+    public bool FocusControlByName(string accessibleName, IntPtr targetWindow = default)
     {
-        if (string.IsNullOrWhiteSpace(accessibleName)) return false;
+        var element = FindControl(accessibleName, targetWindow, requireFocusable: true);
+        if (element is null) return false;
         try
         {
-            var name = accessibleName.Trim();
-            var matches = AutomationElement.RootElement.FindAll(TreeScope.Descendants,
-                new OrCondition(
-                    new PropertyCondition(AutomationElement.NameProperty, name, PropertyConditionFlags.IgnoreCase),
-                    new PropertyCondition(AutomationElement.AutomationIdProperty, name, PropertyConditionFlags.IgnoreCase)));
-            foreach (AutomationElement element in matches)
-            {
-                var current = element.Current;
-                if (!current.IsEnabled || !current.IsKeyboardFocusable) continue;
-                if (!string.Equals(current.Name?.Trim(), name, StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(current.AutomationId?.Trim(), name, StringComparison.OrdinalIgnoreCase)) continue;
-                element.SetFocus();
-                return true;
-            }
+            element.SetFocus();
+            return true;
         }
         catch (Exception exception) when (IsAutomationFailure(exception) || exception is UnauthorizedAccessException)
         {
             return false;
         }
-        return false;
     }
+
+    public WorkflowControlObservation? FindControlObservation(string identifier, IntPtr targetWindow = default)
+    {
+        var element = FindControl(identifier, targetWindow, requireFocusable: false);
+        if (element is null) return null;
+        try
+        {
+            bool? isChecked = null;
+            if (element.TryGetCurrentPattern(TogglePattern.Pattern, out var pattern))
+                isChecked = ((TogglePattern)pattern).Current.ToggleState == ToggleState.On;
+            var current = element.Current;
+            return new WorkflowControlObservation(current.IsEnabled, current.IsOffscreen, isChecked);
+        }
+        catch (Exception exception) when (IsAutomationFailure(exception) || exception is UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static AutomationElement? FindControl(string identifier, IntPtr targetWindow, bool requireFocusable)
+    {
+        if (!WorkflowControlIdentifierPolicy.TryParse(identifier, out var parsed)) return null;
+        try
+        {
+            var root = targetWindow == IntPtr.Zero
+                ? AutomationElement.RootElement
+                : AutomationElement.FromHandle(targetWindow);
+            var properties = parsed.Kind switch
+            {
+                WorkflowControlIdentifierKind.Name => new[] { AutomationElement.NameProperty },
+                WorkflowControlIdentifierKind.AutomationId => new[] { AutomationElement.AutomationIdProperty },
+                _ => new[] { AutomationElement.AutomationIdProperty, AutomationElement.NameProperty }
+            };
+            foreach (var property in properties)
+            {
+                var matches = root.FindAll(TreeScope.Descendants,
+                    new PropertyCondition(property, parsed.Value, PropertyConditionFlags.IgnoreCase));
+                foreach (AutomationElement element in matches)
+                {
+                    var current = element.Current;
+                    var actual = property == AutomationElement.AutomationIdProperty ? current.AutomationId : current.Name;
+                    if (string.Equals(actual?.Trim(), parsed.Value, StringComparison.OrdinalIgnoreCase) &&
+                        (!requireFocusable || current.IsEnabled && current.IsKeyboardFocusable)) return element;
+                }
+            }
+        }
+        catch (Exception exception) when (IsAutomationFailure(exception) || exception is UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
+        return null;
+    }
+
+    public sealed record WorkflowControlObservation(bool IsEnabled, bool IsOffscreen, bool? IsChecked);
 
     public string? ReadSelection()
     {

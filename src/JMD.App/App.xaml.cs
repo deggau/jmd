@@ -420,6 +420,11 @@ internal sealed class CustomWorkflowStep
     public string Value { get; set; } = "";
     public int DelayMilliseconds { get; set; }
     public int RepeatCount { get; set; } = 1;
+    public int TimeoutMilliseconds { get; set; } = 10000;
+    public string MonitorDeviceName { get; set; } = string.Empty;
+    public string ControlCondition { get; set; } = "Exists";
+    public int SkipStepsWhenFalse { get; set; } = 1;
+    public string MouseAction { get; set; } = "LeftClick";
 }
 
 internal sealed class WorkflowVariableEntry

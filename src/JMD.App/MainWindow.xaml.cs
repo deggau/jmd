@@ -28,6 +28,7 @@ using TextBox = System.Windows.Controls.TextBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 using ComboBoxItem = System.Windows.Controls.ComboBoxItem;
 using Orientation = System.Windows.Controls.Orientation;
+using FormsScreen = System.Windows.Forms.Screen;
 using MessageBox = System.Windows.MessageBox;
 using NAudio.Wave;
 
@@ -953,7 +954,13 @@ public partial class MainWindow : Window
     {
         (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen, List<CustomWorkflowStep> Steps)? previous = existing is null
             ? null : (existing.Name, existing.Target, existing.Shortcut, existing.FocusIfAlreadyOpen,
-                existing.Steps.Select(step => new CustomWorkflowStep { Action = step.Action, Value = step.Value, DelayMilliseconds = step.DelayMilliseconds, RepeatCount = step.RepeatCount }).ToList());
+                existing.Steps.Select(step => new CustomWorkflowStep
+                {
+                    Action = step.Action, Value = step.Value, DelayMilliseconds = step.DelayMilliseconds,
+                    RepeatCount = step.RepeatCount, TimeoutMilliseconds = step.TimeoutMilliseconds,
+                    MonitorDeviceName = step.MonitorDeviceName, ControlCondition = step.ControlCondition,
+                    SkipStepsWhenFalse = step.SkipStepsWhenFalse, MouseAction = step.MouseAction
+                }).ToList());
         var previousPhrases = existing is not null && _settings.VoicePhrases.TryGetValue(existing.Id, out var savedPhrases)
             ? savedPhrases.ToList() : [];
         var dialog = new CustomShortcutEditorWindow(existing, previousPhrases,
@@ -1051,12 +1058,25 @@ public partial class MainWindow : Window
         if (steps.Any(step => step.Action == "Key" && !WorkflowRepeatPolicy.IsValidCount(step.RepeatCount))) return $"A repetição da tecla deve ficar entre {WorkflowRepeatPolicy.MinimumCount} e {WorkflowRepeatPolicy.MaximumCount} vezes.";
         if (steps.Any(step => step.Action == "Type" && string.IsNullOrEmpty(step.Value))) return "Informe o texto a digitar em cada etapa de texto.";
         if (steps.Any(step => step.Action == "Wait" && (!int.TryParse(step.Value, out var milliseconds) || milliseconds is < 1 or > 60000))) return "A etapa de espera deve ter entre 1 e 60000 ms.";
-        if (steps.Any(step => step.Action == "Focus" && string.IsNullOrWhiteSpace(step.Value))) return "Informe o nome acessível do campo ou botão a focar.";
-        if (steps.Any(step => step.Action is not ("Open" or "Key" or "Type" or "Wait" or "Focus"))) return "O workflow contém uma etapa desconhecida.";
+        if (steps.Any(step => step.Action is "Focus" or "WaitControl" or "IfControl" && !WorkflowControlIdentifierPolicy.TryParse(step.Value, out _)))
+            return "Informe um controle usando id:AutomationId ou name:nome acessível.";
+        if (steps.Any(step => step.Action == "WaitWindow" && string.IsNullOrWhiteSpace(WorkflowWindowTargetPolicy.Parse(step.Value).Value)))
+            return "Informe parte do título da janela ou process:nome-do-processo.";
+        if (steps.Any(step => step.Action is "WaitWindow" or "WaitControl" && !WorkflowTimeoutPolicy.IsValid(step.TimeoutMilliseconds)))
+            return "O tempo limite para localizar janela ou controle deve ficar entre 100 e 120000 ms.";
+        if (steps.Any(step => step.Action == "IfControl" &&
+            (!Enum.TryParse<WorkflowControlCondition>(step.ControlCondition, true, out var condition) ||
+             !Enum.IsDefined(condition) || step.SkipStepsWhenFalse is < 0 or > 100)))
+            return "Configure uma condição válida e um número de etapas a pular entre 0 e 100.";
+        if (steps.Any(step => step.Action == "Click" &&
+            (!WorkflowRelativePoint.TryParse(step.Value, out _) || !WorkflowMouseActionPolicy.TryParse(step.MouseAction, out _))))
+            return "Use uma posição relativa válida (ex.: 0.42,0.68) e uma ação de mouse disponível.";
+        if (steps.Any(step => !WorkflowStepActionPolicy.IsSupported(step.Action)))
+            return "O workflow contém uma etapa desconhecida.";
         var dynamicNames = dialog.VoicePhrases
             .SelectMany(phrase => Regex.Matches(phrase, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var token in steps.Where(step => step.Action is "Open" or "Type" or "Focus")
+        foreach (var token in steps.Where(step => step.Action is "Open" or "Type" or "Focus" or "WaitWindow" or "WaitControl" or "IfControl" or "PositionWindow")
                      .SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value)))
         {
             if (!_settings.WorkflowVariables.Any(variable => variable.Name.Equals(token, StringComparison.OrdinalIgnoreCase)) && !dynamicNames.Contains(token))
@@ -1628,7 +1648,7 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException($"O workflow {shortcut.Name} não tem etapas.");
 
             var firstLaunch = true;
-            var hasTypingOrKeys = steps.Any(step => step.Action is "Key" or "Type" or "Focus");
+            var hasTypingOrKeys = steps.Any(step => step.Action is "Key" or "Type" or "Focus" or "Click" or "WaitControl" or "IfControl");
             var hasOpenStep = steps.Any(step => step.Action == "Open");
             if (hasTypingOrKeys && !hasOpenStep && _previousWindow == IntPtr.Zero)
                 throw new InvalidOperationException("Não foi possível identificar a janela que deve receber o texto.");
@@ -1638,15 +1658,22 @@ public partial class MainWindow : Window
                 await Task.Delay(100);
             }
 
-            foreach (var step in steps)
+            var activeWorkflowWindow = _previousWindow;
+            for (var stepIndex = 0; stepIndex < steps.Count; stepIndex++)
             {
+                var step = steps[stepIndex];
                 currentStepDescription = step.Action switch
                 {
                     "Open" => "Abrir programa ou URL",
                     "Key" => "Pressionar tecla",
                     "Type" => "Digitar texto",
-                    "Focus" => "Localizar controle",
+                    "Focus" => "Focar controle",
                     "Wait" => "Aguardar",
+                    "WaitWindow" => "Aguardar janela",
+                    "WaitControl" => "Aguardar controle",
+                    "IfControl" => "Verificar condição do controle",
+                    "Click" => "Clicar na janela",
+                    "PositionWindow" => "Reposicionar janela",
                     _ => "Executar etapa"
                 };
                 switch (step.Action)
@@ -1656,26 +1683,28 @@ public partial class MainWindow : Window
                         var openTarget = ExpandWorkflowVariables(step.Value, commandVariables,
                             urlEncodeValues: step.Value.TrimStart().StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                                 step.Value.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+                        if (!CustomCommandLine.TryParse(openTarget, out var executable, out var arguments))
+                            throw new InvalidOperationException($"Programa ou URL inválido: {openTarget}");
+                        var isUrl = Uri.TryCreate(openTarget, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+                        var workingDirectory = string.Empty;
+                        if (!isUrl && Path.GetExtension(executable).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var shortcutTarget = WindowsShortcutResolver.Resolve(executable);
+                            if (!CustomCommandLine.TryParse($"shortcut.exe {shortcutTarget.Arguments}", out _, out var shortcutArguments))
+                                throw new InvalidOperationException($"O atalho ‘{Path.GetFileName(executable)}’ possui argumentos inválidos.");
+                            arguments = WorkflowArgumentPolicy.Combine(shortcutArguments, arguments);
+                            executable = shortcutTarget.TargetPath;
+                            workingDirectory = shortcutTarget.WorkingDirectory;
+                            isUrl = Uri.TryCreate(executable, UriKind.Absolute, out uri) && uri.Scheme is "http" or "https";
+                        }
+                        var targetProcessName = isUrl ? string.Empty : Path.GetFileNameWithoutExtension(executable);
+                        Process? startedProcess = null;
                         if (firstLaunch && shortcut.FocusIfAlreadyOpen && TryFocusExistingTarget(openTarget))
                         {
                             await Task.Delay(step.DelayMilliseconds > 0 ? step.DelayMilliseconds : 100);
                         }
                         else
                         {
-                            if (!CustomCommandLine.TryParse(openTarget, out var executable, out var arguments))
-                                throw new InvalidOperationException($"Programa ou URL inválido: {openTarget}");
-                            var isUrl = Uri.TryCreate(openTarget, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
-                            var workingDirectory = string.Empty;
-                            if (!isUrl && Path.GetExtension(executable).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
-                            {
-                                var shortcutTarget = WindowsShortcutResolver.Resolve(executable);
-                                if (!CustomCommandLine.TryParse($"shortcut.exe {shortcutTarget.Arguments}", out _, out var shortcutArguments))
-                                    throw new InvalidOperationException($"O atalho ‘{Path.GetFileName(executable)}’ possui argumentos inválidos.");
-                                arguments = WorkflowArgumentPolicy.Combine(shortcutArguments, arguments);
-                                executable = shortcutTarget.TargetPath;
-                                workingDirectory = shortcutTarget.WorkingDirectory;
-                                isUrl = Uri.TryCreate(executable, UriKind.Absolute, out uri) && uri.Scheme is "http" or "https";
-                            }
                             var startInfo = new ProcessStartInfo
                             {
                                 FileName = executable,
@@ -1688,7 +1717,8 @@ public partial class MainWindow : Window
                                 foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
                             try
                             {
-                                if (Process.Start(startInfo) is null)
+                                startedProcess = Process.Start(startInfo);
+                                if (startedProcess is null)
                                     throw new InvalidOperationException("O Windows não iniciou o aplicativo ou endereço.");
                             }
                             catch (System.ComponentModel.Win32Exception exception) when (!isUrl && IsElevationRequiredError(exception.NativeErrorCode))
@@ -1711,7 +1741,8 @@ public partial class MainWindow : Window
                                 };
                                 try
                                 {
-                                    if (Process.Start(elevatedStartInfo) is null)
+                                    startedProcess = Process.Start(elevatedStartInfo);
+                                    if (startedProcess is null)
                                         throw new InvalidOperationException("O Windows não iniciou o aplicativo com permissões elevadas.");
                                 }
                                 catch (System.ComponentModel.Win32Exception elevationException) when (elevationException.NativeErrorCode == 1223)
@@ -1722,6 +1753,26 @@ public partial class MainWindow : Window
                             launchedProgram = true;
                             await Task.Delay(step.DelayMilliseconds > 0 ? step.DelayMilliseconds : 1000);
                         }
+                        var launchedWindow = startedProcess is not null
+                            ? WorkflowWindowAutomation.FindWindowByProcessId((int)startedProcess.Id)
+                            : null;
+                        if (launchedWindow is null && targetProcessName.Length > 0)
+                            launchedWindow = WorkflowWindowAutomation.FindWindow(byProcess: true, targetProcessName);
+                        if (!string.IsNullOrWhiteSpace(step.MonitorDeviceName))
+                        {
+                            if (launchedWindow is null && startedProcess is not null)
+                                launchedWindow = await WorkflowWindowAutomation.WaitForProcessWindowAsync((int)startedProcess.Id, 10000);
+                            if (launchedWindow is null && targetProcessName.Length > 0)
+                                launchedWindow = await WorkflowWindowAutomation.WaitForWindowAsync($"process:{targetProcessName}", 10000);
+                            if (launchedWindow is null && isUrl)
+                                launchedWindow = WorkflowWindowAutomation.FindForegroundWindow();
+                            if (launchedWindow is null)
+                                throw new TimeoutException($"Não encontrei a janela do aplicativo {targetProcessName} para movê-la ao monitor escolhido.");
+                            PlaceWindowOnMonitor(launchedWindow.Handle, step.MonitorDeviceName);
+                            WorkflowWindowAutomation.Activate(launchedWindow.Handle);
+                        }
+                        activeWorkflowWindow = launchedWindow?.Handle ?? WorkflowWindowAutomation.FindForegroundWindow()?.Handle ?? activeWorkflowWindow;
+                        startedProcess?.Dispose();
                         firstLaunch = false;
                         break;
                     case "Key":
@@ -1742,13 +1793,73 @@ public partial class MainWindow : Window
                         break;
                     case "Focus":
                         var controlName = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
-                        if (!_focusedText.FocusControlByName(controlName))
+                        if (activeWorkflowWindow != IntPtr.Zero) WorkflowWindowAutomation.Activate(activeWorkflowWindow);
+                        if (!_focusedText.FocusControlByName(controlName, activeWorkflowWindow))
                             throw new InvalidOperationException($"Não encontrei um campo ou botão acessível com o nome ou AutomationId ‘{controlName}’. Se o inspetor mostrar apenas Chrome Legacy Window, o aplicativo não expôs os controles internos à Automação do Windows; nesse caso, avance até o campo usando etapas Pressionar tecla (Tab/Shift+Tab).");
                         break;
                     case "Wait":
                         if (!int.TryParse(step.Value, out var waitMilliseconds) || waitMilliseconds is < 1 or > 60000)
                             throw new InvalidOperationException("A etapa de espera deve ter entre 1 e 60000 ms.");
                         await Task.Delay(waitMilliseconds);
+                        break;
+                    case "WaitWindow":
+                        var windowTarget = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
+                        var foundWindow = await WorkflowWindowAutomation.WaitForWindowAsync(windowTarget, step.TimeoutMilliseconds);
+                        if (foundWindow is null)
+                            throw new TimeoutException($"A janela ‘{windowTarget}’ não apareceu em {step.TimeoutMilliseconds} ms.");
+                        activeWorkflowWindow = foundWindow.Handle;
+                        WorkflowWindowAutomation.Activate(activeWorkflowWindow);
+                        break;
+                    case "WaitControl":
+                        var controlIdentifier = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
+                        activeWorkflowWindow = GetWorkflowWindow(activeWorkflowWindow);
+                        if (activeWorkflowWindow == IntPtr.Zero || !await WaitForWorkflowControlAsync(controlIdentifier, activeWorkflowWindow, step.TimeoutMilliseconds))
+                            throw new TimeoutException($"O controle ‘{controlIdentifier}’ não apareceu em {step.TimeoutMilliseconds} ms.");
+                        break;
+                    case "IfControl":
+                        var conditionalIdentifier = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
+                        activeWorkflowWindow = GetWorkflowWindow(activeWorkflowWindow);
+                        Enum.TryParse<WorkflowControlCondition>(step.ControlCondition, true, out var condition);
+                        var observation = activeWorkflowWindow == IntPtr.Zero ? null : _focusedText.FindControlObservation(conditionalIdentifier, activeWorkflowWindow);
+                        var conditionMatches = WorkflowControlConditionPolicy.Matches(condition, observation is not null,
+                            observation?.IsEnabled == true, observation?.IsOffscreen == true, observation?.IsChecked);
+                        if (!conditionMatches)
+                            stepIndex = WorkflowConditionalPolicy.NextStepIndexWhenFalse(stepIndex, step.SkipStepsWhenFalse, steps.Count) - 1;
+                        break;
+                    case "Click":
+                        if (!WorkflowRelativePoint.TryParse(step.Value, out var clickPoint) ||
+                            !WorkflowMouseActionPolicy.TryParse(step.MouseAction, out var mouseAction))
+                            throw new InvalidOperationException("Posição ou ação de mouse inválida.");
+                        activeWorkflowWindow = GetWorkflowWindow(activeWorkflowWindow);
+                        if (activeWorkflowWindow == IntPtr.Zero || !WorkflowWindowAutomation.Activate(activeWorkflowWindow) ||
+                            !WorkflowWindowAutomation.TryClick(activeWorkflowWindow, clickPoint, mouseAction))
+                            throw new InvalidOperationException("Não foi possível clicar na posição da janela ativa.");
+                        break;
+                    case "PositionWindow":
+                        var repositionTarget = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
+                        WorkflowWindow? targetWindow;
+                        if (string.IsNullOrWhiteSpace(repositionTarget))
+                        {
+                            var handle = GetWorkflowWindow(activeWorkflowWindow);
+                            targetWindow = handle == IntPtr.Zero ? null : WorkflowWindowAutomation.FindWindowByHandle(handle);
+                        }
+                        else
+                        {
+                            var parsedTarget = WorkflowWindowTargetPolicy.Parse(repositionTarget);
+                            targetWindow = WorkflowWindowAutomation.FindWindow(parsedTarget.IsProcess, parsedTarget.Value);
+                        }
+                        if (targetWindow is null) throw new InvalidOperationException($"Não encontrei a janela ‘{repositionTarget}’ para reposicioná-la.");
+                        var screen = string.IsNullOrWhiteSpace(step.MonitorDeviceName)
+                            ? FormsScreen.FromHandle(targetWindow.Handle)
+                            : FormsScreen.AllScreens.FirstOrDefault(candidate => candidate.DeviceName.Equals(step.MonitorDeviceName, StringComparison.OrdinalIgnoreCase));
+                        if (screen is null) throw new InvalidOperationException($"O monitor ‘{step.MonitorDeviceName}’ não está conectado.");
+                        if (!WorkflowWindowAutomation.TryGetBounds(targetWindow.Handle, out var windowBounds))
+                            throw new InvalidOperationException("Não foi possível consultar o tamanho atual da janela.");
+                        var newBounds = WorkflowMonitorPlacementPolicy.CenterAndClamp(screen.Bounds, windowBounds.Size);
+                        if (!WorkflowWindowAutomation.MoveAndResize(targetWindow.Handle, newBounds))
+                            throw new InvalidOperationException("O Windows não aceitou reposicionar a janela.");
+                        activeWorkflowWindow = targetWindow.Handle;
+                        WorkflowWindowAutomation.Activate(activeWorkflowWindow);
                         break;
                     default:
                         throw new InvalidOperationException("O workflow contém uma etapa desconhecida.");
@@ -1784,6 +1895,34 @@ public partial class MainWindow : Window
 
     private static bool IsElevationRequiredError(int nativeErrorCode)
         => nativeErrorCode is 5 or 740 or 1314;
+
+    private IntPtr GetWorkflowWindow(IntPtr preferred)
+        => preferred != IntPtr.Zero ? preferred :
+            WorkflowWindowAutomation.FindForegroundWindow()?.Handle ?? _previousWindow;
+
+    private async Task<bool> WaitForWorkflowControlAsync(string identifier, IntPtr window, int timeoutMilliseconds)
+    {
+        var timeout = Stopwatch.StartNew();
+        do
+        {
+            var observation = _focusedText.FindControlObservation(identifier, window);
+            if (observation is not null && !observation.IsOffscreen) return true;
+            await Task.Delay(100);
+        } while (timeout.ElapsedMilliseconds < timeoutMilliseconds);
+        return false;
+    }
+
+    private static void PlaceWindowOnMonitor(IntPtr window, string deviceName)
+    {
+        var screen = FormsScreen.AllScreens.FirstOrDefault(candidate =>
+            candidate.DeviceName.Equals(deviceName, StringComparison.OrdinalIgnoreCase));
+        if (screen is null) throw new InvalidOperationException($"O monitor ‘{deviceName}’ não está conectado.");
+        if (!WorkflowWindowAutomation.TryGetBounds(window, out var currentBounds))
+            throw new InvalidOperationException("Não foi possível consultar o tamanho atual da janela.");
+        var bounds = WorkflowMonitorPlacementPolicy.CenterAndClamp(screen.Bounds, currentBounds.Size);
+        if (!WorkflowWindowAutomation.MoveAndResize(window, bounds))
+            throw new InvalidOperationException("O Windows não aceitou mover o aplicativo ao monitor selecionado.");
+    }
 
     private static bool TryGetWorkflowKey(string value, out ushort virtualKey)
     {

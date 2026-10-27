@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using DrawingPoint = System.Drawing.Point;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Automation;
@@ -7,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using JMD.Core;
+using JMD.Windows;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using WpfButton = System.Windows.Controls.Button;
@@ -54,28 +56,38 @@ internal sealed class ControlInspectorWindow : Window
         close.Click += (_, _) => Close();
         DockPanel.SetDock(close, Dock.Right);
         titleBar.Children.Add(close);
-        var title = new TextBlock { Text = "Nome acessível do controle", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Cursor = WpfCursors.SizeAll };
+        var title = new TextBlock { Text = "Inspecionar · Ctrl+clique copia ID · Shift+clique copia posição", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Cursor = WpfCursors.SizeAll };
         title.MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); };
         titleBar.Children.Add(title);
         content.Children.Add(titleBar);
         var row = new StackPanel { Orientation = WpfOrientation.Horizontal };
         row.Children.Add(_name);
-        var copy = new WpfButton { Content = "Copiar", Padding = new Thickness(10, 6, 10, 6), VerticalAlignment = VerticalAlignment.Center,
-            ToolTip = "Atalho: Ctrl + clique no campo ou botão para copiar seu nome ou AutomationId." };
-        copy.Click += (_, _) =>
+        var copyButtons = new StackPanel { Orientation = WpfOrientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var copyId = new WpfButton { Content = "Copiar ID", Padding = new Thickness(7, 6, 7, 6),
+            ToolTip = "Copia o AutomationId com o prefixo id: para usar nas etapas Focar, Aguardar controle ou Se controle corresponder." };
+        copyId.Click += (_, _) =>
         {
-            var valueToCopy = _currentName.Length > 0 ? _currentName : _currentAutomationId;
-            if (valueToCopy.Length == 0) return;
+            if (_currentAutomationId.Length == 0) return;
             try
             {
-                CopySelectedControl(valueToCopy, copy);
+                CopySelectedControl($"id:{_currentAutomationId}", copyId);
             }
             catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException)
             {
-                copy.Content = "Falhou";
+                copyId.Content = "Falhou";
             }
         };
-        row.Children.Add(copy);
+        copyButtons.Children.Add(copyId);
+        var copyName = new WpfButton { Content = "Copiar nome", Padding = new Thickness(7, 6, 7, 6), Margin = new Thickness(4, 0, 0, 0),
+            ToolTip = "Copia o nome acessível com o prefixo name: para usar nas etapas Focar, Aguardar controle ou Se controle corresponder." };
+        copyName.Click += (_, _) =>
+        {
+            if (_currentName.Length == 0) return;
+            try { CopySelectedControl($"name:{_currentName}", copyName); }
+            catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException) { copyName.Content = "Falhou"; }
+        };
+        copyButtons.Children.Add(copyName);
+        row.Children.Add(copyButtons);
         content.Children.Add(row);
         content.Children.Add(_details);
         Content = border;
@@ -179,7 +191,9 @@ internal sealed class ControlInspectorWindow : Window
         _details.Text = result.Details;
         if (!fromCtrlClick) return;
 
-        var valueToCopy = _currentName.Length > 0 ? _currentName : _currentAutomationId;
+        var valueToCopy = _currentAutomationId.Length > 0
+            ? $"id:{_currentAutomationId}"
+            : _currentName.Length > 0 ? $"name:{_currentName}" : string.Empty;
         _captureInProgress = false;
         if (valueToCopy.Length > 0)
         {
@@ -212,20 +226,45 @@ internal sealed class ControlInspectorWindow : Window
 
     private IntPtr OnMouseHook(int code, IntPtr message, IntPtr data)
     {
-        if (code >= 0 && message == (IntPtr)0x0201 && (GetAsyncKeyState(0x11) & 0x8000) != 0)
+        if (code >= 0 && message == (IntPtr)0x0201)
         {
-            var mouse = Marshal.PtrToStructure<LowLevelMouseHookData>(data);
-            var point = new System.Windows.Point(mouse.Point.X, mouse.Point.Y);
-            Dispatcher.BeginInvoke(() => CaptureControlAtClick(point));
+            var controlPressed = (GetAsyncKeyState(0x11) & 0x8000) != 0;
+            var positionPressed = (GetAsyncKeyState(0x10) & 0x8000) != 0;
+            if (controlPressed || positionPressed)
+            {
+                var mouse = Marshal.PtrToStructure<LowLevelMouseHookData>(data);
+                var point = new System.Windows.Point(mouse.Point.X, mouse.Point.Y);
+                Dispatcher.BeginInvoke(() => CaptureControlAtClick(point, positionPressed && !controlPressed));
+            }
         }
         return CallNextHookEx(_mouseHook, code, message, data);
     }
 
-    private async void CaptureControlAtClick(System.Windows.Point point)
+    private async void CaptureControlAtClick(System.Windows.Point point, bool capturePosition)
     {
         if (!IsLoaded || _captureInProgress) return;
         var own = new Rect(Left, Top, ActualWidth, ActualHeight);
         if (own.Contains(point)) return;
+        if (capturePosition)
+        {
+            if (!WorkflowWindowAutomation.TryCaptureRelativePoint(new DrawingPoint((int)point.X, (int)point.Y), out _, out var relativePoint))
+            {
+                _details.Text = "Não encontrei uma janela sob o ponto selecionado.";
+                return;
+            }
+            try
+            {
+                WpfClipboard.SetText(relativePoint.ToString());
+                _name.Text = "Posição copiada";
+                _details.Text = $"Coordenadas relativas à janela: {relativePoint}. Cole em uma etapa Clique.";
+                Close();
+            }
+            catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException)
+            {
+                _details.Text = "Não foi possível copiar a posição para a área de transferência.";
+            }
+            return;
+        }
         _captureInProgress = true;
         _timer.Stop();
         _name.Text = "Lendo controle…";

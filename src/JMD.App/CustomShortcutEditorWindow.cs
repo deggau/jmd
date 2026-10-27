@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using FormsScreen = System.Windows.Forms.Screen;
 using JMD.Core;
 using JMD.Windows;
 using MessageBox = System.Windows.MessageBox;
@@ -51,7 +52,12 @@ internal sealed class CustomShortcutEditorWindow : Window
                 Action = step.Action,
                 Value = step.Value,
                 DelayMilliseconds = step.DelayMilliseconds,
-                RepeatCount = step.RepeatCount
+                RepeatCount = step.RepeatCount,
+                TimeoutMilliseconds = step.TimeoutMilliseconds,
+                MonitorDeviceName = step.MonitorDeviceName,
+                ControlCondition = step.ControlCondition,
+                SkipStepsWhenFalse = step.SkipStepsWhenFalse,
+                MouseAction = step.MouseAction
             }).ToList();
         }
     }
@@ -69,7 +75,9 @@ internal sealed class CustomShortcutEditorWindow : Window
             _focusIfAlreadyOpen.IsChecked = existing.FocusIfAlreadyOpen;
             _phrases.Text = string.Join(Environment.NewLine, existingPhrases ?? []);
             if (existing.Steps.Count > 0)
-                _steps.AddRange(existing.Steps.Select(step => new StepDraft(step.Action, step.Value, step.DelayMilliseconds, step.RepeatCount)));
+                _steps.AddRange(existing.Steps.Select(step => new StepDraft(step.Action, step.Value,
+                    step.DelayMilliseconds, step.RepeatCount, step.TimeoutMilliseconds, step.MonitorDeviceName,
+                    step.ControlCondition, step.SkipStepsWhenFalse, step.MouseAction)));
             else if (!string.IsNullOrWhiteSpace(existing.Target))
                 _steps.Add(new StepDraft("Open", existing.Target, 0));
         }
@@ -267,8 +275,13 @@ internal sealed class CustomShortcutEditorWindow : Window
                 actions.Children.Add(button);
             }
 
-            var type = new ComboBox { Margin = new Thickness(0, 8, 0, 5), Padding = new Thickness(6, 4, 6, 4), ItemsSource = new[] { "Abrir programa ou URL", "Pressionar tecla", "Digitar texto", "Aguardar", "Focar campo ou botão pelo nome" } };
-            type.SelectedIndex = step.Action switch { "Open" => 0, "Key" => 1, "Type" => 2, "Wait" => 3, "Focus" => 4, _ => 2 };
+            var type = new ComboBox { Margin = new Thickness(0, 8, 0, 5), Padding = new Thickness(6, 4, 6, 4), ItemsSource = new[]
+            {
+                "Abrir programa ou URL", "Pressionar tecla", "Digitar texto", "Aguardar", "Focar campo ou botão",
+                "Aguardar janela", "Aguardar controle", "Se controle corresponder", "Clique na janela", "Reposicionar janela"
+            } };
+            type.SelectedIndex = step.Action switch { "Open" => 0, "Key" => 1, "Type" => 2, "Wait" => 3, "Focus" => 4,
+                "WaitWindow" => 5, "WaitControl" => 6, "IfControl" => 7, "Click" => 8, "PositionWindow" => 9, _ => 2 };
             body.Children.Add(type);
             var value = CreateBox(step.Action == "Type" ? 68 : 36, multiline: step.Action == "Type");
             value.Text = step.Value;
@@ -281,10 +294,53 @@ internal sealed class CustomShortcutEditorWindow : Window
             var repeatPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(2, 6, 2, 0) };
             repeatPanel.Children.Add(new TextBlock { Text = "Repetir a tecla (1–100 vezes)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
             repeatPanel.Children.Add(repeatCount);
+            var timeout = CreateBox(34);
+            timeout.Width = 100;
+            timeout.Text = step.TimeoutMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var timeoutPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(2, 6, 2, 0) };
+            timeoutPanel.Children.Add(new TextBlock { Text = "Tempo limite (ms)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
+            timeoutPanel.Children.Add(timeout);
+            var monitorOptions = new[] { new MonitorOption("Padrão do Windows", string.Empty) }
+                .Concat(FormsScreen.AllScreens.Select(screen => new MonitorOption(
+                    $"{screen.DeviceName} · {screen.Bounds.Width} × {screen.Bounds.Height}{(screen.Primary ? " · principal" : string.Empty)}",
+                    screen.DeviceName)));
+            if (!string.IsNullOrWhiteSpace(step.MonitorDeviceName) &&
+                !monitorOptions.Any(option => option.DeviceName.Equals(step.MonitorDeviceName, StringComparison.OrdinalIgnoreCase)))
+                monitorOptions = monitorOptions.Append(new MonitorOption($"{step.MonitorDeviceName} · não conectado", step.MonitorDeviceName));
+            var monitorOptionList = monitorOptions.ToArray();
+            var monitor = new ComboBox { ItemsSource = monitorOptionList, DisplayMemberPath = nameof(MonitorOption.Display),
+                Margin = new Thickness(2, 4, 2, 0), Padding = new Thickness(6, 4, 6, 4) };
+            monitor.SelectedItem = monitorOptionList.FirstOrDefault(option => option.DeviceName.Equals(step.MonitorDeviceName, StringComparison.OrdinalIgnoreCase)) ?? monitorOptionList[0];
+            var monitorPanel = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            monitorPanel.Children.Add(new TextBlock { Text = "Monitor de destino", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 0, 2, 2) });
+            monitorPanel.Children.Add(monitor);
+            var condition = new ComboBox { ItemsSource = new[] { "Existe", "Não existe", "Habilitado", "Desabilitado", "Visível", "Marcado", "Desmarcado" },
+                Margin = new Thickness(2, 4, 2, 0), Padding = new Thickness(6, 4, 6, 4), SelectedIndex = step.ControlCondition switch
+                { "Missing" => 1, "Enabled" => 2, "Disabled" => 3, "Visible" => 4, "Checked" => 5, "Unchecked" => 6, _ => 0 } };
+            var conditionPanel = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            conditionPanel.Children.Add(new TextBlock { Text = "Condição", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 0, 2, 2) });
+            conditionPanel.Children.Add(condition);
+            var skipCount = CreateBox(34);
+            skipCount.Width = 84;
+            skipCount.Text = step.SkipStepsWhenFalse.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var skipPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(2, 6, 2, 0) };
+            skipPanel.Children.Add(new TextBlock { Text = "Se não corresponder, pular próximas etapas", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
+            skipPanel.Children.Add(skipCount);
+            var mouseAction = new ComboBox { ItemsSource = new[] { "Clique", "Clique duplo", "Botão direito", "Rolar para cima", "Rolar para baixo" },
+                Margin = new Thickness(2, 4, 2, 0), Padding = new Thickness(6, 4, 6, 4), SelectedIndex = step.MouseAction switch
+                { "DoubleClick" => 1, "RightClick" => 2, "ScrollUp" => 3, "ScrollDown" => 4, _ => 0 } };
+            var mousePanel = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            mousePanel.Children.Add(new TextBlock { Text = "Ação do mouse", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 0, 2, 2) });
+            mousePanel.Children.Add(mouseAction);
             var delayLabel = new TextBlock { Text = "Pausa após a etapa (ms, opcional)", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, Margin = new Thickness(2, 6, 2, 3) };
             body.Children.Add(valueLabel);
             body.Children.Add(value);
             body.Children.Add(repeatPanel);
+            body.Children.Add(timeoutPanel);
+            body.Children.Add(monitorPanel);
+            body.Children.Add(conditionPanel);
+            body.Children.Add(skipPanel);
+            body.Children.Add(mousePanel);
             body.Children.Add(delayLabel);
             body.Children.Add(delay);
             void UpdateKind()
@@ -293,7 +349,7 @@ internal sealed class CustomShortcutEditorWindow : Window
                 {
                     case 0:
                         valueLabel.Text = "Programa, parâmetros ou URL";
-                        value.ToolTip = "Ex.: notepad.exe, explorer.exe C:\\Pasta ou https://example.com";
+                        value.ToolTip = "Ex.: notepad.exe, explorer.exe \"C:\\Pasta com espaços\" ou https://example.com";
                         value.Height = 36; value.AcceptsReturn = false;
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Aguardar após abrir (ms, opcional; padrão 1000 ms)";
@@ -319,17 +375,47 @@ internal sealed class CustomShortcutEditorWindow : Window
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "";
                         break;
-                    default:
+                    case 4:
                         valueLabel.Text = "Nome acessível ou AutomationId do campo ou botão";
-                        value.ToolTip = "Ex.: Usuário ou ctl00_ContentPlaceHolder1_txtLogin. O controle precisa estar exposto à Automação do Windows.";
+                        value.ToolTip = "Use Copiar ID no inspetor (id:Salvar) ou informe name:Salvar. Busca restrita à janela ativa.";
                         value.Height = 36; value.AcceptsReturn = false;
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Pausa após focar (ms, opcional)";
+                        break;
+                    case 5:
+                        valueLabel.Text = "Título da janela ou process:nome-do-processo";
+                        value.ToolTip = "Ex.: TeamViewer ou process:TeamViewer. Aguarda até o tempo limite.";
+                        value.Height = 36; value.AcceptsReturn = false; value.TextWrapping = TextWrapping.NoWrap;
+                        delayLabel.Text = "Pausa após encontrar (ms, opcional)";
+                        break;
+                    case 6:
+                    case 7:
+                        valueLabel.Text = "Controle: id:AutomationId ou name:nome acessível";
+                        value.ToolTip = "Use Copiar ID no inspetor para copiar um identificador inequívoco.";
+                        value.Height = 36; value.AcceptsReturn = false; value.TextWrapping = TextWrapping.NoWrap;
+                        delayLabel.Text = "Pausa após verificar (ms, opcional)";
+                        break;
+                    case 8:
+                        valueLabel.Text = "Posição relativa à janela (copie com Shift + clique no inspetor)";
+                        value.ToolTip = "Ex.: 0.42,0.68. As coordenadas acompanham a janela ao mover para outro monitor.";
+                        value.Height = 36; value.AcceptsReturn = false; value.TextWrapping = TextWrapping.NoWrap;
+                        delayLabel.Text = "Pausa após clicar (ms, opcional)";
+                        break;
+                    default:
+                        valueLabel.Text = "Título da janela ou process:nome-do-processo (vazio = janela ativa)";
+                        value.ToolTip = "Move e centraliza a janela no monitor selecionado, mantendo seu tamanho.";
+                        value.Height = 36; value.AcceptsReturn = false; value.TextWrapping = TextWrapping.NoWrap;
+                        delayLabel.Text = "Pausa após mover (ms, opcional)";
                         break;
                 }
                 delayLabel.Visibility = type.SelectedIndex == 3 ? Visibility.Collapsed : Visibility.Visible;
                 delay.Visibility = type.SelectedIndex == 3 ? Visibility.Collapsed : Visibility.Visible;
                 repeatPanel.Visibility = type.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+                timeoutPanel.Visibility = type.SelectedIndex is 5 or 6 ? Visibility.Visible : Visibility.Collapsed;
+                monitorPanel.Visibility = type.SelectedIndex is 0 or 9 ? Visibility.Visible : Visibility.Collapsed;
+                conditionPanel.Visibility = type.SelectedIndex == 7 ? Visibility.Visible : Visibility.Collapsed;
+                skipPanel.Visibility = type.SelectedIndex == 7 ? Visibility.Visible : Visibility.Collapsed;
+                mousePanel.Visibility = type.SelectedIndex == 8 ? Visibility.Visible : Visibility.Collapsed;
             }
             type.SelectionChanged += (_, _) => UpdateKind();
             UpdateKind();
@@ -338,6 +424,11 @@ internal sealed class CustomShortcutEditorWindow : Window
             step.ValueBox = value;
             step.DelayBox = delay;
             step.RepeatCountBox = repeatCount;
+            step.TimeoutBox = timeout;
+            step.MonitorBox = monitor;
+            step.ConditionBox = condition;
+            step.SkipCountBox = skipCount;
+            step.MouseActionBox = mouseAction;
         }
     }
 
@@ -362,25 +453,58 @@ internal sealed class CustomShortcutEditorWindow : Window
         foreach (var step in _steps)
         {
             if (step.TypeBox is not null)
-                step.Action = step.TypeBox.SelectedIndex switch { 0 => "Open", 1 => "Key", 2 => "Type", 3 => "Wait", 4 => "Focus", _ => "Type" };
+                step.Action = step.TypeBox.SelectedIndex switch
+                {
+                    0 => "Open", 1 => "Key", 2 => "Type", 3 => "Wait", 4 => "Focus", 5 => "WaitWindow",
+                    6 => "WaitControl", 7 => "IfControl", 8 => "Click", 9 => "PositionWindow", _ => "Type"
+                };
             if (step.ValueBox is not null) step.Value = step.ValueBox.Text;
             if (step.DelayBox is not null)
                 step.DelayMilliseconds = int.TryParse(step.DelayBox.Text, out var milliseconds) ? milliseconds : -1;
             if (step.RepeatCountBox is not null)
                 step.RepeatCount = int.TryParse(step.RepeatCountBox.Text, out var count) ? count : -1;
+            if (step.TimeoutBox is not null)
+                step.TimeoutMilliseconds = int.TryParse(step.TimeoutBox.Text, out var timeout) ? timeout : -1;
+            if (step.MonitorBox?.SelectedItem is MonitorOption monitor) step.MonitorDeviceName = monitor.DeviceName;
+            if (step.ConditionBox is not null)
+                step.ControlCondition = step.ConditionBox.SelectedIndex switch
+                {
+                    1 => "Missing", 2 => "Enabled", 3 => "Disabled", 4 => "Visible", 5 => "Checked", 6 => "Unchecked", _ => "Exists"
+                };
+            if (step.SkipCountBox is not null)
+                step.SkipStepsWhenFalse = int.TryParse(step.SkipCountBox.Text, out var skipCount) ? skipCount : -1;
+            if (step.MouseActionBox is not null)
+                step.MouseAction = step.MouseActionBox.SelectedIndex switch
+                {
+                    1 => "DoubleClick", 2 => "RightClick", 3 => "ScrollUp", 4 => "ScrollDown", _ => "LeftClick"
+                };
         }
     }
 
-    private sealed class StepDraft(string action, string value, int delayMilliseconds, int repeatCount = 1)
+    private sealed record MonitorOption(string Display, string DeviceName);
+
+    private sealed class StepDraft(string action, string value, int delayMilliseconds, int repeatCount = 1,
+        int timeoutMilliseconds = 10000, string monitorDeviceName = "", string controlCondition = "Exists",
+        int skipStepsWhenFalse = 1, string mouseAction = "LeftClick")
     {
         public string Action { get; set; } = action;
         public string Value { get; set; } = value;
         public int DelayMilliseconds { get; set; } = delayMilliseconds;
         public int RepeatCount { get; set; } = repeatCount;
+        public int TimeoutMilliseconds { get; set; } = timeoutMilliseconds;
+        public string MonitorDeviceName { get; set; } = monitorDeviceName;
+        public string ControlCondition { get; set; } = controlCondition;
+        public int SkipStepsWhenFalse { get; set; } = skipStepsWhenFalse;
+        public string MouseAction { get; set; } = mouseAction;
         public ComboBox? TypeBox { get; set; }
         public TextBox? ValueBox { get; set; }
         public TextBox? DelayBox { get; set; }
         public TextBox? RepeatCountBox { get; set; }
+        public TextBox? TimeoutBox { get; set; }
+        public ComboBox? MonitorBox { get; set; }
+        public ComboBox? ConditionBox { get; set; }
+        public TextBox? SkipCountBox { get; set; }
+        public ComboBox? MouseActionBox { get; set; }
     }
 
     private static TextBox CreateBox(double height, bool multiline = false) => new()
