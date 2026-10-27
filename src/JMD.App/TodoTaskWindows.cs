@@ -46,7 +46,7 @@ internal sealed class TodoTaskReportWindow : Window
     public TodoTaskReportWindow(IReadOnlyList<ConversionHistoryEntry> events)
     {
         _events = events.Where(entry => entry.CommandName.StartsWith("Tarefa ", StringComparison.Ordinal))
-            .OrderBy(entry => entry.OccurredAt).ToList();
+            .OrderByDescending(entry => entry.OccurredAt).ToList();
         Title = "Relatório de tarefas"; Width = Math.Min(1100, SystemParameters.WorkArea.Width - 80);
         Height = Math.Min(820, SystemParameters.WorkArea.Height - 80); MinWidth = 680; MinHeight = 480;
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.CanResize; ShowInTaskbar = false; Topmost = true;
@@ -98,7 +98,7 @@ internal sealed class TodoTaskReportWindow : Window
         }
 
         _report.Children.Clear();
-        foreach (var dayGroup in visible.GroupBy(item => item.LocalTime.Date).OrderBy(group => group.Key))
+        foreach (var dayGroup in visible.GroupBy(item => item.LocalTime.Date).OrderByDescending(group => group.Key))
         {
             _report.Children.Add(new TextBlock { Text = dayGroup.Key.ToString("dddd, dd 'de' MMMM 'de' yyyy", System.Globalization.CultureInfo.CurrentCulture), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 8) });
             var periods = new[] { "Manhã", "Tarde", "Noite" };
@@ -114,7 +114,7 @@ internal sealed class TodoTaskReportWindow : Window
                     var hour = item.LocalTime.Hour;
                     var itemPeriod = hour >= 5 && hour < 12 ? "Manhã" : hour >= 12 && hour < 18 ? "Tarde" : "Noite";
                     return itemPeriod == periodName;
-                }).OrderBy(item => item.LocalTime).ToList();
+                }).OrderByDescending(item => item.LocalTime).ToList();
                 foreach (var item in periodEvents)
                 {
                     var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 5) };
