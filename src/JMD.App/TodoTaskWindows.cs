@@ -184,7 +184,18 @@ internal sealed class TodoTaskEditWindow : Window
         ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true;
         Background = new SolidColorBrush(Color.FromRgb(23, 25, 31)); WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var panel = new StackPanel { Margin = new Thickness(18) };
-        panel.Children.Add(new TextBlock { Text = Title, FontSize = 18, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, Margin = new Thickness(0, 0, 0, 14) });
+        var titleBar = new Border
+        {
+            Background = Brushes.Transparent,
+            Cursor = System.Windows.Input.Cursors.SizeAll,
+            Margin = new Thickness(0, 0, 0, 14),
+            Child = new TextBlock { Text = Title, FontSize = 18, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White }
+        };
+        titleBar.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ButtonState == System.Windows.Input.MouseButtonState.Pressed) DragMove();
+        };
+        panel.Children.Add(titleBar);
         panel.Children.Add(Label("Título"));
         StyleBox(_title); _title.Text = task?.Title ?? ""; _title.Margin = new Thickness(0, 4, 0, 12); panel.Children.Add(_title);
         panel.Children.Add(Label("Descrição"));
