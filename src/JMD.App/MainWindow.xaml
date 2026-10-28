@@ -613,6 +613,14 @@
                     Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,16,0,0"
                     Checked="VoiceRecognitionDebugToggle_Changed" Unchecked="VoiceRecognitionDebugToggle_Changed"
                     ToolTip="Mostra os resultados do Vosk de ativação e as tentativas de transcrição em português e inglês." />
+          <DockPanel x:Name="AudioDebugSessionControls" LastChildFill="False" Margin="0,6,0,0" Visibility="Collapsed">
+            <TextBlock x:Name="AudioDebugCountdownText" Text="Encerra em 05:00" Foreground="#FFB4F36A" FontSize="11" VerticalAlignment="Center" />
+            <Button Content="Postergar 5 min" Click="PostponeAudioDebug_Click" DockPanel.Dock="Right"
+                    Padding="8,4" Margin="8,0,0,0" Background="#FF30343E" Foreground="White"
+                    BorderThickness="0" FontSize="10" />
+            <Button Content="Parar" Click="StopAudioDebug_Click" DockPanel.Dock="Right"
+                    Padding="8,4" Background="#FF30343E" Foreground="White" BorderThickness="0" FontSize="10" />
+          </DockPanel>
           <TextBlock Text="Exibe o que o Vosk ouviu para ativar o Jey e o texto, a confiança estimada ou o erro de cada modelo usado no trecho após o corte. As confianças ajudam no diagnóstico, mas não são uma medida calibrada para comparar modelos diferentes."
                      Foreground="#FF969BA7" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0" />
           <Border x:Name="VoiceRecognitionDebugPanel" Background="#FF22252D" BorderBrush="#FF31343D" BorderThickness="1"
@@ -678,6 +686,14 @@
                   <ComboBoxItem Content="Vosk inglês · escuta contínua" />
                 </ComboBox>
               </Grid>
+              <TextBlock Text="Palavras adicionais para ativar o Jey" Foreground="#FFBFC3CC" FontSize="12" Margin="0,14,0,5" />
+              <TextBox x:Name="JeyAdditionalWakeWordsTextBox" MinHeight="66" MaxHeight="120" AcceptsReturn="True"
+                       TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="8"
+                       Background="#FF191B21" Foreground="White" BorderBrush="#FF414550"
+                       LostFocus="JeyAdditionalWakeWords_LostFocus"
+                       ToolTip="Digite uma palavra por linha. Exemplo: Jarbas" />
+              <TextBlock Text="Uma palavra por linha. Exemplo: Jarbas. As palavras são incluídas na gramática fechada de ativação quando ela está ligada."
+                         Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="2,5,2,0" />
               <CheckBox x:Name="ClosedWakeWordGrammarToggle" Content="Gramática fechada para a ativação (experimental)"
                         Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,14,0,0"
                         Checked="ClosedWakeWordGrammarToggle_Changed" Unchecked="ClosedWakeWordGrammarToggle_Changed"

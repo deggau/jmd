@@ -362,6 +362,7 @@ internal sealed class UserSettings
     public bool VoiceDebugEnabled { get; set; }
     public bool VoiceWakeRecognitionDebugEnabled { get; set; }
     public bool JeyWakeWordClosedGrammarEnabled { get; set; }
+    public string JeyAdditionalWakeWords { get; set; } = string.Empty;
     public bool JeyCommandClosedGrammarEnabled { get; set; }
     public int JeyCommandMinimumConfidencePercent { get; set; }
     public int JeyWakeWordMinimumConfidencePercent { get; set; }

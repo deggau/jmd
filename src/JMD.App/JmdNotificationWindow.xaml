@@ -11,9 +11,10 @@
         <RowDefinition Height="Auto" />
         <RowDefinition Height="*" />
         <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
       </Grid.RowDefinitions>
       <DockPanel LastChildFill="True">
-        <Button Content="×" Click="DismissButton_Click" DockPanel.Dock="Right"
+        <Button x:Name="DismissButton" Content="×" Click="DismissButton_Click" DockPanel.Dock="Right"
                 Width="24" Height="24" Padding="0" FontSize="16" Margin="8,0,0,0"
                 Background="Transparent" Foreground="#FF969BA7" BorderThickness="0" />
         <Border Width="34" Height="34" CornerRadius="10" Background="#FFB4F36A"
@@ -24,7 +25,13 @@
       </DockPanel>
       <TextBlock x:Name="NotificationMessage" Grid.Row="1" Foreground="#FFD8DBE2" FontSize="12"
                  TextWrapping="Wrap" Margin="0,7,0,0" MaxHeight="56" />
-      <ProgressBar x:Name="ProcessingProgress" Grid.Row="2" Height="3" Margin="0,9,0,0"
+      <StackPanel x:Name="AudioDebugActions" Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0" Visibility="Collapsed">
+        <Button Content="Postergar 5 min" Click="PostponeAudioDebug_Click" Padding="8,5" Margin="0,0,6,0"
+                Background="#FF30343E" Foreground="White" BorderThickness="0" FontSize="11" />
+        <Button Content="Parar" Click="StopAudioDebug_Click" Padding="10,5"
+                Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" FontSize="11" FontWeight="SemiBold" />
+      </StackPanel>
+      <ProgressBar x:Name="ProcessingProgress" Grid.Row="3" Height="3" Margin="0,9,0,0"
                    IsIndeterminate="True" Background="#FF3A3E48" Foreground="#FFB4F36A"
                    BorderThickness="0" Visibility="Collapsed" />
     </Grid>

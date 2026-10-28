@@ -31,6 +31,7 @@ internal sealed class VoiceWakeWordService : IDisposable
     private readonly string _portugueseModelId;
     private readonly string _englishModelId;
     private readonly bool _closedWakeWordGrammarEnabled;
+    private readonly string[] _additionalWakeWords;
     private readonly bool _closedCommandGrammarEnabled;
     private readonly WhisperCppTranscriber _whisper = new();
     private readonly Gemma4Transcriber _gemma = new();
@@ -103,11 +104,13 @@ internal sealed class VoiceWakeWordService : IDisposable
         bool closedWakeWordGrammarEnabled = false,
         int minimumWakeWordConfidencePercent = 0,
         bool closedCommandGrammarEnabled = false,
-        int minimumCommandConfidencePercent = 0)
+        int minimumCommandConfidencePercent = 0,
+        string? additionalWakeWords = null)
     {
         _portugueseModelId = portugueseModelId;
         _englishModelId = englishModelId;
         _closedWakeWordGrammarEnabled = closedWakeWordGrammarEnabled;
+        _additionalWakeWords = VoiceWakeWordPolicy.ParseAdditionalWakeWords(additionalWakeWords);
         _closedCommandGrammarEnabled = closedCommandGrammarEnabled;
         MinimumWakeWordConfidencePercent = minimumWakeWordConfidencePercent;
         MinimumCommandConfidencePercent = minimumCommandConfidencePercent;
@@ -122,7 +125,8 @@ internal sealed class VoiceWakeWordService : IDisposable
         _model = new Model(wakeWordModelPath);
         if (_closedWakeWordGrammarEnabled)
         {
-            _recognizer = new VoskRecognizer(_model, 16000.0f, "[\"jay\"]");
+            _recognizer = new VoskRecognizer(_model, 16000.0f,
+                VoiceCommandGrammar.CreateVoskWakeWordGrammar(true, _additionalWakeWords)!);
             _followupRecognizer = new VoskRecognizer(_model, 16000.0f);
         }
         else
@@ -685,10 +689,10 @@ internal sealed class VoiceWakeWordService : IDisposable
             VoicePhrasePolicy.Matches(phrase, transcript) || VoicePhrasePolicy.StartsWith(phrase, transcript));
     }
 
-    private static string RemoveActivationWord(string transcript)
+    private string RemoveActivationWord(string transcript)
     {
         var words = transcript.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length > 0 && IsActivationWord(VoicePhrasePolicy.Normalize(words[0])))
+        if (words.Length > 0 && VoiceWakeWordPolicy.IsWakeWordToken(words[0], _additionalWakeWords))
             return string.Join(' ', words.Skip(1));
         return transcript;
     }
@@ -728,21 +732,13 @@ internal sealed class VoiceWakeWordService : IDisposable
         catch (Exception) { }
     }
 
-    private static bool IsActivationWord(string word)
-        => word.Equals("jay", StringComparison.OrdinalIgnoreCase) ||
-           word.Equals("jey", StringComparison.OrdinalIgnoreCase) ||
-           word.Equals("jei", StringComparison.OrdinalIgnoreCase) ||
-           word.Equals("j", StringComparison.OrdinalIgnoreCase) ||
-           word.Equals("já", StringComparison.OrdinalIgnoreCase) ||
-           word.Equals("ja", StringComparison.OrdinalIgnoreCase);
-
-    private static string? GetWakeWordToken(string resultJson)
+    private string? GetWakeWordToken(string resultJson)
     {
         using var result = JsonDocument.Parse(resultJson);
         var firstWord = result.RootElement.TryGetProperty("text", out var text)
             ? text.GetString()?.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()
             : null;
-        if (!VoiceWakeWordPolicy.IsWakeWordToken(firstWord)) return null;
+        if (!VoiceWakeWordPolicy.IsWakeWordToken(firstWord, _additionalWakeWords)) return null;
         return VoicePhrasePolicy.Normalize(firstWord);
     }
 
@@ -759,7 +755,7 @@ internal sealed class VoiceWakeWordService : IDisposable
             : null;
     }
 
-    private static bool TryGetWakeWordEnd(JsonElement result, out double end)
+    private bool TryGetWakeWordEnd(JsonElement result, out double end)
     {
         end = 0;
         if (!result.TryGetProperty("result", out var words) ||
@@ -767,7 +763,7 @@ internal sealed class VoiceWakeWordService : IDisposable
             return false;
         var firstWord = words[0];
         return firstWord.TryGetProperty("word", out var word) &&
-            word.GetString() is { } recognizedWord && VoiceWakeWordPolicy.IsWakeWordToken(recognizedWord) &&
+            word.GetString() is { } recognizedWord && VoiceWakeWordPolicy.IsWakeWordToken(recognizedWord, _additionalWakeWords) &&
             firstWord.TryGetProperty("end", out var endElement) &&
             (end = endElement.GetDouble()) >= 0;
     }

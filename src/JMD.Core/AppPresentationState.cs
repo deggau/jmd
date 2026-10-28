@@ -300,10 +300,19 @@ public static class VoiceWakeWordPolicy
 {
     public const int AmbiguousLetterConfidenceFloorPercent = 80;
 
-    public static bool IsWakeWordToken(string? token)
+    public static string[] ParseAdditionalWakeWords(string? value)
+        => (value ?? string.Empty)
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(VoicePhrasePolicy.Normalize)
+            .Where(word => word.Length > 0 && !word.Contains(' '))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    public static bool IsWakeWordToken(string? token, IEnumerable<string>? additionalWords = null)
     {
         var normalized = VoicePhrasePolicy.Normalize(token);
-        return normalized is "jay" or "jey" or "jei" or "j";
+        return normalized is "jay" or "jey" or "jei" or "j" ||
+            additionalWords?.Any(word => string.Equals(normalized, VoicePhrasePolicy.Normalize(word), StringComparison.OrdinalIgnoreCase)) == true;
     }
 
     public static int GetMinimumConfidencePercent(string? token, int configuredMinimum)

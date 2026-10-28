@@ -57,6 +57,7 @@ public partial class MainWindow : Window
     private readonly WindowsDisplayAwakeService _displayAwake = new();
     private VoiceWakeWordService? _voiceWakeWord;
     private JmdNotificationWindow? _jeyProcessingNotification;
+    private JmdNotificationWindow? _audioDebugNotification;
     private MediaPlayer? _historyAudioPlayer;
     private string? _historyAudioPlaybackPath;
     private bool _updatingVoiceWakeWordToggle;
@@ -73,6 +74,9 @@ public partial class MainWindow : Window
     private readonly System.Windows.Threading.DispatcherTimer _benchmarkRecordingTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private DateTimeOffset _benchmarkRecordingStartedAt;
     private readonly System.Windows.Threading.DispatcherTimer _memoryRefreshTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly System.Windows.Threading.DispatcherTimer _audioDebugTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private DateTimeOffset _audioDebugDeadline;
+    private string _audioDebugLatestTranscript = "Aguardando transcrição…";
     private readonly SelectionTransformer _selectionTransformer;
     private readonly ObservableCollection<CommandRow> _commands = [];
     private readonly AppNavigationState _navigation = new();
@@ -137,6 +141,9 @@ public partial class MainWindow : Window
         _todoTasks = new ObservableCollection<TodoTask>(_todoTaskStore.GetAll().Select(FromTodoTaskEntry));
         _todoReminderTimer.Tick += CheckTodoTaskReminders;
         _todoReminderTimer.Start();
+        _audioDebugTimer.Tick += AudioDebugTimer_Tick;
+        IsVisibleChanged += (_, _) => UpdateAudioDebugNotification();
+        JeySettingsPage.IsVisibleChanged += (_, _) => UpdateAudioDebugNotification();
         HideFromCaptureToggle.Visibility = ScreenCaptureExclusionPolicy.IsSupported(Environment.OSVersion.Version)
             ? Visibility.Visible : Visibility.Collapsed;
         ConfigureDefaultVoiceCommands();
@@ -158,6 +165,7 @@ public partial class MainWindow : Window
         UpdateVoiceRecognitionDebugText();
         _updatingVoiceRecognitionDebugToggle = false;
         _loadingJeyModelSettings = true;
+        JeyAdditionalWakeWordsTextBox.Text = _settings.JeyAdditionalWakeWords;
         ClosedWakeWordGrammarToggle.IsChecked = _settings.JeyWakeWordClosedGrammarEnabled;
         ClosedCommandGrammarToggle.IsChecked = _settings.JeyCommandClosedGrammarEnabled;
         WakeWordMinimumConfidenceSlider.Value = _settings.JeyWakeWordMinimumConfidencePercent;
@@ -231,6 +239,7 @@ public partial class MainWindow : Window
                 SetVoiceWakeWordUnavailable(exception);
             }
         }
+        if (_settings.VoiceWakeRecognitionDebugEnabled) StartAudioDebugSession();
         HistoryRetentionBox.Text = _settings.HistoryRetentionDays.ToString(CultureInfo.InvariantCulture);
         RefreshHistory();
         SourceInitialized += MainWindow_SourceInitialized;
@@ -384,7 +393,8 @@ public partial class MainWindow : Window
 
     private void BuildSettingsPanel()
     {
-        var existingStatuses = _shortcutRows.ToDictionary(row => row.Id, row => (row.Status, row.StatusBrush), StringComparer.Ordinal);
+        var existingStatuses = _shortcutRows.GroupBy(row => row.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => (group.Last().Status, group.Last().StatusBrush), StringComparer.Ordinal);
         SettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
@@ -461,7 +471,8 @@ public partial class MainWindow : Window
 
     private void BuildWorkflowSettingsPanel()
     {
-        var existingStatuses = _shortcutRows.ToDictionary(row => row.Id, row => (row.Status, row.StatusBrush), StringComparer.Ordinal);
+        var existingStatuses = _shortcutRows.GroupBy(row => row.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => (group.Last().Status, group.Last().StatusBrush), StringComparer.Ordinal);
         WorkflowSettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
@@ -497,7 +508,7 @@ public partial class MainWindow : Window
         addCustomShortcut.Click += (_, _) =>
         {
             CreateCustomShortcutFromDialog();
-            BuildWorkflowSettingsPanel();
+            RebuildWorkflowSettingsPanelSafely();
         };
         WorkflowSettingsPanel.Children.Add(addCustomShortcut);
 
@@ -558,7 +569,7 @@ public partial class MainWindow : Window
             editCustomShortcut.Click += (_, _) =>
             {
                 CreateCustomShortcutFromDialog(customShortcut);
-                BuildWorkflowSettingsPanel();
+                RebuildWorkflowSettingsPanelSafely();
             };
             var removeCustomShortcut = new Button
             {
@@ -606,6 +617,16 @@ public partial class MainWindow : Window
             row.StatusBrush = status.StatusBrush;
         }
         RefreshShortcutStatuses();
+    }
+
+    private void RebuildWorkflowSettingsPanelSafely()
+    {
+        try { BuildWorkflowSettingsPanel(); }
+        catch (Exception exception)
+        {
+            CriticalErrorLog.Write("Atualizar lista de workflows personalizados", exception);
+            SetStatus($"O workflow foi salvo, mas a lista não pôde ser atualizada: {exception.Message}", false);
+        }
     }
 
     private void AddManagementNavigation(StackPanel panel, bool workflowsSelected)
@@ -1003,9 +1024,11 @@ public partial class MainWindow : Window
         entry.FocusIfAlreadyOpen = focusIfAlreadyOpen;
         if (existing is null) _settings.CustomShortcuts.Add(entry);
         _settings.VoicePhrases[entry.Id] = phrases;
+        var settingsPersisted = false;
         try
         {
             _settingsStore.Save(_settings);
+            settingsPersisted = true;
             var oldRow = _commands.FirstOrDefault(command => command.Id == entry.Id);
             if (oldRow is not null) _commands.Remove(oldRow);
             _commands.Add(new CommandRow(entry.Id, entry.Name, DescribeCustomWorkflow(entry),
@@ -1024,14 +1047,15 @@ public partial class MainWindow : Window
             _commandView?.Refresh();
             Notify("JMD", $"Atalho personalizado {(existing is null ? "criado" : "atualizado")}: {name}.", true);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception)
         {
-            if (existing is null)
+            CriticalErrorLog.Write("Salvar workflow personalizado", exception);
+            if (!settingsPersisted && existing is null)
             {
                 _settings.CustomShortcuts.Remove(entry);
                 _settings.VoicePhrases.Remove(entry.Id);
             }
-            else if (previous is not null)
+            else if (!settingsPersisted && previous is not null)
             {
                 entry.Name = previous.Value.Name;
                 entry.Target = previous.Value.Target;
@@ -1040,9 +1064,16 @@ public partial class MainWindow : Window
                 entry.Steps = previous.Value.Steps;
                 _settings.VoicePhrases[entry.Id] = previousPhrases;
             }
-            Notify("JMD", $"Não foi possível salvar o atalho: {exception.Message}", false);
+            SetStatus(settingsPersisted
+                ? $"O workflow foi salvo, mas a tela não foi atualizada corretamente: {exception.Message}"
+                : $"Não foi possível salvar o atalho: {exception.Message}", false);
         }
-        UpdateVoiceCommandPhrases();
+        try { UpdateVoiceCommandPhrases(); }
+        catch (Exception exception)
+        {
+            CriticalErrorLog.Write("Atualizar frases de voz após salvar workflow", exception);
+            SetStatus($"O workflow foi salvo, mas as frases de voz não foram atualizadas: {exception.Message}", false);
+        }
     }
 
     private string? ValidateCustomWorkflowDraft(CustomShortcutEditorWindow dialog, string? exceptId)
@@ -2167,7 +2198,8 @@ public partial class MainWindow : Window
     private void ShowTodoTaskPanel()
     {
         _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask,
-            ReopenTodoTask, PauseTodoTask, UnpauseTodoTask, ToggleTodoTaskChecklist, () => _ = CreateTodoTaskAsync(), ShowTodoTaskReport);
+            ReopenTodoTask, PauseTodoTask, UnpauseTodoTask, ToggleTodoTaskChecklist,
+            CreateTodoTaskAsync, ShowTodoTaskReport, UndoTodoTaskActions);
         _todoTaskPanel.ShowOpenTasks();
         _todoTaskPanel.Show();
         _todoTaskPanel.Activate();
@@ -2297,6 +2329,16 @@ public partial class MainWindow : Window
         _todoTasks.Remove(task);
         SaveTodoTasks();
         RecordTodoTaskChange("excluída", task, $"Tarefa excluída: {TodoTaskDisplay.Reference(task)} {task.Title}");
+        _todoTaskPanel?.Refresh();
+    }
+
+    private void UndoTodoTaskActions(IReadOnlyList<TodoTaskEntry> previousTasks)
+    {
+        _todoTasks.Clear();
+        foreach (var task in previousTasks)
+            _todoTasks.Add(FromTodoTaskEntry(task with { Checklist = task.Checklist is null ? [] : [.. task.Checklist] }));
+        SaveTodoTasks();
+        RecordActionHistory("Tarefa ação desfeita", string.Empty, "A última ação no painel de tarefas foi desfeita.");
         _todoTaskPanel?.Refresh();
     }
 
@@ -2940,7 +2982,8 @@ public partial class MainWindow : Window
             _settings.JeyWakeWordClosedGrammarEnabled,
             _settings.JeyWakeWordMinimumConfidencePercent,
             _settings.JeyCommandClosedGrammarEnabled,
-            _settings.JeyCommandMinimumConfidencePercent);
+            _settings.JeyCommandMinimumConfidencePercent,
+            _settings.JeyAdditionalWakeWords);
         _voiceWakeWord = service;
         service.SetVoiceCommandPhrases(GetEnabledVoiceCommandPhrases());
         service.DebugEnabled = _settings.VoiceDebugEnabled;
@@ -2958,6 +3001,10 @@ public partial class MainWindow : Window
         service.WakeWordRecognitionDebugUpdated += debugInfo => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (!ReferenceEquals(_voiceWakeWord, service) || !_settings.VoiceWakeRecognitionDebugEnabled) return;
+            _audioDebugLatestTranscript = string.IsNullOrWhiteSpace(debugInfo.Transcript)
+                ? "Parcial: (sem fala reconhecida)"
+                : $"Parcial: {debugInfo.Transcript}";
+            UpdateAudioDebugNotification();
             if (debugInfo.IsFinal)
             {
                 var heard = string.IsNullOrWhiteSpace(debugInfo.Transcript) ? "(sem transcrição)" : debugInfo.Transcript;
@@ -3352,6 +3399,8 @@ public partial class MainWindow : Window
         try
         {
             _settingsStore.Save(_settings);
+            if (enabled) StartAudioDebugSession();
+            else StopAudioDebugSession();
             SetStatus(enabled ? "Depuração de reconhecimento ativada." : "Depuração de reconhecimento desativada.", true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -3364,6 +3413,91 @@ public partial class MainWindow : Window
             if (_voiceWakeWord is not null) _voiceWakeWord.WakeWordRecognitionDebugEnabled = !enabled;
             SetStatus($"Não foi possível salvar a opção de depuração: {exception.Message}", false);
         }
+    }
+
+    private void StartAudioDebugSession()
+    {
+        _audioDebugDeadline = DateTimeOffset.Now.AddMinutes(5);
+        _audioDebugTimer.Start();
+        UpdateAudioDebugSessionUi();
+    }
+
+    private void PostponeAudioDebug_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_settings.VoiceWakeRecognitionDebugEnabled) return;
+        StartAudioDebugSession();
+    }
+
+    private void StopAudioDebug_Click(object sender, RoutedEventArgs e)
+    {
+        VoiceRecognitionDebugToggle.IsChecked = false;
+    }
+
+    private void StopAudioDebugSession()
+    {
+        _audioDebugTimer.Stop();
+        AudioDebugSessionControls.Visibility = Visibility.Collapsed;
+        CloseAudioDebugNotification();
+    }
+
+    private void AudioDebugTimer_Tick(object? sender, EventArgs e)
+    {
+        if (DateTimeOffset.Now >= _audioDebugDeadline)
+        {
+            StopAudioDebug_Click(this, new RoutedEventArgs());
+            SetStatus("A depuração de áudio foi encerrada após cinco minutos.", true);
+            return;
+        }
+        UpdateAudioDebugSessionUi();
+    }
+
+    private void UpdateAudioDebugSessionUi()
+    {
+        if (!_settings.VoiceWakeRecognitionDebugEnabled) return;
+        var remaining = _audioDebugDeadline - DateTimeOffset.Now;
+        if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
+        var countdown = $"{(int)remaining.TotalMinutes:00}:{remaining.Seconds:00}";
+        AudioDebugCountdownText.Text = $"Depuração ativa · encerra em {countdown}";
+        AudioDebugSessionControls.Visibility = Visibility.Visible;
+        UpdateAudioDebugNotification(countdown);
+    }
+
+    private void UpdateAudioDebugNotification(string? countdown = null)
+    {
+        if (!_settings.VoiceWakeRecognitionDebugEnabled || (IsVisible && JeySettingsPage.IsVisible))
+        {
+            CloseAudioDebugNotification();
+            return;
+        }
+        if (countdown is null)
+        {
+            var remaining = _audioDebugDeadline - DateTimeOffset.Now;
+            if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
+            countdown = $"{(int)remaining.TotalMinutes:00}:{remaining.Seconds:00}";
+        }
+        var message = $"Depuração de áudio ativa · encerra em {countdown}\n{_audioDebugLatestTranscript}";
+        if (_audioDebugNotification is { IsVisible: true } current)
+        {
+            current.UpdateProcessingMessage(message);
+            return;
+        }
+        var notification = new JmdNotificationWindow(message, historyId: null, isProcessing: true,
+            stopAudioDebug: () => Dispatcher.BeginInvoke(new Action(() => StopAudioDebug_Click(this, new RoutedEventArgs()))),
+            postponeAudioDebug: () => Dispatcher.BeginInvoke(new Action(() => PostponeAudioDebug_Click(this, new RoutedEventArgs()))));
+        PrepareWindowForCaptureExclusion(notification);
+        _audioDebugNotification = notification;
+        notification.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_audioDebugNotification, notification)) _audioDebugNotification = null;
+        };
+        notification.Show();
+    }
+
+    private void CloseAudioDebugNotification()
+    {
+        var notification = _audioDebugNotification;
+        _audioDebugNotification = null;
+        if (notification?.IsVisible == true) notification.Close();
     }
 
     private void ClosedWakeWordGrammarToggle_Changed(object sender, RoutedEventArgs e)
@@ -3394,6 +3528,34 @@ public partial class MainWindow : Window
                 catch { }
             }
             SetStatus($"Não foi possível aplicar a gramática fechada: {exception.Message}", false);
+        }
+    }
+
+    private void JeyAdditionalWakeWords_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loadingJeyModelSettings || sender is not TextBox textBox) return;
+        var previous = _settings.JeyAdditionalWakeWords;
+        var updated = textBox.Text;
+        if (string.Equals(previous, updated, StringComparison.Ordinal)) return;
+
+        _settings.JeyAdditionalWakeWords = updated;
+        try
+        {
+            if (_settings.VoiceWakeWordEnabled) StartVoiceWakeWord();
+            _settingsStore.Save(_settings);
+        }
+        catch (Exception exception)
+        {
+            _settings.JeyAdditionalWakeWords = previous;
+            _loadingJeyModelSettings = true;
+            textBox.Text = previous;
+            _loadingJeyModelSettings = false;
+            if (_settings.VoiceWakeWordEnabled)
+            {
+                try { StartVoiceWakeWord(); }
+                catch { }
+            }
+            SetStatus($"Não foi possível aplicar as palavras adicionais do Jey: {exception.Message}", false);
         }
     }
 

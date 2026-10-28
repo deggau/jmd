@@ -10,11 +10,13 @@ public partial class JmdNotificationWindow : Window
     private readonly DispatcherTimer _dismissTimer;
     private readonly long? _historyId;
     private readonly bool _isProcessing;
+    private readonly Action? _stopAudioDebug;
+    private readonly Action? _postponeAudioDebug;
 
     public event Action<long?>? HistoryRequested;
 
     public JmdNotificationWindow(string message, long? historyId, bool isProcessing = false,
-        TimeSpan? displayDuration = null)
+        TimeSpan? displayDuration = null, Action? stopAudioDebug = null, Action? postponeAudioDebug = null)
     {
         InitializeComponent();
         _dismissTimer = new DispatcherTimer
@@ -23,6 +25,14 @@ public partial class JmdNotificationWindow : Window
         };
         _historyId = historyId;
         _isProcessing = isProcessing;
+        _stopAudioDebug = stopAudioDebug;
+        _postponeAudioDebug = postponeAudioDebug;
+        AudioDebugActions.Visibility = stopAudioDebug is not null ? Visibility.Visible : Visibility.Collapsed;
+        if (stopAudioDebug is not null)
+        {
+            Height = 164;
+            DismissButton.Visibility = Visibility.Collapsed;
+        }
         NotificationMessage.Text = message;
         ProcessingProgress.Visibility = isProcessing ? Visibility.Visible : Visibility.Collapsed;
 
@@ -41,6 +51,10 @@ public partial class JmdNotificationWindow : Window
     }
 
     private void DismissButton_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void StopAudioDebug_Click(object sender, RoutedEventArgs e) => _stopAudioDebug?.Invoke();
+
+    private void PostponeAudioDebug_Click(object sender, RoutedEventArgs e) => _postponeAudioDebug?.Invoke();
 
     private void NotificationBorder_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {

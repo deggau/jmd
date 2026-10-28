@@ -537,19 +537,24 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly Action<TodoTask> _pause;
     private readonly Action<TodoTask> _unpause;
     private readonly Action<TodoTask, int> _toggleChecklist;
-    private readonly Action _create;
+    private readonly Func<Task> _create;
     private readonly Action _showReport;
+    private readonly Action<IReadOnlyList<TodoTaskEntry>> _undo;
     private readonly Button _historyButton;
+    private readonly Button _undoButton;
     private readonly TextBlock _title;
     private readonly StackPanel _list = new();
+    private List<TodoTaskEntry>? _pendingUndoSnapshot;
+    private List<TodoTaskEntry>? _undoSnapshot;
     private bool _showHistory;
     private bool _modalChildActive;
 
     public TodoTaskPanelWindow(ObservableCollection<TodoTask> tasks, Action<TodoTask> complete, Action<TodoTask> edit,
-        Action<TodoTask> delete, Action<TodoTask> reopen, Action<TodoTask> pause, Action<TodoTask> unpause, Action<TodoTask, int> toggleChecklist, Action onCreate, Action showReport)
+        Action<TodoTask> delete, Action<TodoTask> reopen, Action<TodoTask> pause, Action<TodoTask> unpause, Action<TodoTask, int> toggleChecklist,
+        Func<Task> onCreate, Action showReport, Action<IReadOnlyList<TodoTaskEntry>> undo)
     {
         _tasks = tasks; _complete = complete; _edit = edit; _delete = delete; _reopen = reopen;
-        _pause = pause; _unpause = unpause; _toggleChecklist = toggleChecklist; _create = onCreate; _showReport = showReport;
+        _pause = pause; _unpause = unpause; _toggleChecklist = toggleChecklist; _create = onCreate; _showReport = showReport; _undo = undo;
         Width = 390; Height = SystemParameters.WorkArea.Height; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false; Topmost = true; Background = new SolidColorBrush(Color.FromRgb(23, 25, 31));
         WindowStartupLocation = WindowStartupLocation.Manual; Left = SystemParameters.WorkArea.Right - Width; Top = SystemParameters.WorkArea.Top;
@@ -564,7 +569,19 @@ internal sealed class TodoTaskPanelWindow : Window
         var reportButton = IconButton("\uE9D2", "Relatório de tarefas"); reportButton.Click += (_, _) => _showReport(); DockPanel.SetDock(reportButton, Dock.Right); header.Children.Add(reportButton);
         var content = new DockPanel();
         var newTaskButton = new Button { Content = "＋  Nova tarefa", Height = 40, Margin = new Thickness(0, 12, 0, 0), Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)), Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)), FontWeight = FontWeights.SemiBold, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
-        newTaskButton.Click += (_, _) => _create(); DockPanel.SetDock(newTaskButton, Dock.Bottom); content.Children.Add(newTaskButton);
+        newTaskButton.Click += async (_, _) => await RunUndoableCreateAsync();
+        _undoButton = new Button
+        {
+            Content = "Desfazer", Height = 34, Margin = new Thickness(0, 10, 0, 0),
+            Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White,
+            BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand,
+            ToolTip = "Desfaz a última ação no painel de tarefas", Visibility = Visibility.Collapsed
+        };
+        _undoButton.Click += (_, _) => UndoLastAction();
+        var bottomActions = new StackPanel();
+        bottomActions.Children.Add(_undoButton);
+        bottomActions.Children.Add(newTaskButton);
+        DockPanel.SetDock(bottomActions, Dock.Bottom); content.Children.Add(bottomActions);
         content.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _list }); root.Children.Add(content);
         Content = root; Refresh();
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape || (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Left)) { e.Handled = true; Hide(); } };
@@ -573,6 +590,7 @@ internal sealed class TodoTaskPanelWindow : Window
 
     public void Refresh()
     {
+        TryPromotePendingUndo();
         _list.Children.Clear();
         _title.Text = _showHistory ? "Histórico" : "Tarefas";
         var matchingTasks = _tasks.Where(t => _showHistory ? t.CompletedAt is not null : t.CompletedAt is null);
@@ -586,7 +604,7 @@ internal sealed class TodoTaskPanelWindow : Window
             var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, 0, 4) };
             if (!_showHistory)
             {
-                var done = IconButton("\uE73E", "Concluir"); done.Click += (_, _) => _complete(task);
+                var done = IconButton("\uE73E", "Concluir"); done.Click += (_, _) => RunUndoableAction(() => _complete(task));
                 actions.Children.Add(done);
                 if (task.PausedAt is null)
                 {
@@ -595,21 +613,21 @@ internal sealed class TodoTaskPanelWindow : Window
                     pauseGlyph.Children.Add(new System.Windows.Shapes.Rectangle { Width = 3, Height = 14, Fill = Brushes.White, Margin = new Thickness(1, 0, 1, 0) });
                     pauseGlyph.Children.Add(new System.Windows.Shapes.Rectangle { Width = 3, Height = 14, Fill = Brushes.White, Margin = new Thickness(1, 0, 1, 0) });
                     pause.Content = pauseGlyph;
-                    pause.Click += (_, _) => _pause(task);
+                    pause.Click += (_, _) => RunUndoableAction(() => _pause(task));
                     actions.Children.Add(pause);
                 }
                 else
                 {
-                    var unpause = IconButton("\uE768", "Destravar tarefa"); unpause.Click += (_, _) => _unpause(task);
+                    var unpause = IconButton("\uE768", "Destravar tarefa"); unpause.Click += (_, _) => RunUndoableAction(() => _unpause(task));
                     actions.Children.Add(unpause);
                 }
             }
             else
             {
-                var reopen = IconButton("\uE777", "Reabrir tarefa"); reopen.Click += (_, _) => _reopen(task); actions.Children.Add(reopen);
+                var reopen = IconButton("\uE777", "Reabrir tarefa"); reopen.Click += (_, _) => RunUndoableAction(() => _reopen(task)); actions.Children.Add(reopen);
             }
-            var edit = IconButton("\uE70F", "Editar"); edit.Click += (_, _) => _edit(task); actions.Children.Add(edit);
-            var remove = IconButton("\uE74D", "Excluir"); remove.Click += (_, _) => _delete(task); actions.Children.Add(remove);
+            var edit = IconButton("\uE70F", "Editar"); edit.Click += (_, _) => RunUndoableAction(() => _edit(task)); actions.Children.Add(edit);
+            var remove = IconButton("\uE74D", "Excluir"); remove.Click += (_, _) => RunUndoableAction(() => _delete(task)); actions.Children.Add(remove);
             layout.Children.Add(actions);
             var body = new StackPanel();
             body.Children.Add(new TextBlock { Text = TodoTaskDisplay.Reference(task), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, Margin = new Thickness(0, 0, 0, 3) });
@@ -636,7 +654,7 @@ internal sealed class TodoTaskPanelWindow : Window
                         HorizontalContentAlignment = HorizontalAlignment.Left
                     };
                     var itemIndex = index;
-                    check.Click += (_, _) => _toggleChecklist(task, itemIndex);
+                    check.Click += (_, _) => RunUndoableAction(() => _toggleChecklist(task, itemIndex));
                     body.Children.Add(check);
                 }
             }
@@ -675,4 +693,61 @@ internal sealed class TodoTaskPanelWindow : Window
     }
 
     private static Button IconButton(string glyph, string hint) => new() { Content = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13, Width = 28, Height = 28, Margin = new Thickness(1), ToolTip = hint, Focusable = true, Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+
+    private void RunUndoableAction(Action action)
+    {
+        _pendingUndoSnapshot = CaptureTaskSnapshot();
+        try
+        {
+            action();
+            TryPromotePendingUndo();
+        }
+        finally
+        {
+            if (_pendingUndoSnapshot is { } pending && TaskSnapshotsEqual(pending, CaptureTaskSnapshot()))
+                _pendingUndoSnapshot = null;
+        }
+    }
+
+    private async Task RunUndoableCreateAsync()
+    {
+        _pendingUndoSnapshot = CaptureTaskSnapshot();
+        try
+        {
+            await _create();
+            TryPromotePendingUndo();
+        }
+        finally
+        {
+            if (_pendingUndoSnapshot is { } pending && TaskSnapshotsEqual(pending, CaptureTaskSnapshot()))
+                _pendingUndoSnapshot = null;
+        }
+    }
+
+    private void TryPromotePendingUndo()
+    {
+        if (_pendingUndoSnapshot is not { } pending || TaskSnapshotsEqual(pending, CaptureTaskSnapshot())) return;
+        _undoSnapshot = pending;
+        _pendingUndoSnapshot = null;
+        _undoButton.Visibility = Visibility.Visible;
+    }
+
+    private void UndoLastAction()
+    {
+        if (_undoSnapshot is not { } snapshot) return;
+        _undoSnapshot = null;
+        _pendingUndoSnapshot = null;
+        _undoButton.Visibility = Visibility.Collapsed;
+        _undo(snapshot);
+    }
+
+    private List<TodoTaskEntry> CaptureTaskSnapshot()
+        => _tasks.Select(task => new TodoTaskEntry(task.Id, task.Title, task.Description, task.CreatedAt, task.CompletedAt,
+            task.TaskNumber, task.ReminderIntervalMinutes, task.CategoryColor, task.LastReminderAt, task.Urls, task.Attachments,
+            task.PausedAt, task.PauseReason, task.PausedBy, [.. task.Checklist])).ToList();
+
+    private static bool TaskSnapshotsEqual(IReadOnlyList<TodoTaskEntry> left, IReadOnlyList<TodoTaskEntry> right)
+        => left.Count == right.Count && left.Zip(right).All(pair =>
+            (pair.First with { Checklist = null }) == (pair.Second with { Checklist = null }) &&
+            (pair.First.Checklist ?? []).SequenceEqual(pair.Second.Checklist ?? []));
 }

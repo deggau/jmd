@@ -293,6 +293,27 @@ public sealed class AppPresentationStateTests
     public void Wake_word_policy_accepts_jey_jay_and_the_confidence_gated_letter_j(string token, bool expected)
         => Assert.Equal(expected, VoiceWakeWordPolicy.IsWakeWordToken(token));
 
+    [Fact]
+    public void Additional_wake_words_are_parsed_from_multiple_lines_and_accepted_case_insensitively()
+    {
+        var words = VoiceWakeWordPolicy.ParseAdditionalWakeWords(" Jarbas \r\n\nAtena\njarbas ");
+
+        Assert.Equal(["jarbas", "atena"], words);
+        Assert.True(VoiceWakeWordPolicy.IsWakeWordToken("JARBAS", words));
+        Assert.False(VoiceWakeWordPolicy.IsWakeWordToken("Jarbas", []));
+    }
+
+    [Fact]
+    public void Closed_vosk_wake_word_grammar_includes_additional_words()
+    {
+        var grammar = VoiceCommandGrammar.CreateVoskWakeWordGrammar(true, ["jarbas", "ATENA", "jarbas"]);
+
+        Assert.NotNull(grammar);
+        Assert.Equal(["jay", "jarbas", "atena"],
+            System.Text.Json.JsonSerializer.Deserialize<string[]>(grammar!));
+        Assert.Null(VoiceCommandGrammar.CreateVoskWakeWordGrammar(false, ["jarbas"]));
+    }
+
     [Theory]
     [InlineData("J", 0, 80)]
     [InlineData("J.", 90, 90)]

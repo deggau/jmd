@@ -5,6 +5,18 @@ namespace JMD.Core;
 
 public static class VoiceCommandGrammar
 {
+    public static string? CreateVoskWakeWordGrammar(bool enabled, IEnumerable<string> additionalWords)
+    {
+        if (!enabled) return null;
+        var words = new[] { "jay" }.Concat(additionalWords)
+            .Where(word => !string.IsNullOrWhiteSpace(word))
+            .Select(VoicePhrasePolicy.Normalize)
+            .Where(word => word.Length > 0 && !word.Contains(' '))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return JsonSerializer.Serialize(words);
+    }
+
     public static string[] CreateSherpaHotwords(bool enabled, string modelId, IEnumerable<string> phrases)
     {
         if (!enabled || modelId is not (VoiceModelOptions.SherpaParakeetPtBr or VoiceModelOptions.SherpaZipformerEn)) return [];
