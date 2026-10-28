@@ -37,10 +37,12 @@ internal sealed class TodoTask
 internal sealed class TodoTaskReportWindow : Window
 {
     private readonly IReadOnlyList<ConversionHistoryEntry> _events;
-    private readonly Grid _calendar = new() { Width = 420, HorizontalAlignment = HorizontalAlignment.Center };
+    private readonly Grid _calendar = new() { Width = 300, HorizontalAlignment = HorizontalAlignment.Right };
     private readonly StackPanel _report = new();
     private readonly TextBlock _rangeLabel = new();
     private readonly Button _showMonthButton;
+    private readonly Button _calendarToggleButton;
+    private bool _calendarExpanded = true;
     private DateTime _displayMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
     private DateTime? _selectedDate;
 
@@ -65,11 +67,20 @@ internal sealed class TodoTaskReportWindow : Window
         close.Click += (_, _) => Close(); Grid.SetColumn(close, 1); header.Children.Add(close);
         DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
 
-        var calendarPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
-        var calendarControls = new DockPanel { Width = 420, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 8) };
+        var calendarPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 0, 16) };
+        var calendarControls = new DockPanel { Width = 340, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 0, 8) };
         var nextMonth = ReportButton("›"); nextMonth.ToolTip = "Próximo mês";
         nextMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(1); _selectedDate = null; RefreshReport(); };
         DockPanel.SetDock(nextMonth, Dock.Right); calendarControls.Children.Add(nextMonth);
+        _calendarToggleButton = ReportButton("⌄"); _calendarToggleButton.ToolTip = "Recolher calendário";
+        _calendarToggleButton.Click += (_, _) =>
+        {
+            _calendarExpanded = !_calendarExpanded;
+            _calendar.Visibility = _calendarExpanded ? Visibility.Visible : Visibility.Collapsed;
+            _calendarToggleButton.Content = _calendarExpanded ? "⌄" : "▦";
+            _calendarToggleButton.ToolTip = _calendarExpanded ? "Recolher calendário" : "Expandir calendário";
+        };
+        DockPanel.SetDock(_calendarToggleButton, Dock.Right); calendarControls.Children.Add(_calendarToggleButton);
         var previousMonth = ReportButton("‹"); previousMonth.ToolTip = "Mês anterior";
         previousMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(-1); _selectedDate = null; RefreshReport(); };
         DockPanel.SetDock(previousMonth, Dock.Left); calendarControls.Children.Add(previousMonth);
@@ -161,7 +172,7 @@ internal sealed class TodoTaskReportWindow : Window
         var firstDayOffset = ((int)_displayMonth.DayOfWeek + 6) % 7;
         var daysInMonth = DateTime.DaysInMonth(_displayMonth.Year, _displayMonth.Month);
         var weekRows = (firstDayOffset + daysInMonth + 6) / 7;
-        for (var row = 0; row < weekRows; row++) _calendar.RowDefinitions.Add(new RowDefinition { Height = new GridLength(42) });
+        for (var row = 0; row < weekRows; row++) _calendar.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) });
 
         for (var dayNumber = 1; dayNumber <= daysInMonth; dayNumber++)
         {
@@ -189,7 +200,11 @@ internal sealed class TodoTaskReportWindow : Window
                 Foreground = Brushes.White, Cursor = System.Windows.Input.Cursors.Hand,
                 ToolTip = hasEvents ? $"{date:dd/MM/yyyy} · {count} {(count == 1 ? "evento" : "eventos")}\nClique para filtrar este dia" : $"{date:dd/MM/yyyy} · sem eventos"
             };
-            dayButton.Click += (_, _) => { _selectedDate = date; RefreshReport(); };
+            dayButton.Click += (_, _) =>
+            {
+                _selectedDate = _selectedDate?.Date == date ? null : date;
+                RefreshReport();
+            };
             Grid.SetRow(dayButton, row); Grid.SetColumn(dayButton, column); _calendar.Children.Add(dayButton);
         }
     }
@@ -525,6 +540,7 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly Action _create;
     private readonly Action _showReport;
     private readonly Button _historyButton;
+    private readonly TextBlock _title;
     private readonly StackPanel _list = new();
     private bool _showHistory;
     private bool _modalChildActive;
@@ -539,8 +555,8 @@ internal sealed class TodoTaskPanelWindow : Window
         WindowStartupLocation = WindowStartupLocation.Manual; Left = SystemParameters.WorkArea.Right - Width; Top = SystemParameters.WorkArea.Top;
         var root = new DockPanel { Margin = new Thickness(18) };
         var header = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
-        var title = new TextBlock { Text = "Tarefas", FontSize = 21, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
-        DockPanel.SetDock(title, Dock.Left); header.Children.Add(title);
+        _title = new TextBlock { Text = "Tarefas", FontSize = 21, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
+        DockPanel.SetDock(_title, Dock.Left); header.Children.Add(_title);
         var collapse = IconButton("\uE76C", "Recolher painel"); collapse.Click += (_, _) => Hide(); DockPanel.SetDock(collapse, Dock.Right); header.Children.Add(collapse);
         _historyButton = IconButton("\uE81C", "Ver tarefas concluídas");
         _historyButton.Click += (_, _) => { _showHistory = !_showHistory; _historyButton.ToolTip = _showHistory ? "Ver tarefas em aberto" : "Ver tarefas concluídas"; Refresh(); };
@@ -558,8 +574,11 @@ internal sealed class TodoTaskPanelWindow : Window
     public void Refresh()
     {
         _list.Children.Clear();
-        var entries = _tasks.Where(t => _showHistory ? t.CompletedAt is not null : t.CompletedAt is null)
-            .OrderBy(t => _showHistory ? t.CompletedAt : t.CreatedAt);
+        _title.Text = _showHistory ? "Histórico" : "Tarefas";
+        var matchingTasks = _tasks.Where(t => _showHistory ? t.CompletedAt is not null : t.CompletedAt is null);
+        var entries = _showHistory
+            ? matchingTasks.OrderByDescending(t => t.CompletedAt)
+            : matchingTasks.OrderBy(t => t.CreatedAt);
         foreach (var task in entries)
         {
             var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(9), Padding = new Thickness(12), Margin = new Thickness(0, 0, 0, 9) };
