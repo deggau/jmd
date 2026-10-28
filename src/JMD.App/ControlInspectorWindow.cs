@@ -32,6 +32,7 @@ internal sealed class ControlInspectorWindow : Window
     private readonly LowLevelMouseHookProc _mouseHookProc;
     private IntPtr _mouseHook;
     private bool _captureInProgress;
+    private volatile bool _isClosed;
 
     public ControlInspectorWindow()
     {
@@ -100,6 +101,7 @@ internal sealed class ControlInspectorWindow : Window
         };
         Closed += (_, _) =>
         {
+            _isClosed = true;
             _timer.Stop();
             _inspection.Close();
             if (_mouseHook != IntPtr.Zero) UnhookWindowsHookEx(_mouseHook);
@@ -109,6 +111,7 @@ internal sealed class ControlInspectorWindow : Window
 
     private void InspectAtCursor()
     {
+        if (_isClosed) return;
         if (!GetCursorPos(out var cursor)) return;
         var own = new Rect(Left, Top, ActualWidth, ActualHeight);
         var point = new System.Windows.Point(cursor.X, cursor.Y);
@@ -183,7 +186,7 @@ internal sealed class ControlInspectorWindow : Window
 
     private void UpdateInspection(InspectionResult result, bool fromCtrlClick = false)
     {
-        if (!IsLoaded) return;
+        if (_isClosed || !IsLoaded) return;
         if (_captureInProgress && !fromCtrlClick) return;
         _currentName = result.Name;
         _currentAutomationId = result.AutomationId;
@@ -226,6 +229,7 @@ internal sealed class ControlInspectorWindow : Window
 
     private IntPtr OnMouseHook(int code, IntPtr message, IntPtr data)
     {
+        if (_isClosed) return CallNextHookEx(_mouseHook, code, message, data);
         if (code >= 0 && message == (IntPtr)0x0201)
         {
             var controlPressed = (GetAsyncKeyState(0x11) & 0x8000) != 0;
@@ -242,7 +246,7 @@ internal sealed class ControlInspectorWindow : Window
 
     private async void CaptureControlAtClick(System.Windows.Point point, bool capturePosition)
     {
-        if (!IsLoaded || _captureInProgress) return;
+        if (_isClosed || !IsLoaded || _captureInProgress) return;
         var own = new Rect(Left, Top, ActualWidth, ActualHeight);
         if (own.Contains(point)) return;
         if (capturePosition)
@@ -270,7 +274,7 @@ internal sealed class ControlInspectorWindow : Window
         _name.Text = "Lendo controle…";
         _details.Text = "Ctrl+clique detectado.";
         var result = await Task.Run(() => ReadControlAt(point));
-        if (!IsLoaded) return;
+        if (_isClosed || !IsLoaded) return;
         UpdateInspection(result, fromCtrlClick: true);
     }
 

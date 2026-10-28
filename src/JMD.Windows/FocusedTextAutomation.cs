@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Automation;
 using JMD.Core;
 
@@ -120,7 +121,7 @@ public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
             var ranges = textPattern.GetSelection();
             return string.Concat(ranges.Select(range => range.GetText(-1)));
         }
-        catch (Exception exception) when (IsAutomationFailure(exception))
+        catch (Exception exception) when (IsAutomationFailure(exception) || exception is UnauthorizedAccessException)
         {
             return null;
         }
@@ -187,17 +188,40 @@ public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
         return pasted;
     }
 
-    public bool HasEditableTextFocus()
+    public bool HasEditableTextFocus(IntPtr expectedWindow = default)
     {
+        var foregroundWindow = keyboard.GetForegroundWindow();
+        if (foregroundWindow == IntPtr.Zero || expectedWindow != IntPtr.Zero && foregroundWindow != expectedWindow)
+            return false;
         try
         {
             var element = AutomationElement.FocusedElement;
-            return element is not null && IsTextEntry(element);
+            if (element is not null && IsTextEntry(element))
+            {
+                var elementWindow = new IntPtr(element.Current.NativeWindowHandle);
+                if (expectedWindow == IntPtr.Zero || elementWindow == IntPtr.Zero || elementWindow == expectedWindow ||
+                    GetAncestor(elementWindow, 2) == expectedWindow)
+                    return true;
+            }
         }
-        catch (Exception exception) when (IsAutomationFailure(exception))
+        catch (Exception exception) when (IsAutomationFailure(exception) || exception is UnauthorizedAccessException)
         {
-            return false;
+            // Fall through to Win32 focus information for controls UIA cannot describe.
         }
+        return HasEditableNativeFocus(foregroundWindow);
+    }
+
+    private static bool HasEditableNativeFocus(IntPtr expectedWindow)
+    {
+        var threadId = GetWindowThreadProcessId(expectedWindow, out _);
+        if (threadId == 0) return false;
+        var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf<GuiThreadInfo>() };
+        if (!GetGUIThreadInfo(threadId, ref info) || info.FocusWindow == IntPtr.Zero) return false;
+        if (info.FocusWindow != expectedWindow && GetAncestor(info.FocusWindow, 2) != expectedWindow) return false;
+
+        var className = new StringBuilder(256);
+        if (GetClassName(info.FocusWindow, className, className.Capacity) == 0) return false;
+        return VoiceDictationPolicy.IsEditableNativeControlClass(className.ToString());
     }
 
     private static bool IsAutomationFailure(Exception exception)
@@ -205,6 +229,30 @@ public sealed class FocusedTextAutomation(KeyboardAutomation keyboard)
 
     private static bool IsTextEntry(AutomationElement element)
         => element.Current.ControlType == ControlType.Edit && element.Current.IsEnabled && element.Current.IsKeyboardFocusable;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GuiThreadInfo
+    {
+        public uint Size;
+        public uint Flags;
+        public IntPtr ActiveWindow;
+        public IntPtr FocusWindow;
+        public IntPtr CaptureWindow;
+        public IntPtr MenuOwnerWindow;
+        public IntPtr MoveSizeWindow;
+        public IntPtr CaretWindow;
+        public System.Drawing.Rectangle CaretRectangle;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetGUIThreadInfo(uint threadId, ref GuiThreadInfo info);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetClassName(IntPtr window, StringBuilder className, int maximumCount);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetAncestor(IntPtr handle, uint flags);

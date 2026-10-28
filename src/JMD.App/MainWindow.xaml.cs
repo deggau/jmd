@@ -97,6 +97,9 @@ public partial class MainWindow : Window
     private bool _checkingUpdates;
     private readonly AsyncLocal<CommandExecutionContext?> _commandExecutionContext = new();
     private IntPtr _dictationTargetWindow;
+    private IntPtr _wakeWordTargetWindow;
+    private bool _wakeWordTargetIsEditable;
+    private bool _wakeWordTargetCaptured;
     private bool _dictationHasInsertedText;
     private string _wakeRecognitionPartial = string.Empty;
     private long? _historyTargetId;
@@ -996,6 +999,7 @@ public partial class MainWindow : Window
                 FocusIfAlreadyOpen = draft.FocusIfAlreadyOpen,
                 Steps = draft.Steps
             }, isTestExecution: true));
+        dialog.Owner = this;
         PrepareWindowForCaptureExclusion(dialog);
         _showingDialog = true;
         bool accepted;
@@ -1572,7 +1576,7 @@ public partial class MainWindow : Window
                     CheckUpdatesButton_Click(this, new RoutedEventArgs());
                     break;
                 case "transcribe":
-                    StartDictation(voiceCommand?.Transcript);
+                    await StartDictationAsync(voiceCommand?.Transcript);
                     break;
                 case "createCustomShortcut":
                     CreateCustomShortcutFromDialog();
@@ -2991,6 +2995,9 @@ public partial class MainWindow : Window
         service.WakeWordProcessingStarted += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (!ReferenceEquals(_voiceWakeWord, service) || !_settings.VoiceWakeWordEnabled) return;
+            _wakeWordTargetWindow = _keyboard.GetForegroundWindow();
+            _wakeWordTargetIsEditable = _focusedText.HasEditableTextFocus(_wakeWordTargetWindow);
+            _wakeWordTargetCaptured = true;
             ShowJeyProcessingNotification("Jey reconhecido · identificando o comando…");
             ActivationSoundService.PlayJeyRecognized(_settings.JeyRecognizedSound);
         }));
@@ -3046,7 +3053,7 @@ public partial class MainWindow : Window
         service.DictationTextRecognized += text => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (!ReferenceEquals(_voiceWakeWord, service)) return;
-            if (_keyboard.GetForegroundWindow() != _dictationTargetWindow || !_focusedText.HasEditableTextFocus())
+            if (_keyboard.GetForegroundWindow() != _dictationTargetWindow || !_focusedText.HasEditableTextFocus(_dictationTargetWindow))
             {
                 service.StopDictation();
                 SetStatus("Transcrição encerrada porque o foco saiu do campo de texto.", false);
@@ -3057,7 +3064,7 @@ public partial class MainWindow : Window
         service.DictationPartialRecognized += text => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (!ReferenceEquals(_voiceWakeWord, service) || _dictationTargetWindow == IntPtr.Zero) return;
-            if (_keyboard.GetForegroundWindow() != _dictationTargetWindow || !_focusedText.HasEditableTextFocus())
+            if (_keyboard.GetForegroundWindow() != _dictationTargetWindow || !_focusedText.HasEditableTextFocus(_dictationTargetWindow))
             {
                 service.StopDictation();
                 SetStatus("Transcrição encerrada porque o foco saiu do campo de texto.", false);
@@ -3154,20 +3161,41 @@ public partial class MainWindow : Window
         service.Start();
     }
 
-    private void StartDictation(string? transcript)
+    private async Task StartDictationAsync(string? transcript)
     {
-        if (_voiceWakeWord is null || !_focusedText.HasEditableTextFocus())
+        var targetWindow = _wakeWordTargetCaptured ? _wakeWordTargetWindow : _keyboard.GetForegroundWindow();
+        var editableFocus = _wakeWordTargetCaptured
+            ? _wakeWordTargetIsEditable || _focusedText.HasEditableTextFocus(_wakeWordTargetWindow)
+            : _focusedText.HasEditableTextFocus(targetWindow);
+        _wakeWordTargetCaptured = false;
+        _wakeWordTargetWindow = IntPtr.Zero;
+        _wakeWordTargetIsEditable = false;
+        if (_voiceWakeWord is null || targetWindow == IntPtr.Zero || !editableFocus)
         {
             Notify("JMD", "Para transcrever, deixe o cursor em um campo de texto editável.", false);
             return;
         }
-        _dictationTargetWindow = _keyboard.GetForegroundWindow();
-        if (_dictationTargetWindow == IntPtr.Zero)
+        if (_keyboard.GetForegroundWindow() != targetWindow)
         {
-            Notify("JMD", "Não foi possível identificar a janela do campo de texto.", false);
+            if (!SetForegroundWindow(targetWindow))
+            {
+                Notify("JMD", "Não foi possível voltar para a janela do campo de texto.", false);
+                return;
+            }
+            await Task.Delay(60);
+            if (_keyboard.GetForegroundWindow() != targetWindow)
+            {
+                Notify("JMD", "A janela do campo de texto não está mais ativa.", false);
+                return;
+            }
+        }
+        if (!_focusedText.HasEditableTextFocus(targetWindow))
+        {
+            Notify("JMD", "O foco saiu do campo editável antes de iniciar a transcrição.", false);
             return;
         }
 
+        _dictationTargetWindow = targetWindow;
         _dictationHasInsertedText = false;
         var phrase = _settings.VoicePhrases.TryGetValue("transcribe", out var phrases)
             ? phrases.FirstOrDefault(value => VoicePhrasePolicy.StartsWith(value, transcript))
@@ -3183,6 +3211,13 @@ public partial class MainWindow : Window
     private void InsertDictationText(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
+        if (_dictationTargetWindow == IntPtr.Zero || _keyboard.GetForegroundWindow() != _dictationTargetWindow)
+        {
+            _voiceWakeWord?.StopDictation();
+            _dictationTargetWindow = IntPtr.Zero;
+            SetStatus("Transcrição encerrada porque o foco saiu do campo de texto.", false);
+            return;
+        }
         var normalizedText = _dictationHasInsertedText && char.IsLetterOrDigit(text[0]) ? " " + text : text;
         if (!_keyboard.SendUnicodeText(normalizedText))
         {
@@ -4868,13 +4903,20 @@ public partial class MainWindow : Window
     private void Window_Deactivated(object? sender, EventArgs e)
     {
         if (!IsVisible || _showingDialog) return;
-        Hide();
-        if (_navigation.IsEditingShortcuts)
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() =>
         {
-            RegisterConfiguredShortcuts();
-            RefreshCommandStatuses();
-            RefreshShortcutStatuses();
-        }
+            if (!IsVisible || IsActive || _showingDialog) return;
+            if (System.Windows.Application.Current.Windows.OfType<Window>()
+                .Any(window => !ReferenceEquals(window, this) && ReferenceEquals(window.Owner, this) && window.IsVisible))
+                return;
+            Hide();
+            if (_navigation.IsEditingShortcuts)
+            {
+                RegisterConfiguredShortcuts();
+                RefreshCommandStatuses();
+                RefreshShortcutStatuses();
+            }
+        }));
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();

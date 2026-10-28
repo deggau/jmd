@@ -286,6 +286,12 @@ public static class VoiceDictationPolicy
 
     public static bool HasReachedMaximumSegment(int pcmByteLength)
         => pcmByteLength >= MaximumSegmentDuration.TotalSeconds * PcmBytesPerSecond;
+
+    public static bool IsEditableNativeControlClass(string? className)
+        => className is not null && (className.Equals("Edit", StringComparison.OrdinalIgnoreCase) ||
+            className.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase) ||
+            className.StartsWith("WindowsForms10.EDIT", StringComparison.OrdinalIgnoreCase) ||
+            className.StartsWith("Scintilla", StringComparison.OrdinalIgnoreCase));
 }
 
 public static class VoiceModelIdlePolicy

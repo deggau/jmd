@@ -277,6 +277,16 @@ public sealed class AppPresentationStateTests
         Assert.True(VoiceDictationPolicy.HasReachedMaximumSegment(25 * VoiceDictationPolicy.PcmBytesPerSecond));
     }
 
+    [Theory]
+    [InlineData("Edit", true)]
+    [InlineData("RichEditD2DPT", true)]
+    [InlineData("WindowsForms10.EDIT.app.0.141b42a_r9_ad1", true)]
+    [InlineData("Scintilla", true)]
+    [InlineData("Chrome_RenderWidgetHostHWND", false)]
+    [InlineData("Button", false)]
+    public void Native_focus_fallback_only_accepts_known_editable_control_classes(string className, bool expected)
+        => Assert.Equal(expected, VoiceDictationPolicy.IsEditableNativeControlClass(className));
+
     [Fact]
     public void Voice_model_idle_policy_unloads_at_fifteen_minutes()
     {

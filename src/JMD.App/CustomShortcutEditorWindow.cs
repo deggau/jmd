@@ -28,6 +28,7 @@ internal sealed class CustomShortcutEditorWindow : Window
     private readonly List<StepDraft> _steps = [];
     private readonly Func<CustomShortcutEditorWindow, string?>? _validate;
     private readonly Func<CustomShortcutEditorWindow, Task<bool>>? _testWorkflow;
+    private ControlInspectorWindow? _controlInspector;
     private bool _closed;
     private readonly TextBlock _testStatus = new()
     {
@@ -102,7 +103,12 @@ internal sealed class CustomShortcutEditorWindow : Window
             Padding = new Thickness(18)
         };
         Content = outer;
-        Closed += (_, _) => _closed = true;
+        Closed += (_, _) =>
+        {
+            _closed = true;
+            _controlInspector?.Close();
+            _controlInspector = null;
+        };
         var layout = new DockPanel();
         outer.Child = layout;
         var footer = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
@@ -150,8 +156,19 @@ internal sealed class CustomShortcutEditorWindow : Window
         inspectControl.Click += (_, _) =>
         {
             var inspector = new ControlInspectorWindow();
+            _controlInspector = inspector;
+            if (Owner is not null) inspector.Owner = Owner;
             Hide();
-            inspector.Closed += (_, _) => Show();
+            inspector.Closed += (_, _) =>
+            {
+                if (ReferenceEquals(_controlInspector, inspector)) _controlInspector = null;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (_closed) return;
+                    if (!IsVisible) Show();
+                    Activate();
+                }));
+            };
             inspector.Show();
         };
         var workflowActions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };
