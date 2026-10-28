@@ -37,11 +37,12 @@ internal sealed class TodoTask
 internal sealed class TodoTaskReportWindow : Window
 {
     private readonly IReadOnlyList<ConversionHistoryEntry> _events;
-    private readonly StackPanel _timeline = new() { Orientation = Orientation.Horizontal };
+    private readonly Grid _calendar = new() { Width = 420, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly StackPanel _report = new();
     private readonly TextBlock _rangeLabel = new();
-    private DateTime _endDate = DateTime.Today;
-    private int _rangeDays = DateTime.Today.Day;
+    private readonly Button _showMonthButton;
+    private DateTime _displayMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _selectedDate;
 
     public TodoTaskReportWindow(IReadOnlyList<ConversionHistoryEntry> events)
     {
@@ -53,24 +54,35 @@ internal sealed class TodoTaskReportWindow : Window
         Background = new SolidColorBrush(Color.FromRgb(23, 25, 31)); WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         var root = new DockPanel { Margin = new Thickness(24) };
-        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
-        var close = ReportButton("Fechar"); close.Click += (_, _) => Close(); DockPanel.SetDock(close, Dock.Right); header.Children.Add(close);
-        header.Children.Add(new TextBlock { Text = "Relatório de tarefas", FontSize = 22, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center });
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 16) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var titleBar = new Border { Background = Brushes.Transparent, Cursor = System.Windows.Input.Cursors.SizeAll, VerticalAlignment = VerticalAlignment.Center };
+        titleBar.Child = new TextBlock { Text = "Relatório de tarefas", FontSize = 22, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
+        titleBar.MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); };
+        header.Children.Add(titleBar);
+        var close = ReportButton("×"); close.Width = 36; close.Height = 36; close.FontSize = 20; close.ToolTip = "Fechar relatório";
+        close.Click += (_, _) => Close(); Grid.SetColumn(close, 1); header.Children.Add(close);
         DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
 
-        var timelinePanel = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
-        var controls = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-        var rangeButtons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var zoomOut = ReportButton("−"); zoomOut.ToolTip = "Diminuir intervalo"; zoomOut.Click += (_, _) => { _rangeDays = Math.Min(366, _rangeDays * 2); RefreshReport(); };
-        var zoomIn = ReportButton("+"); zoomIn.ToolTip = "Aumentar intervalo"; zoomIn.Click += (_, _) => { _rangeDays = Math.Max(1, (_rangeDays + 1) / 2); RefreshReport(); };
-        rangeButtons.Children.Add(zoomOut); rangeButtons.Children.Add(zoomIn); DockPanel.SetDock(rangeButtons, Dock.Right); controls.Children.Add(rangeButtons);
-        var previous = ReportButton("‹"); previous.ToolTip = "Período anterior"; previous.Click += (_, _) => { _endDate = _endDate.AddDays(-_rangeDays); RefreshReport(); };
-        var next = ReportButton("›"); next.ToolTip = "Próximo período"; next.Margin = new Thickness(4, 0, 0, 0); next.Click += (_, _) => { _endDate = _endDate.AddDays(_rangeDays); RefreshReport(); };
-        var nav = new StackPanel { Orientation = Orientation.Horizontal }; nav.Children.Add(previous); nav.Children.Add(next); DockPanel.SetDock(nav, Dock.Left); controls.Children.Add(nav);
-        _rangeLabel.Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)); _rangeLabel.VerticalAlignment = VerticalAlignment.Center; _rangeLabel.Margin = new Thickness(12, 0, 0, 0); controls.Children.Add(_rangeLabel);
-        timelinePanel.Children.Add(controls);
-        timelinePanel.Children.Add(new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = _timeline });
-        DockPanel.SetDock(timelinePanel, Dock.Top); root.Children.Add(timelinePanel);
+        var calendarPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var calendarControls = new DockPanel { Width = 420, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 8) };
+        var nextMonth = ReportButton("›"); nextMonth.ToolTip = "Próximo mês";
+        nextMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(1); _selectedDate = null; RefreshReport(); };
+        DockPanel.SetDock(nextMonth, Dock.Right); calendarControls.Children.Add(nextMonth);
+        var previousMonth = ReportButton("‹"); previousMonth.ToolTip = "Mês anterior";
+        previousMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(-1); _selectedDate = null; RefreshReport(); };
+        DockPanel.SetDock(previousMonth, Dock.Left); calendarControls.Children.Add(previousMonth);
+        var monthControls = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        _rangeLabel.Foreground = new SolidColorBrush(Color.FromRgb(220, 223, 230));
+        _rangeLabel.VerticalAlignment = VerticalAlignment.Center; _rangeLabel.FontSize = 14; _rangeLabel.FontWeight = FontWeights.SemiBold;
+        monthControls.Children.Add(_rangeLabel);
+        _showMonthButton = ReportButton("Mês"); _showMonthButton.Margin = new Thickness(10, 0, 0, 0); _showMonthButton.ToolTip = "Mostrar todas as atividades do mês";
+        _showMonthButton.Click += (_, _) => { _selectedDate = null; RefreshReport(); };
+        monthControls.Children.Add(_showMonthButton); DockPanel.SetDock(monthControls, Dock.Left); calendarControls.Children.Add(monthControls);
+        calendarPanel.Children.Add(calendarControls);
+        calendarPanel.Children.Add(_calendar);
+        DockPanel.SetDock(calendarPanel, Dock.Top); root.Children.Add(calendarPanel);
         root.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _report });
         Content = root;
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { e.Handled = true; Close(); } };
@@ -79,28 +91,22 @@ internal sealed class TodoTaskReportWindow : Window
 
     private void RefreshReport()
     {
-        var startDate = _endDate.AddDays(-_rangeDays + 1);
-        _rangeLabel.Text = $"{startDate:dd/MM/yyyy} – {_endDate:dd/MM/yyyy}  ·  {_rangeDays} dia(s)";
+        var monthEnd = _displayMonth.AddMonths(1).AddDays(-1);
+        var startDate = _selectedDate?.Date ?? _displayMonth.Date;
+        var endDate = _selectedDate?.Date ?? monthEnd.Date;
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        _rangeLabel.Text = _selectedDate is { } selected
+            ? selected.ToString("dd 'de' MMMM yyyy", culture)
+            : culture.TextInfo.ToTitleCase(_displayMonth.ToString("MMMM yyyy", culture));
+        _showMonthButton.Visibility = _selectedDate is null ? Visibility.Collapsed : Visibility.Visible;
         var visible = _events.Select(entry => (Entry: entry, LocalTime: entry.OccurredAt.ToLocalTime()))
-            .Where(item => item.LocalTime.Date >= startDate.Date && item.LocalTime.Date <= _endDate.Date).ToList();
-        _timeline.Children.Clear();
-        for (var day = startDate.Date; day <= _endDate.Date; day = day.AddDays(1))
-        {
-            var date = day;
-            var count = visible.Count(item => item.LocalTime.Date == date);
-            var tile = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 0, 5, 0), MinWidth = 58 };
-            tile.Child = new StackPanel { Children =
-            {
-                new TextBlock { Text = date.ToString("dd/MM", System.Globalization.CultureInfo.CurrentCulture), Foreground = Brushes.White, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center },
-                new TextBlock { Text = count == 1 ? "1 evento" : $"{count} eventos", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center }
-            }};
-            _timeline.Children.Add(tile);
-        }
+            .Where(item => item.LocalTime.Date >= startDate && item.LocalTime.Date <= endDate).ToList();
+        RenderCalendar();
 
         _report.Children.Clear();
         foreach (var dayGroup in visible.GroupBy(item => item.LocalTime.Date).OrderByDescending(group => group.Key))
         {
-            _report.Children.Add(new TextBlock { Text = dayGroup.Key.ToString("dddd, dd 'de' MMMM 'de' yyyy", System.Globalization.CultureInfo.CurrentCulture), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 8) });
+            _report.Children.Add(new TextBlock { Text = dayGroup.Key.ToString("dddd, dd 'de' MMMM 'de' yyyy", culture), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 8) });
             var periods = new[] { "Manhã", "Tarde", "Noite" };
             var columns = new Grid { Margin = new Thickness(0, 0, 0, 12) };
             foreach (var _ in periods) columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -131,6 +137,61 @@ internal sealed class TodoTaskReportWindow : Window
             _report.Children.Add(columns);
         }
         if (visible.Count == 0) _report.Children.Add(new TextBlock { Text = "Nenhuma atividade de tarefa neste período.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 16, 0, 0) });
+    }
+
+    private void RenderCalendar()
+    {
+        _calendar.Children.Clear();
+        _calendar.RowDefinitions.Clear();
+        _calendar.ColumnDefinitions.Clear();
+        for (var column = 0; column < 7; column++)
+            _calendar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _calendar.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var weekdays = new[] { "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom" };
+        for (var column = 0; column < weekdays.Length; column++)
+        {
+            var label = new TextBlock { Text = weekdays[column], Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 5) };
+            Grid.SetColumn(label, column); _calendar.Children.Add(label);
+        }
+
+        var dayCounts = _events.Select(entry => entry.OccurredAt.ToLocalTime().Date)
+            .Where(date => date.Year == _displayMonth.Year && date.Month == _displayMonth.Month)
+            .GroupBy(date => date).ToDictionary(group => group.Key, group => group.Count());
+        var firstDayOffset = ((int)_displayMonth.DayOfWeek + 6) % 7;
+        var daysInMonth = DateTime.DaysInMonth(_displayMonth.Year, _displayMonth.Month);
+        var weekRows = (firstDayOffset + daysInMonth + 6) / 7;
+        for (var row = 0; row < weekRows; row++) _calendar.RowDefinitions.Add(new RowDefinition { Height = new GridLength(42) });
+
+        for (var dayNumber = 1; dayNumber <= daysInMonth; dayNumber++)
+        {
+            var index = firstDayOffset + dayNumber - 1;
+            var row = index / 7 + 1;
+            var column = index % 7;
+            var date = new DateTime(_displayMonth.Year, _displayMonth.Month, dayNumber);
+            var hasEvents = dayCounts.TryGetValue(date, out var count);
+            var selected = _selectedDate?.Date == date;
+            var dayButton = new Button
+            {
+                Content = new StackPanel
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Children =
+                    {
+                        new TextBlock { Text = dayNumber.ToString(System.Globalization.CultureInfo.CurrentCulture), HorizontalAlignment = HorizontalAlignment.Center, FontSize = 12 },
+                        new System.Windows.Shapes.Ellipse { Width = 5, Height = 5, Margin = new Thickness(0, 2, 0, 0), Fill = hasEvents ? new SolidColorBrush(Color.FromRgb(180, 243, 106)) : Brushes.Transparent }
+                    }
+                },
+                Margin = new Thickness(2), Padding = new Thickness(2), BorderThickness = selected ? new Thickness(1) : new Thickness(0),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+                Background = selected ? new SolidColorBrush(Color.FromRgb(61, 77, 53)) : new SolidColorBrush(Color.FromRgb(34, 37, 45)),
+                Foreground = Brushes.White, Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = hasEvents ? $"{date:dd/MM/yyyy} · {count} {(count == 1 ? "evento" : "eventos")}\nClique para filtrar este dia" : $"{date:dd/MM/yyyy} · sem eventos"
+            };
+            dayButton.Click += (_, _) => { _selectedDate = date; RefreshReport(); };
+            Grid.SetRow(dayButton, row); Grid.SetColumn(dayButton, column); _calendar.Children.Add(dayButton);
+        }
     }
 
     private static Button ReportButton(string text) => new() { Content = text, Padding = new Thickness(10, 6, 10, 6), Margin = new Thickness(4, 0, 0, 0), Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };

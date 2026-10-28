@@ -4011,6 +4011,8 @@ public partial class MainWindow : Window
         SnippetManagementPage.Visibility = Visibility.Collapsed;
         HistoryPage.Visibility = Visibility.Collapsed;
         AdvancedSettingsPage.Visibility = Visibility.Visible;
+        AboutPage.Visibility = Visibility.Collapsed;
+        JeySettingsPage.Visibility = Visibility.Collapsed;
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsRetryButton.Visibility = Visibility.Collapsed;
         FooterHints.Visibility = Visibility.Visible;
