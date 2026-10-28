@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -281,13 +282,22 @@ internal sealed class TodoTaskEditWindow : Window
         _checklistPanel.Margin = new Thickness(0, 5, 0, 12); panel.Children.Add(_checklistPanel);
         foreach (var entry in task?.Checklist ?? []) AddChecklistRow(entry.Title, entry.Weight, entry.IsCompleted);
         AddChecklistRow("", 0, false);
-        panel.Children.Add(Label("URLs (uma por linha)"));
-        StyleBox(_urls); _urls.Text = task?.Urls ?? ""; _urls.Height = 54; _urls.AcceptsReturn = true; _urls.TextWrapping = TextWrapping.Wrap; _urls.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-        _urls.Margin = new Thickness(0, 4, 0, 10); panel.Children.Add(_urls);
-        panel.Children.Add(Label("Anexos"));
-        StyleBox(_attachments); _attachments.Height = 52; _attachments.AcceptsReturn = true; _attachments.TextWrapping = TextWrapping.Wrap; _attachments.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-        _attachments.Text = task?.Attachments ?? ""; _attachments.Margin = new Thickness(0, 4, 0, 5); panel.Children.Add(_attachments);
-        var addAttachment = CreateButton("Adicionar arquivo"); addAttachment.Margin = new Thickness(0, 0, 0, 12); addAttachment.HorizontalAlignment = HorizontalAlignment.Left;
+        var resourcesPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var resources = new Expander
+        {
+            Header = "Links e anexos (opcional)",
+            IsExpanded = !string.IsNullOrWhiteSpace(task?.Urls) || !string.IsNullOrWhiteSpace(task?.Attachments),
+            Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)),
+            FontSize = 12
+        };
+        var resourceFields = new StackPanel { Margin = new Thickness(16, 8, 0, 0) };
+        resourceFields.Children.Add(Label("URLs (uma por linha)"));
+        StyleBox(_urls); _urls.Text = task?.Urls ?? ""; _urls.Height = 36; _urls.AcceptsReturn = true; _urls.TextWrapping = TextWrapping.Wrap; _urls.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _urls.Margin = new Thickness(0, 4, 0, 8); resourceFields.Children.Add(_urls);
+        resourceFields.Children.Add(Label("Anexos"));
+        StyleBox(_attachments); _attachments.Height = 32; _attachments.AcceptsReturn = true; _attachments.TextWrapping = TextWrapping.Wrap; _attachments.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _attachments.Text = task?.Attachments ?? ""; _attachments.Margin = new Thickness(0, 4, 0, 5); resourceFields.Children.Add(_attachments);
+        var addAttachment = CreateButton("Adicionar arquivo"); addAttachment.Height = 28; addAttachment.Margin = new Thickness(0, 0, 0, 4); addAttachment.HorizontalAlignment = HorizontalAlignment.Left;
         addAttachment.Click += (_, _) =>
         {
             var picker = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = "Selecionar anexos" };
@@ -296,7 +306,10 @@ internal sealed class TodoTaskEditWindow : Window
             paths.AddRange(picker.FileNames.Where(path => !paths.Contains(path, StringComparer.OrdinalIgnoreCase)));
             _attachments.Text = string.Join(Environment.NewLine, paths);
         };
-        panel.Children.Add(addAttachment);
+        resourceFields.Children.Add(addAttachment);
+        resources.Content = resourceFields;
+        resourcesPanel.Children.Add(resources);
+        panel.Children.Add(resourcesPanel);
         panel.Children.Add(Label("Prioridade"));
         var categories = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 12) };
         foreach (var category in new[] { "Vermelho", "Laranja", "Amarelo", "Verde" })
@@ -350,10 +363,22 @@ internal sealed class TodoTaskEditWindow : Window
         };
         buttons.Children.Add(cancel); buttons.Children.Add(save); panel.Children.Add(buttons); Content = panel;
         SelectCategory(task?.CategoryColor ?? "Verde");
-        Loaded += (_, _) => { _title.Focus(); Keyboard.Focus(_title); };
+        Loaded += (_, _) =>
+        {
+            FocusInitialField();
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, new Action(FocusInitialField));
+        };
         PreviewKeyDown += TodoTaskEditWindow_PreviewKeyDown;
         _title.KeyDown += (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; _description.Focus(); } };
         _description.KeyDown += (_, e) => { if (e.Key == Key.Enter && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { e.Handled = true; save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); } };
+    }
+
+    private void FocusInitialField()
+    {
+        if (!IsVisible) return;
+        if (TodoTaskWindowFocusPolicy.ShouldActivateWindow(IsVisible, IsActive)) Activate();
+        _title.Focus();
+        Keyboard.Focus(_title);
     }
 
     private void AddChecklistRow(string title, decimal weight, bool completed)
@@ -542,6 +567,7 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly Action<IReadOnlyList<TodoTaskEntry>> _undo;
     private readonly Button _historyButton;
     private readonly Button _undoButton;
+    private readonly System.Windows.Threading.DispatcherTimer _undoTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly TextBlock _title;
     private readonly StackPanel _list = new();
     private List<TodoTaskEntry>? _pendingUndoSnapshot;
@@ -578,12 +604,14 @@ internal sealed class TodoTaskPanelWindow : Window
             ToolTip = "Desfaz a última ação no painel de tarefas", Visibility = Visibility.Collapsed
         };
         _undoButton.Click += (_, _) => UndoLastAction();
+        _undoTimer.Tick += (_, _) => ClearUndo();
         var bottomActions = new StackPanel();
         bottomActions.Children.Add(_undoButton);
         bottomActions.Children.Add(newTaskButton);
         DockPanel.SetDock(bottomActions, Dock.Bottom); content.Children.Add(bottomActions);
         content.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _list }); root.Children.Add(content);
         Content = root; Refresh();
+        IsVisibleChanged += (_, _) => { if (!IsVisible) ClearUndo(); };
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape || (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Left)) { e.Handled = true; Hide(); } };
         Deactivated += (_, _) => { if (!_modalChildActive) Hide(); };
     }
@@ -663,6 +691,15 @@ internal sealed class TodoTaskPanelWindow : Window
             if (task.PausedAt is not null && (!string.IsNullOrWhiteSpace(task.PausedBy) || !string.IsNullOrWhiteSpace(task.PauseReason)))
                 body.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { string.IsNullOrWhiteSpace(task.PausedBy) ? null : $"Responsável: {task.PausedBy}", string.IsNullOrWhiteSpace(task.PauseReason) ? null : $"Motivo: {task.PauseReason}" }.Where(value => value is not null)), Foreground = new SolidColorBrush(Color.FromRgb(255, 204, 0)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
             if (task.ReminderIntervalMinutes is not null) body.Children.Add(new TextBlock { Text = TodoTaskDisplay.ReminderLabel(task), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, Margin = new Thickness(0, 3, 0, 0) });
+            var resourceLinks = new WrapPanel { Margin = new Thickness(0, 5, 0, 0) };
+            foreach (var url in task.Urls.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var label = Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri.Host : "URL";
+                resourceLinks.Children.Add(ResourceLinkButton($"↗ {label}", url));
+            }
+            foreach (var path in task.Attachments.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                resourceLinks.Children.Add(ResourceLinkButton($"📎 {System.IO.Path.GetFileName(path)}", path));
+            if (resourceLinks.Children.Count > 0) body.Children.Add(resourceLinks);
             layout.Children.Add(body); card.Child = layout; _list.Children.Add(card);
         }
         if (_list.Children.Count == 0) _list.Children.Add(new TextBlock { Text = _showHistory ? "Nenhuma tarefa concluída." : "Nenhuma tarefa em aberto.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 10, 0, 0) });
@@ -693,6 +730,41 @@ internal sealed class TodoTaskPanelWindow : Window
     }
 
     private static Button IconButton(string glyph, string hint) => new() { Content = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13, Width = 28, Height = 28, Margin = new Thickness(1), ToolTip = hint, Focusable = true, Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+
+    private static Button ResourceLinkButton(string label, string target)
+    {
+        var button = new Button
+        {
+            Content = label,
+            ToolTip = target,
+            MaxWidth = 220,
+            Margin = new Thickness(0, 0, 10, 2),
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            BorderThickness = new Thickness(0),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            FontSize = 10
+        };
+        button.Click += (_, _) =>
+        {
+            try
+            {
+                var isUrl = Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+                if (!isUrl && !System.IO.File.Exists(target) && !System.IO.Directory.Exists(target))
+                {
+                    System.Windows.MessageBox.Show($"O arquivo anexado não foi encontrado:\n{target}", "Anexo indisponível", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+                Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or ArgumentException)
+            {
+                System.Windows.MessageBox.Show($"Não foi possível abrir o item:\n{exception.Message}", "Não foi possível abrir", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        };
+        return button;
+    }
 
     private void RunUndoableAction(Action action)
     {
@@ -730,15 +802,26 @@ internal sealed class TodoTaskPanelWindow : Window
         _undoSnapshot = pending;
         _pendingUndoSnapshot = null;
         _undoButton.Visibility = Visibility.Visible;
+        _undoTimer.Stop();
+        _undoTimer.Start();
     }
 
     private void UndoLastAction()
     {
         if (_undoSnapshot is not { } snapshot) return;
+        _undoTimer.Stop();
         _undoSnapshot = null;
         _pendingUndoSnapshot = null;
         _undoButton.Visibility = Visibility.Collapsed;
         _undo(snapshot);
+    }
+
+    private void ClearUndo()
+    {
+        _undoTimer.Stop();
+        _undoSnapshot = null;
+        _pendingUndoSnapshot = null;
+        _undoButton.Visibility = Visibility.Collapsed;
     }
 
     private List<TodoTaskEntry> CaptureTaskSnapshot()

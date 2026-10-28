@@ -1565,12 +1565,12 @@ public partial class MainWindow : Window
                         RecordActionHistory("Abrir paleta", string.Empty, string.Empty, voiceCommand);
                     break;
                 case "about":
-                    ShowAboutPage();
+                    if (VoiceCommandNavigationPolicy.OpensAboutPage(id)) ShowAboutPage();
                     if (voiceCommand is not null)
                         RecordActionHistory("Abrir Sobre", string.Empty, string.Empty, voiceCommand);
                     break;
                 case "checkUpdates":
-                    ShowAboutPage();
+                    if (VoiceCommandNavigationPolicy.OpensAboutPage(id)) ShowAboutPage();
                     if (voiceCommand is not null)
                         RecordActionHistory("Verificar atualizações JMD", string.Empty, string.Empty, voiceCommand);
                     CheckUpdatesButton_Click(this, new RoutedEventArgs());
@@ -2314,17 +2314,27 @@ public partial class MainWindow : Window
     private bool ShowTodoTaskDialog(Window dialog)
     {
         var panel = _todoTaskPanel;
-        if (panel is null || !panel.IsVisible) return dialog.ShowDialog() == true;
+        var hasVisiblePanel = panel is { IsVisible: true };
+        if (hasVisiblePanel)
+        {
+            panel!.SetModalChildActive(true);
+            dialog.Owner = panel;
+        }
+        else if (IsVisible)
+        {
+            dialog.Owner = this;
+        }
 
-        panel.SetModalChildActive(true);
-        dialog.Owner = panel;
+        var wasShowingDialog = _showingDialog;
+        _showingDialog = true;
         try
         {
             return dialog.ShowDialog() == true;
         }
         finally
         {
-            panel.SetModalChildActive(false);
+            _showingDialog = wasShowingDialog;
+            if (hasVisiblePanel) panel!.SetModalChildActive(false);
         }
     }
 
@@ -4317,6 +4327,9 @@ public partial class MainWindow : Window
         UpdateStatusText.Text = "Verifique se há uma versão mais recente no GitHub.";
         InstallUpdateButton.Visibility = Visibility.Collapsed;
         SilentUpdateToggle.Visibility = Visibility.Collapsed;
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
     }
 
     private static string GetInstalledVersion()

@@ -198,6 +198,22 @@ public sealed class AppPresentationStateTests
         Assert.Equal(AppPage.JeySettings, navigation.CurrentPage);
     }
 
+    [Theory]
+    [InlineData("about", true)]
+    [InlineData("checkUpdates", true)]
+    [InlineData("transcribe", false)]
+    [InlineData("todoPanel", false)]
+    public void Voice_command_navigation_routes_about_and_update_commands_to_about_page(string commandId, bool expected)
+        => Assert.Equal(expected, VoiceCommandNavigationPolicy.OpensAboutPage(commandId));
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    public void Todo_task_dialog_requests_activation_when_visible_but_not_active(bool isVisible, bool isActive, bool expected)
+        => Assert.Equal(expected, TodoTaskWindowFocusPolicy.ShouldActivateWindow(isVisible, isActive));
+
     [Fact]
     public void Voice_phrase_policy_detects_duplicate_phrases_across_commands()
     {

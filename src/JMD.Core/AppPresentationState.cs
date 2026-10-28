@@ -25,6 +25,18 @@ public sealed class AppNavigationState
     public void ShowJeySettings() => CurrentPage = AppPage.JeySettings;
 }
 
+public static class VoiceCommandNavigationPolicy
+{
+    public static bool OpensAboutPage(string commandId)
+        => commandId is "about" or "checkUpdates";
+}
+
+public static class TodoTaskWindowFocusPolicy
+{
+    public static bool ShouldActivateWindow(bool isVisible, bool isActive)
+        => isVisible && !isActive;
+}
+
 public static class AppStartupOptions
 {
     public const string OpenSettingsArgument = "--settings";
