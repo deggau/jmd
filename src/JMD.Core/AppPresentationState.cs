@@ -37,6 +37,50 @@ public static class TodoTaskWindowFocusPolicy
         => isVisible && !isActive;
 }
 
+public sealed record TodoTaskDateFilter(DateTime? StartDate = null, DateTime? EndDate = null, DateTime? RangeAnchor = null)
+{
+    public bool HasSelection => StartDate is not null;
+}
+
+public static class TodoTaskDateFilterPolicy
+{
+    public static int GetWeekdayColumn(DayOfWeek dayOfWeek) => (int)dayOfWeek;
+
+    public static TodoTaskDateFilter SelectDay(TodoTaskDateFilter current, DateTime date, bool extendRange)
+    {
+        date = date.Date;
+        if (extendRange && current.RangeAnchor is { } anchor)
+        {
+            var first = anchor.Date <= date ? anchor.Date : date;
+            var last = anchor.Date <= date ? date : anchor.Date;
+            return new TodoTaskDateFilter(first, last);
+        }
+
+        if (!extendRange && current.StartDate?.Date == date &&
+            (current.EndDate is null || current.EndDate.Value.Date == date))
+            return new TodoTaskDateFilter();
+
+        return new TodoTaskDateFilter(date, RangeAnchor: date);
+    }
+
+    public static (DateTime StartDate, DateTime EndDate) Resolve(TodoTaskDateFilter filter, DateTime month)
+    {
+        var monthStart = new DateTime(month.Year, month.Month, 1);
+        var start = filter.StartDate?.Date ?? monthStart;
+        var end = filter.EndDate?.Date ?? (filter.StartDate?.Date ?? monthStart.AddMonths(1).AddDays(-1));
+        return (start, end);
+    }
+
+    public static bool Contains(TodoTaskDateFilter filter, DateTime date)
+        => filter.StartDate is { } start && date.Date >= start.Date && date.Date <= (filter.EndDate ?? start).Date;
+}
+
+public static class SnippetPickerFocusPolicy
+{
+    public static bool ShouldActivateWindow(bool isVisible, bool isActive)
+        => isVisible && !isActive;
+}
+
 public static class AppStartupOptions
 {
     public const string OpenSettingsArgument = "--settings";
@@ -112,6 +156,9 @@ public static class ShortcutDefaults
         "saveSnippet" => "Ctrl+Alt+Shift+Y",
         "draftSave" => "Ctrl+Shift+Up",
         "draftRestore" => "Ctrl+Shift+Down",
+        "hibernate" => "Ctrl+Alt+Shift+H",
+        "suspend" => "Ctrl+Alt+Shift+S",
+        "lock" => "Ctrl+Alt+Shift+L",
         _ => throw new ArgumentOutOfRangeException(nameof(commandId), commandId, "Comando desconhecido.")
     };
 
@@ -132,6 +179,47 @@ public static class ShortcutDefaults
             shortcuts["clipboard"] = ForCommand("clipboard");
             shortcuts["selection"] = ForCommand("selection");
         }
+    }
+}
+
+public enum SystemPowerAction
+{
+    Hibernate,
+    Suspend,
+    Lock
+}
+
+public sealed record SystemPowerCommandDefinition(
+    string Id,
+    string Name,
+    string Description,
+    SystemPowerAction Action,
+    IReadOnlyList<string> VoicePhrases);
+
+public static class SystemPowerCommandCatalog
+{
+    public static IReadOnlyList<SystemPowerCommandDefinition> All { get; } =
+    [
+        new("hibernate", "Hibernar computador", "Salva a sessão e hiberna o computador.", SystemPowerAction.Hibernate, ["hibernar", "hibernar computador"]),
+        new("suspend", "Suspender computador", "Coloca o computador em suspensão.", SystemPowerAction.Suspend, ["suspender", "suspender computador"]),
+        new("lock", "Bloquear computador", "Bloqueia a sessão do Windows.", SystemPowerAction.Lock, ["bloquear", "bloquear computador"])
+    ];
+
+    public static bool TryGet(string commandId, out SystemPowerCommandDefinition command)
+    {
+        command = All.FirstOrDefault(item => string.Equals(item.Id, commandId, StringComparison.Ordinal))!;
+        return command is not null;
+    }
+
+    public static bool TryGetAction(string commandId, out SystemPowerAction action)
+    {
+        if (TryGet(commandId, out var command))
+        {
+            action = command.Action;
+            return true;
+        }
+        action = default;
+        return false;
     }
 }
 

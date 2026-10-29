@@ -45,7 +45,7 @@ internal sealed class TodoTaskReportWindow : Window
     private readonly Button _calendarToggleButton;
     private bool _calendarExpanded = true;
     private DateTime _displayMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
-    private DateTime? _selectedDate;
+    private TodoTaskDateFilter _dateFilter = new();
 
     public TodoTaskReportWindow(IReadOnlyList<ConversionHistoryEntry> events)
     {
@@ -71,7 +71,7 @@ internal sealed class TodoTaskReportWindow : Window
         var calendarPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 0, 16) };
         var calendarControls = new DockPanel { Width = 340, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 0, 8) };
         var nextMonth = ReportButton("›"); nextMonth.ToolTip = "Próximo mês";
-        nextMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(1); _selectedDate = null; RefreshReport(); };
+        nextMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(1); _dateFilter = new(); RefreshReport(); };
         DockPanel.SetDock(nextMonth, Dock.Right); calendarControls.Children.Add(nextMonth);
         _calendarToggleButton = ReportButton("⌄"); _calendarToggleButton.ToolTip = "Recolher calendário";
         _calendarToggleButton.Click += (_, _) =>
@@ -83,14 +83,14 @@ internal sealed class TodoTaskReportWindow : Window
         };
         DockPanel.SetDock(_calendarToggleButton, Dock.Right); calendarControls.Children.Add(_calendarToggleButton);
         var previousMonth = ReportButton("‹"); previousMonth.ToolTip = "Mês anterior";
-        previousMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(-1); _selectedDate = null; RefreshReport(); };
+        previousMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(-1); _dateFilter = new(); RefreshReport(); };
         DockPanel.SetDock(previousMonth, Dock.Left); calendarControls.Children.Add(previousMonth);
         var monthControls = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         _rangeLabel.Foreground = new SolidColorBrush(Color.FromRgb(220, 223, 230));
         _rangeLabel.VerticalAlignment = VerticalAlignment.Center; _rangeLabel.FontSize = 14; _rangeLabel.FontWeight = FontWeights.SemiBold;
         monthControls.Children.Add(_rangeLabel);
         _showMonthButton = ReportButton("Mês"); _showMonthButton.Margin = new Thickness(10, 0, 0, 0); _showMonthButton.ToolTip = "Mostrar todas as atividades do mês";
-        _showMonthButton.Click += (_, _) => { _selectedDate = null; RefreshReport(); };
+        _showMonthButton.Click += (_, _) => { _dateFilter = new(); RefreshReport(); };
         monthControls.Children.Add(_showMonthButton); DockPanel.SetDock(monthControls, Dock.Left); calendarControls.Children.Add(monthControls);
         calendarPanel.Children.Add(calendarControls);
         calendarPanel.Children.Add(_calendar);
@@ -103,14 +103,14 @@ internal sealed class TodoTaskReportWindow : Window
 
     private void RefreshReport()
     {
-        var monthEnd = _displayMonth.AddMonths(1).AddDays(-1);
-        var startDate = _selectedDate?.Date ?? _displayMonth.Date;
-        var endDate = _selectedDate?.Date ?? monthEnd.Date;
+        var (startDate, endDate) = TodoTaskDateFilterPolicy.Resolve(_dateFilter, _displayMonth);
         var culture = System.Globalization.CultureInfo.CurrentCulture;
-        _rangeLabel.Text = _selectedDate is { } selected
-            ? selected.ToString("dd 'de' MMMM yyyy", culture)
+        _rangeLabel.Text = _dateFilter.StartDate is { } start
+            ? _dateFilter.EndDate is { } end && end.Date != start.Date
+                ? $"{start:dd/MM/yyyy} – {end:dd/MM/yyyy}"
+                : start.ToString("dd 'de' MMMM yyyy", culture)
             : culture.TextInfo.ToTitleCase(_displayMonth.ToString("MMMM yyyy", culture));
-        _showMonthButton.Visibility = _selectedDate is null ? Visibility.Collapsed : Visibility.Visible;
+        _showMonthButton.Visibility = _dateFilter.HasSelection ? Visibility.Visible : Visibility.Collapsed;
         var visible = _events.Select(entry => (Entry: entry, LocalTime: entry.OccurredAt.ToLocalTime()))
             .Where(item => item.LocalTime.Date >= startDate && item.LocalTime.Date <= endDate).ToList();
         RenderCalendar();
@@ -160,7 +160,7 @@ internal sealed class TodoTaskReportWindow : Window
             _calendar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _calendar.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        var weekdays = new[] { "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom" };
+        var weekdays = new[] { "Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb" };
         for (var column = 0; column < weekdays.Length; column++)
         {
             var label = new TextBlock { Text = weekdays[column], Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 5) };
@@ -170,7 +170,7 @@ internal sealed class TodoTaskReportWindow : Window
         var dayCounts = _events.Select(entry => entry.OccurredAt.ToLocalTime().Date)
             .Where(date => date.Year == _displayMonth.Year && date.Month == _displayMonth.Month)
             .GroupBy(date => date).ToDictionary(group => group.Key, group => group.Count());
-        var firstDayOffset = ((int)_displayMonth.DayOfWeek + 6) % 7;
+        var firstDayOffset = TodoTaskDateFilterPolicy.GetWeekdayColumn(_displayMonth.DayOfWeek);
         var daysInMonth = DateTime.DaysInMonth(_displayMonth.Year, _displayMonth.Month);
         var weekRows = (firstDayOffset + daysInMonth + 6) / 7;
         for (var row = 0; row < weekRows; row++) _calendar.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) });
@@ -182,7 +182,8 @@ internal sealed class TodoTaskReportWindow : Window
             var column = index % 7;
             var date = new DateTime(_displayMonth.Year, _displayMonth.Month, dayNumber);
             var hasEvents = dayCounts.TryGetValue(date, out var count);
-            var selected = _selectedDate?.Date == date;
+            var inSelectedRange = TodoTaskDateFilterPolicy.Contains(_dateFilter, date);
+            var selectedEndpoint = _dateFilter.StartDate?.Date == date || _dateFilter.EndDate?.Date == date;
             var dayButton = new Button
             {
                 Content = new StackPanel
@@ -195,15 +196,15 @@ internal sealed class TodoTaskReportWindow : Window
                         new System.Windows.Shapes.Ellipse { Width = 5, Height = 5, Margin = new Thickness(0, 2, 0, 0), Fill = hasEvents ? new SolidColorBrush(Color.FromRgb(180, 243, 106)) : Brushes.Transparent }
                     }
                 },
-                Margin = new Thickness(2), Padding = new Thickness(2), BorderThickness = selected ? new Thickness(1) : new Thickness(0),
+                Margin = new Thickness(2), Padding = new Thickness(2), BorderThickness = selectedEndpoint ? new Thickness(1) : new Thickness(0),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-                Background = selected ? new SolidColorBrush(Color.FromRgb(61, 77, 53)) : new SolidColorBrush(Color.FromRgb(34, 37, 45)),
+                Background = inSelectedRange ? new SolidColorBrush(Color.FromRgb(61, 77, 53)) : new SolidColorBrush(Color.FromRgb(34, 37, 45)),
                 Foreground = Brushes.White, Cursor = System.Windows.Input.Cursors.Hand,
-                ToolTip = hasEvents ? $"{date:dd/MM/yyyy} · {count} {(count == 1 ? "evento" : "eventos")}\nClique para filtrar este dia" : $"{date:dd/MM/yyyy} · sem eventos"
+                ToolTip = hasEvents ? $"{date:dd/MM/yyyy} · {count} {(count == 1 ? "evento" : "eventos")}\nClique para filtrar; Shift+clique para selecionar o fim do intervalo" : $"{date:dd/MM/yyyy} · sem eventos\nClique para filtrar; Shift+clique para selecionar o fim do intervalo"
             };
             dayButton.Click += (_, _) =>
             {
-                _selectedDate = _selectedDate?.Date == date ? null : date;
+                _dateFilter = TodoTaskDateFilterPolicy.SelectDay(_dateFilter, date, Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
                 RefreshReport();
             };
             Grid.SetRow(dayButton, row); Grid.SetColumn(dayButton, column); _calendar.Children.Add(dayButton);

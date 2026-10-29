@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using JMD.Core;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using ListBox = System.Windows.Controls.ListBox;
 using TextBox = System.Windows.Controls.TextBox;
@@ -44,8 +45,21 @@ internal sealed class SnippetPickerWindow : Window
         _search.TextChanged += (_, _) => RefreshResults();
         _results.MouseDoubleClick += (_, _) => AcceptSelection();
         PreviewKeyDown += Picker_PreviewKeyDown;
-        Loaded += (_, _) => { _search.Focus(); Keyboard.Focus(_search); };
+        Loaded += (_, _) =>
+        {
+            FocusSearch();
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, new Action(FocusSearch));
+        };
         RefreshResults();
+    }
+
+    private void FocusSearch()
+    {
+        if (!IsVisible) return;
+        if (SnippetPickerFocusPolicy.ShouldActivateWindow(IsVisible, IsActive)) Activate();
+        _search.Focus();
+        Keyboard.Focus(_search);
+        _search.CaretIndex = _search.Text.Length;
     }
 
     private UIElement CreateContent()

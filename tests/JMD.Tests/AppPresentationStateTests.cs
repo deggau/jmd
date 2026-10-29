@@ -214,6 +214,75 @@ public sealed class AppPresentationStateTests
     public void Todo_task_dialog_requests_activation_when_visible_but_not_active(bool isVisible, bool isActive, bool expected)
         => Assert.Equal(expected, TodoTaskWindowFocusPolicy.ShouldActivateWindow(isVisible, isActive));
 
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    public void Snippet_picker_requests_activation_when_visible_and_inactive(bool isVisible, bool isActive, bool expected)
+        => Assert.Equal(expected, SnippetPickerFocusPolicy.ShouldActivateWindow(isVisible, isActive));
+
+    [Theory]
+    [InlineData(DayOfWeek.Sunday, 0)]
+    [InlineData(DayOfWeek.Monday, 1)]
+    [InlineData(DayOfWeek.Saturday, 6)]
+    public void Task_report_calendar_places_sunday_in_the_first_column(DayOfWeek day, int expectedColumn)
+        => Assert.Equal(expectedColumn, TodoTaskDateFilterPolicy.GetWeekdayColumn(day));
+
+    [Fact]
+    public void Task_report_shift_selection_filters_inclusive_date_range()
+    {
+        var firstDay = new DateTime(2026, 10, 1);
+        var lastDay = new DateTime(2026, 10, 15);
+        var selection = TodoTaskDateFilterPolicy.SelectDay(new TodoTaskDateFilter(), firstDay, extendRange: false);
+
+        selection = TodoTaskDateFilterPolicy.SelectDay(selection, lastDay, extendRange: true);
+
+        Assert.Equal(firstDay, selection.StartDate);
+        Assert.Equal(lastDay, selection.EndDate);
+        Assert.True(TodoTaskDateFilterPolicy.Contains(selection, firstDay));
+        Assert.True(TodoTaskDateFilterPolicy.Contains(selection, new DateTime(2026, 10, 8)));
+        Assert.True(TodoTaskDateFilterPolicy.Contains(selection, lastDay));
+        Assert.False(TodoTaskDateFilterPolicy.Contains(selection, lastDay.AddDays(1)));
+    }
+
+    [Fact]
+    public void Task_report_shift_selection_normalizes_reverse_order_and_clicking_single_day_again_clears_filter()
+    {
+        var later = new DateTime(2026, 10, 15);
+        var earlier = new DateTime(2026, 10, 1);
+        var selection = TodoTaskDateFilterPolicy.SelectDay(new TodoTaskDateFilter(), later, extendRange: false);
+        selection = TodoTaskDateFilterPolicy.SelectDay(selection, earlier, extendRange: true);
+        Assert.Equal(earlier, selection.StartDate);
+        Assert.Equal(later, selection.EndDate);
+
+        var single = TodoTaskDateFilterPolicy.SelectDay(new TodoTaskDateFilter(), earlier, extendRange: false);
+        Assert.False(TodoTaskDateFilterPolicy.SelectDay(single, earlier, extendRange: false).HasSelection);
+    }
+
+    [Theory]
+    [InlineData("hibernate", SystemPowerAction.Hibernate, "Ctrl+Alt+Shift+H", "hibernar")]
+    [InlineData("suspend", SystemPowerAction.Suspend, "Ctrl+Alt+Shift+S", "suspender")]
+    [InlineData("lock", SystemPowerAction.Lock, "Ctrl+Alt+Shift+L", "bloquear")]
+    public void System_power_commands_have_voice_phrases_and_configurable_shortcuts(
+        string commandId, SystemPowerAction action, string shortcut, string voicePhrase)
+    {
+        Assert.True(SystemPowerCommandCatalog.TryGet(commandId, out var command));
+        Assert.Equal(action, command.Action);
+        Assert.Contains(voicePhrase, command.VoicePhrases);
+        Assert.Equal(shortcut, ShortcutDefaults.ForCommand(commandId));
+        Assert.True(ShortcutParser.TryParse(shortcut, out _, out _));
+    }
+
+    [Fact]
+    public void System_power_command_catalog_has_unique_ids_and_shortcuts_for_list_and_settings_surfaces()
+    {
+        var commands = SystemPowerCommandCatalog.All;
+        Assert.Equal(3, commands.Count);
+        Assert.Equal(commands.Count, commands.Select(command => command.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(commands.Count, commands.Select(command => ShortcutDefaults.ForCommand(command.Id)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(commands, command => Assert.True(SystemPowerCommandCatalog.TryGetAction(command.Id, out _)));
+    }
+
     [Fact]
     public void Voice_phrase_policy_detects_duplicate_phrases_across_commands()
     {

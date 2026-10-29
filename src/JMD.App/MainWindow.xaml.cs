@@ -54,6 +54,7 @@ public partial class MainWindow : Window
     private readonly WindowsClipboard _clipboard = new();
     private readonly KeyboardAutomation _keyboard = new();
     private readonly FocusedTextAutomation _focusedText;
+    private readonly ComputerPowerController _computerPower = new();
     private readonly WindowsDisplayAwakeService _displayAwake = new();
     private VoiceWakeWordService? _voiceWakeWord;
     private JmdNotificationWindow? _jeyProcessingNotification;
@@ -337,6 +338,13 @@ public partial class MainWindow : Window
         {
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("transcribe")
         });
+        foreach (var powerCommand in SystemPowerCommandCatalog.All)
+        {
+            _commands.Add(new CommandRow(powerCommand.Id, powerCommand.Name, powerCommand.Description, GetShortcut(powerCommand.Id))
+            {
+                VoicePhrasesDisplay = GetVoicePhrasesDisplay(powerCommand.Id)
+            });
+        }
         _commands.Add(new CommandRow("createCustomShortcut", "Criar atalho personalizado",
             "Cria workflows com etapas de abertura, teclado e texto.", "Sem atalho"));
         foreach (var shortcut in _settings.CustomShortcuts)
@@ -441,6 +449,8 @@ public partial class MainWindow : Window
             ("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.")
         ];
         foreach (var command in configurableCommands.OrderBy(command => command.Name, StringComparer.CurrentCultureIgnoreCase))
+            AddShortcutRow(command.Id, command.Name, command.Description);
+        foreach (var command in SystemPowerCommandCatalog.All.OrderBy(command => command.Name, StringComparer.CurrentCultureIgnoreCase))
             AddShortcutRow(command.Id, command.Name, command.Description);
 
         SettingsPanel.Children.Add(new TextBlock
@@ -670,6 +680,8 @@ public partial class MainWindow : Window
             ["todoPanel"] = ["abrir tarefas", "abrir painel de tarefas"],
             ["todoPanelClose"] = ["fechar tarefas", "fechar painel de tarefas"]
         };
+        foreach (var command in SystemPowerCommandCatalog.All)
+            defaults[command.Id] = command.VoicePhrases.ToArray();
         var changed = false;
         foreach (var (commandId, phrases) in defaults)
         {
@@ -1373,7 +1385,13 @@ public partial class MainWindow : Window
         var sourceWindow = _previousWindow;
         var picker = new SnippetPickerWindow(_settings.Snippets);
         PrepareWindowForCaptureExclusion(picker);
-        if (picker.ShowDialog() != true || picker.SelectedSnippet is not { } snippet) return;
+        if (IsVisible) picker.Owner = this;
+        var wasShowingDialog = _showingDialog;
+        _showingDialog = true;
+        bool selected;
+        try { selected = picker.ShowDialog() == true; }
+        finally { _showingDialog = wasShowingDialog; }
+        if (!selected || picker.SelectedSnippet is not { } snippet) return;
         if (!await _keyboard.WaitForModifiersReleasedAsync())
         {
             Notify("JMD", "Solte as teclas modificadoras e tente novamente.", false);
@@ -1416,9 +1434,15 @@ public partial class MainWindow : Window
         }
     }
 
-    private static readonly string[] ShortcutIds = ["palette", "clipboard", "selection", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact", "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "about", "checkUpdates", "transcribe", "createCustomShortcut"];
+    private static readonly string[] ShortcutIds =
+    [
+        "palette", "clipboard", "selection", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact",
+        "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "about",
+        "checkUpdates", "transcribe", "createCustomShortcut",
+        .. SystemPowerCommandCatalog.All.Select(command => command.Id)
+    ];
 
-    private static bool IsJeyAction(string id) => id is "about" or "checkUpdates" or "transcribe";
+    private static bool IsJeyAction(string id) => id is "about" or "checkUpdates" or "transcribe" || SystemPowerCommandCatalog.TryGet(id, out _);
 
     private string GetShortcut(string id)
     {
@@ -1577,6 +1601,13 @@ public partial class MainWindow : Window
                     break;
                 case "transcribe":
                     await StartDictationAsync(voiceCommand?.Transcript);
+                    break;
+                case "hibernate":
+                case "suspend":
+                case "lock":
+                    succeeded = ExecuteSystemPowerCommand(id);
+                    if (succeeded && voiceCommand is not null && SystemPowerCommandCatalog.TryGet(id, out var powerCommand))
+                        RecordActionHistory(powerCommand.Name, string.Empty, powerCommand.Description, voiceCommand);
                     break;
                 case "createCustomShortcut":
                     CreateCustomShortcutFromDialog();
@@ -2819,6 +2850,11 @@ public partial class MainWindow : Window
         {
             AboutMenuItem_Click(this, new RoutedEventArgs());
             CheckUpdatesButton_Click(this, new RoutedEventArgs());
+        }
+        else if (SystemPowerCommandCatalog.TryGet(id, out var powerCommand))
+        {
+            if (ExecuteSystemPowerCommand(id))
+                RecordActionHistory(powerCommand.Name, string.Empty, powerCommand.Description);
         }
         else if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
             await RunCustomWorkflowAsync(customShortcut);
@@ -4666,6 +4702,11 @@ public partial class MainWindow : Window
                 await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
             if (id == "snippets") await InsertSavedSnippetAsync();
             if (id == "saveSnippet") await CaptureSnippetAsync();
+            if (SystemPowerCommandCatalog.TryGet(id, out _) && !ExecuteSystemPowerCommand(id))
+            {
+                executionContext.Failed = true;
+                executionContext.FailureMessage = "Não foi possível executar o comando de energia.";
+            }
             if (id == "createCustomShortcut") CreateCustomShortcutFromDialog();
             if (_settings.CustomShortcuts.FirstOrDefault(shortcut => shortcut.Id == id) is { } customShortcut)
                 await RunCustomWorkflowAsync(customShortcut, dynamicVariables: dynamicVariables, matchedPhrase: matchedPhrase);
@@ -4682,6 +4723,22 @@ public partial class MainWindow : Window
         if (!executionContext.HistoryRecorded)
             RecordActionHistory(executionContext.Failed ? $"Falha ao executar: {commandName}" : $"Executar: {commandName}",
                 string.Empty, filterDescription, isFailure: executionContext.Failed, failureDetails: executionContext.FailureMessage);
+    }
+
+    private bool ExecuteSystemPowerCommand(string commandId)
+    {
+        if (!SystemPowerCommandCatalog.TryGet(commandId, out var command)) return false;
+        try
+        {
+            _computerPower.Execute(command.Action);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            CriticalErrorLog.Write($"Executar comando do sistema {command.Id}", exception);
+            SetStatus($"Não foi possível executar ‘{command.Name}’: {exception.Message}", false, exception.ToString());
+            return false;
+        }
     }
 
     internal async Task<JmdCliResponse> ExecuteCliRequestAsync(JmdCliRequest request)
