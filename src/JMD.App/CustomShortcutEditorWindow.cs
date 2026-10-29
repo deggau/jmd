@@ -30,6 +30,7 @@ internal sealed class CustomShortcutEditorWindow : Window
     private readonly Func<CustomShortcutEditorWindow, Task<bool>>? _testWorkflow;
     private ControlInspectorWindow? _controlInspector;
     private bool _closed;
+    private bool _accepted;
     private readonly TextBlock _testStatus = new()
     {
         Text = "O teste executa as etapas no programa selecionado.",
@@ -43,6 +44,16 @@ internal sealed class CustomShortcutEditorWindow : Window
     public string Shortcut => _shortcut.Text.Trim();
     public string[] VoicePhrases => _phrases.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     public bool FocusIfAlreadyOpen => _focusIfAlreadyOpen.IsChecked == true;
+    public bool ShowEditorDialog()
+    {
+        _accepted = false;
+        ShowDialog();
+        return _accepted;
+    }
+
+    private void CompleteDialog(bool accepted)
+        => WorkflowDialogClosePolicy.Close(accepted, result => _accepted = result, Close);
+
     public List<CustomWorkflowStep> Steps
     {
         get
@@ -115,7 +126,7 @@ internal sealed class CustomShortcutEditorWindow : Window
         DockPanel.SetDock(footer, Dock.Bottom);
         layout.Children.Add(footer);
         var cancel = MakeButton("Cancelar", false);
-        cancel.Click += (_, _) => DialogResult = false;
+        cancel.Click += (_, _) => CompleteDialog(false);
         var save = MakeButton("Salvar comando", true);
         save.Margin = new Thickness(8, 0, 0, 0);
         save.Click += (_, _) =>
@@ -126,7 +137,7 @@ internal sealed class CustomShortcutEditorWindow : Window
                 MessageBox.Show(this, error, "Workflow inválido", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
-            DialogResult = true;
+            CompleteDialog(true);
         };
         footer.Children.Add(cancel);
         footer.Children.Add(save);

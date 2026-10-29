@@ -951,7 +951,7 @@ public partial class MainWindow : Window
         if (target.Contains("://", StringComparison.Ordinal))
             return Uri.TryCreate(target, UriKind.Absolute, out var uri) &&
                    (uri.Scheme is "http" or "https") && !target.Any(char.IsWhiteSpace);
-        return CustomCommandLine.TryParse(target, out _, out _);
+        return WorkflowCommandLinePolicy.TryParse(target, out _, out _);
     }
 
     private bool HasShortcutConflict(string shortcutText, string? exceptId)
@@ -1015,7 +1015,7 @@ public partial class MainWindow : Window
         PrepareWindowForCaptureExclusion(dialog);
         _showingDialog = true;
         bool accepted;
-        try { accepted = dialog.ShowDialog() == true; }
+        try { accepted = dialog.ShowEditorDialog() == true; }
         finally { _showingDialog = false; }
         if (!accepted) return;
 
@@ -1749,14 +1749,15 @@ public partial class MainWindow : Window
                         var openTarget = ExpandWorkflowVariables(step.Value, commandVariables,
                             urlEncodeValues: step.Value.TrimStart().StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                                 step.Value.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase));
-                        if (!CustomCommandLine.TryParse(openTarget, out var executable, out var arguments))
+                        openTarget = Environment.ExpandEnvironmentVariables(openTarget);
+                        if (!WorkflowCommandLinePolicy.TryParse(openTarget, out var executable, out var arguments))
                             throw new InvalidOperationException($"Programa ou URL inválido: {openTarget}");
-                        var isUrl = Uri.TryCreate(openTarget, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+                        var isUrl = Uri.TryCreate(executable, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
                         var workingDirectory = string.Empty;
                         if (!isUrl && Path.GetExtension(executable).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
                         {
                             var shortcutTarget = WindowsShortcutResolver.Resolve(executable);
-                            if (!CustomCommandLine.TryParse($"shortcut.exe {shortcutTarget.Arguments}", out _, out var shortcutArguments))
+                            if (!WorkflowCommandLinePolicy.TryParseArguments(shortcutTarget.Arguments, out var shortcutArguments))
                                 throw new InvalidOperationException($"O atalho ‘{Path.GetFileName(executable)}’ possui argumentos inválidos.");
                             arguments = WorkflowArgumentPolicy.Combine(shortcutArguments, arguments);
                             executable = shortcutTarget.TargetPath;
@@ -1778,7 +1779,7 @@ public partial class MainWindow : Window
                                 UseShellExecute = isUrl
                             };
                             if (isUrl)
-                                startInfo.Arguments = CustomCommandLine.JoinArguments(arguments);
+                                startInfo.Arguments = WorkflowCommandLinePolicy.JoinArguments(arguments);
                             else
                                 foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
                             try
@@ -1798,7 +1799,7 @@ public partial class MainWindow : Window
                                 var elevatedStartInfo = new ProcessStartInfo
                                 {
                                     FileName = executable,
-                                    Arguments = CustomCommandLine.JoinArguments(arguments),
+                                    Arguments = WorkflowCommandLinePolicy.JoinArguments(arguments),
                                     WorkingDirectory = !string.IsNullOrWhiteSpace(workingDirectory)
                                         ? workingDirectory
                                         : Path.IsPathRooted(executable) ? Path.GetDirectoryName(executable) ?? string.Empty : string.Empty,
@@ -2027,7 +2028,7 @@ public partial class MainWindow : Window
     {
         var isUrl = Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
         var processName = string.Empty;
-        if (!isUrl && CustomCommandLine.TryParse(target, out var executable, out var arguments))
+        if (!isUrl && WorkflowCommandLinePolicy.TryParse(target, out var executable, out var arguments))
         {
             // A command with parameters can identify a specific document or folder.
             // Focusing any existing window of the same executable would skip opening it.
@@ -5161,88 +5162,6 @@ public partial class MainWindow : Window
         public int Top;
         public int Right;
         public int Bottom;
-    }
-}
-
-internal static class CustomCommandLine
-{
-    public static string JoinArguments(IEnumerable<string> arguments)
-        => string.Join(" ", arguments.Select(QuoteWindowsArgument));
-
-    private static string QuoteWindowsArgument(string argument)
-    {
-        var result = new System.Text.StringBuilder(argument.Length + 2);
-        result.Append('"');
-        var backslashes = 0;
-        foreach (var character in argument)
-        {
-            if (character == '\\')
-            {
-                backslashes++;
-                continue;
-            }
-            if (character == '"')
-            {
-                result.Append('\\', backslashes * 2 + 1);
-                result.Append('"');
-            }
-            else
-            {
-                result.Append('\\', backslashes);
-                result.Append(character);
-            }
-            backslashes = 0;
-        }
-        result.Append('\\', backslashes * 2);
-        result.Append('"');
-        return result.ToString();
-    }
-
-    public static bool TryParse(string commandLine, out string executable, out IReadOnlyList<string> arguments)
-    {
-        var parts = new List<string>();
-        var current = new System.Text.StringBuilder();
-        var quoted = false;
-        var started = false;
-
-        foreach (var character in commandLine)
-        {
-            if (character == '"')
-            {
-                quoted = !quoted;
-                started = true;
-            }
-            else if (char.IsWhiteSpace(character) && !quoted)
-            {
-                if (!started) continue;
-                parts.Add(current.ToString());
-                current.Clear();
-                started = false;
-            }
-            else
-            {
-                current.Append(character);
-                started = true;
-            }
-        }
-
-        if (quoted)
-        {
-            executable = string.Empty;
-            arguments = [];
-            return false;
-        }
-        if (started) parts.Add(current.ToString());
-        if (parts.Count == 0 || string.IsNullOrWhiteSpace(parts[0]))
-        {
-            executable = string.Empty;
-            arguments = [];
-            return false;
-        }
-
-        executable = parts[0];
-        arguments = parts.Skip(1).ToArray();
-        return true;
     }
 }
 
