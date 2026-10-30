@@ -79,8 +79,8 @@ public partial class App : System.Windows.Application
             ContextMenuStrip = menu,
             Visible = true
         };
-        long? activeBalloonHistoryId = null;
-        _mainWindow.TrayNotification += (title, message, useJmdNotification, historyId, displayDuration) =>
+        var activeBalloonClickTarget = NotificationClickTarget.ForHistory(null);
+        _mainWindow.TrayNotification += (title, message, useJmdNotification, clickTarget, displayDuration) =>
         {
             if (useJmdNotification)
             {
@@ -88,23 +88,23 @@ public partial class App : System.Windows.Application
                 if (window is not null)
                     window.Dispatcher.BeginInvoke(() =>
                     {
-                        var notification = new JmdNotificationWindow(message, historyId,
-                            displayDuration: displayDuration);
+                        var notification = new JmdNotificationWindow(message, clickTarget.HistoryId,
+                            displayDuration: displayDuration, clickTarget: clickTarget);
                         window.PrepareWindowForCaptureExclusion(notification);
-                        notification.HistoryRequested += selectedHistoryId => window.Dispatcher.BeginInvoke(
-                            new Action(() => window.ShowHistory(selectedHistoryId)));
+                        notification.NotificationRequested += selectedTarget => window.Dispatcher.BeginInvoke(
+                            new Action(() => DispatchNotificationClick(window, selectedTarget)));
                         notification.Show();
                     });
                 return;
             }
 
-            activeBalloonHistoryId = historyId;
+            activeBalloonClickTarget = clickTarget;
             _trayIcon.BalloonTipTitle = title;
             _trayIcon.BalloonTipText = message;
             _trayIcon.ShowBalloonTip((int)displayDuration.TotalMilliseconds);
         };
         _trayIcon.BalloonTipClicked += (_, _) =>
-            _mainWindow.Dispatcher.BeginInvoke(new Action(() => _mainWindow.ShowHistory(activeBalloonHistoryId)));
+            _mainWindow.Dispatcher.BeginInvoke(new Action(() => DispatchNotificationClick(_mainWindow, activeBalloonClickTarget)));
         StartUpdateSignalListener();
         StartCliServer();
         if (updateOnStartup)
@@ -114,6 +114,9 @@ public partial class App : System.Windows.Application
         else if (!backgroundOnStartup)
             _ = _mainWindow.Dispatcher.BeginInvoke(new Action(_mainWindow.ShowPalette));
     }
+
+    private static void DispatchNotificationClick(MainWindow window, NotificationClickTarget target)
+        => NotificationClickTargetPolicy.Dispatch(target, window.ShowHistory, window.ShowTodoTaskFromNotification);
 
     private async Task<int> RunCliAsync(string[] arguments)
     {

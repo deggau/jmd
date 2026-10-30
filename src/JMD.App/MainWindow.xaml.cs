@@ -112,7 +112,7 @@ public partial class MainWindow : Window
     private TodoTaskPanelWindow? _todoTaskPanel;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
 
-    public event Action<string, string, bool, long?, TimeSpan>? TrayNotification;
+    public event Action<string, string, bool, NotificationClickTarget, TimeSpan>? TrayNotification;
     public bool IsVoiceWakeWordEnabled => _settings.VoiceWakeWordEnabled;
 
     public void ToggleVoiceWakeWordFromTray()
@@ -2276,6 +2276,12 @@ public partial class MainWindow : Window
         _todoTaskPanel?.Refresh();
     }
 
+    public void ShowTodoTaskFromNotification(string taskId)
+    {
+        var task = _todoTasks.FirstOrDefault(candidate => candidate.Id == taskId);
+        if (task is not null) EditTodoTask(task);
+    }
+
     private void ToggleTodoTaskChecklist(TodoTask task, int index)
     {
         if (index < 0 || index >= task.Checklist.Count) return;
@@ -2439,7 +2445,7 @@ public partial class MainWindow : Window
             _todoTaskStore.MarkReminderSent(task.Id, now);
             ActivationSoundService.PlayTaskReminder(_settings.TaskReminderSound);
             Notify("Lembrete de tarefa", $"{TodoTaskDisplay.Reference(task)} {task.Title}", true,
-                displayDuration: TimeSpan.FromSeconds(12));
+                displayDuration: TimeSpan.FromSeconds(12), clickTarget: NotificationClickTarget.ForTodoTask(task.Id));
         }
     }
 
@@ -5000,7 +5006,7 @@ public partial class MainWindow : Window
     }
 
     private void Notify(string title, string message, bool success, long? historyId = null,
-        TimeSpan? displayDuration = null)
+        TimeSpan? displayDuration = null, NotificationClickTarget? clickTarget = null)
     {
         if (!success && _commandExecutionContext.Value is { } executionState)
         {
@@ -5008,7 +5014,8 @@ public partial class MainWindow : Window
             executionState.FailureMessage = message;
         }
         SetStatus(message, success);
-        TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications, historyId,
+        TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications,
+            clickTarget ?? NotificationClickTarget.ForHistory(historyId),
             displayDuration ?? TimeSpan.FromSeconds(4));
     }
 

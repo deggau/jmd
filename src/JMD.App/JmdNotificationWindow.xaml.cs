@@ -2,28 +2,30 @@ using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Threading;
+using JMD.Core;
 
 namespace JMD.App;
 
 public partial class JmdNotificationWindow : Window
 {
     private readonly DispatcherTimer _dismissTimer;
-    private readonly long? _historyId;
+    private readonly NotificationClickTarget _clickTarget;
     private readonly bool _isProcessing;
     private readonly Action? _stopAudioDebug;
     private readonly Action? _postponeAudioDebug;
 
-    public event Action<long?>? HistoryRequested;
+    public event Action<NotificationClickTarget>? NotificationRequested;
 
     public JmdNotificationWindow(string message, long? historyId, bool isProcessing = false,
-        TimeSpan? displayDuration = null, Action? stopAudioDebug = null, Action? postponeAudioDebug = null)
+        TimeSpan? displayDuration = null, Action? stopAudioDebug = null, Action? postponeAudioDebug = null,
+        NotificationClickTarget? clickTarget = null)
     {
         InitializeComponent();
         _dismissTimer = new DispatcherTimer
         {
             Interval = displayDuration ?? TimeSpan.FromSeconds(4)
         };
-        _historyId = historyId;
+        _clickTarget = clickTarget ?? NotificationClickTarget.ForHistory(historyId);
         _isProcessing = isProcessing;
         _stopAudioDebug = stopAudioDebug;
         _postponeAudioDebug = postponeAudioDebug;
@@ -60,7 +62,7 @@ public partial class JmdNotificationWindow : Window
     {
         if (_isProcessing) return;
         if (IsInsideButton(e.OriginalSource as DependencyObject)) return;
-        HistoryRequested?.Invoke(_historyId);
+        NotificationRequested?.Invoke(_clickTarget);
         Close();
     }
 

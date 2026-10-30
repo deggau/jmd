@@ -142,7 +142,14 @@ internal sealed class CustomShortcutEditorWindow : Window
         footer.Children.Add(cancel);
         footer.Children.Add(save);
 
-        var heading = new TextBlock { Text = existing is null ? "Novo workflow" : "Editar workflow", Foreground = Brushes.White, FontSize = 18, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4) };
+        var heading = new Border
+        {
+            Background = Brushes.Transparent,
+            Padding = new Thickness(0, 0, 0, 4),
+            Cursor = System.Windows.Input.Cursors.SizeAll,
+            Child = new TextBlock { Text = existing is null ? "Novo workflow" : "Editar workflow", Foreground = Brushes.White, FontSize = 18, FontWeight = FontWeights.SemiBold }
+        };
+        heading.MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); };
         DockPanel.SetDock(heading, Dock.Top);
         layout.Children.Add(heading);
 
