@@ -125,12 +125,14 @@ internal sealed class BusinessmapSettingsWindow : Window
         var body = new StackPanel();
         scroll.Content = body;
         layout.Children.Add(scroll);
+        _enabled.Style = (Style)System.Windows.Application.Current.FindResource("CompactToggleCheckBoxStyle");
+        _enabled.Margin = new Thickness(0, 0, 0, 12);
         _enabled.IsChecked = _settings.Enabled;
         body.Children.Add(_enabled);
         body.Children.Add(Label("URL da conta Businessmap"));
         StyleBox(_accountUrl);
         _accountUrl.Text = _settings.AccountUrl;
-        _accountUrl.ToolTip = "Use a URL do seu ambiente, por exemplo https://empresa.kanbanize.com";
+        _accountUrl.ToolTip = "Use somente a URL base do ambiente, sem /openapi ou /api/v2. Exemplo: https://empresa.kanbanize.com";
         _accountUrl.Margin = new Thickness(0, 4, 0, 8);
         body.Children.Add(_accountUrl);
         body.Children.Add(Label("Chave de API do seu usuário"));
@@ -143,7 +145,7 @@ internal sealed class BusinessmapSettingsWindow : Window
         _apiKey.Margin = new Thickness(0, 4, 0, 8);
         body.Children.Add(_apiKey);
 
-        var connect = MakeButton("Conectar e carregar quadros", false);
+        var connect = MakeButton("Testar acesso e carregar quadros", false);
         connect.HorizontalAlignment = HorizontalAlignment.Left;
         connect.Click += async (_, _) => await ConnectAsync();
         body.Children.Add(connect);
@@ -162,7 +164,7 @@ internal sealed class BusinessmapSettingsWindow : Window
         if (_loading) return;
         _loading = true;
         _status.Foreground = MutedBrush;
-        _status.Text = "Conectando e carregando quadros…";
+        _status.Text = "Validando a chave e consultando os quadros disponíveis para este usuário…";
         try
         {
             using var client = CreateClient();
@@ -173,7 +175,9 @@ internal sealed class BusinessmapSettingsWindow : Window
                 if (_availableBoards.FirstOrDefault(board => board.Id == selected.BoardId) is { } board)
                     selected.BoardName = board.Name;
             _status.Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106));
-            _status.Text = $"Conectado. {_availableBoards.Count} quadro(s) disponível(is). Abra os quadros selecionados para carregar as lanes e responsáveis.";
+            _status.Text = _availableBoards.Count == 0
+                ? "A chave foi aceita, mas a API não retornou quadros acessíveis para este usuário. Confira os acessos aos quadros no Businessmap."
+                : $"Acesso à API confirmado. {_availableBoards.Count} quadro(s) acessível(is) para este usuário. Selecione os quadros; ao abri-los, carregaremos lanes e responsáveis.";
             RenderBoards();
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException or ArgumentException or JsonException)

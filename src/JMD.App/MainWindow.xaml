@@ -38,7 +38,7 @@
             <Button.ContextMenu>
               <ContextMenu>
                 <MenuItem Header="Jey" Click="JeyMenuItem_Click" />
-                <MenuItem Header="Configurações de tarefas…" Click="TodoTaskSettingsMenuItem_Click" />
+                <MenuItem Header="Tarefas" Click="TodoTaskSettingsMenuItem_Click" />
                 <MenuItem Header="Avançado" Click="AdvancedSettingsMenuItem_Click" />
                 <MenuItem Header="Sobre" Click="AboutMenuItem_Click" />
               </ContextMenu>

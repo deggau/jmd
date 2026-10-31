@@ -36,7 +36,7 @@ internal sealed class BusinessmapApiClient : IDisposable
         if (!Uri.TryCreate(accountUrl.Trim().TrimEnd('/'), UriKind.Absolute, out var accountUri) ||
             accountUri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(accountUri.UserInfo) ||
             !string.IsNullOrEmpty(accountUri.Query) || !string.IsNullOrEmpty(accountUri.Fragment))
-            throw new ArgumentException("Informe a URL HTTPS da conta Businessmap, por exemplo https://empresa.kanbanize.com.", nameof(accountUrl));
+            throw new ArgumentException("Informe a URL base HTTPS da conta Businessmap, sem /openapi ou /api/v2; por exemplo https://empresa.kanbanize.com.", nameof(accountUrl));
         if (string.IsNullOrWhiteSpace(apiKey)) throw new ArgumentException("Informe a chave de API.", nameof(apiKey));
 
         _accountRoot = new Uri(accountUri.GetLeftPart(UriPartial.Authority) + "/");
@@ -48,8 +48,9 @@ internal sealed class BusinessmapApiClient : IDisposable
 
     public async Task<IReadOnlyList<BusinessmapBoard>> GetBoardsAsync(CancellationToken cancellationToken = default)
     {
-        await EnsureOpenApiAsync(cancellationToken);
-        var document = await InvokeAsync(FindOperation("GetBoards"), new Dictionary<string, string>(), cancellationToken);
+        // This endpoint both verifies the API key's read access and returns the boards
+        // visible to that user. It lets connection setup work independently from OpenAPI.
+        using var document = await GetJsonAsync("api/v2/boards", "GET /api/v2/boards (validar acesso e listar quadros)", cancellationToken);
         return FindItems(document.RootElement)
             .Select(item => new BusinessmapBoard(ReadString(item, "board_id", "id"), ReadString(item, "name", "board_name", "title")))
             .Where(board => board.Id.Length > 0 && board.Name.Length > 0)
@@ -131,6 +132,14 @@ internal sealed class BusinessmapApiClient : IDisposable
         _openApi = JsonDocument.Parse(content);
         DiscoverApiPrefix(_openApi.RootElement);
         DiscoverApiKeyHeader(_openApi.RootElement);
+    }
+
+    private async Task<JsonDocument> GetJsonAsync(string path, string operationName, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_accountRoot, path));
+        using var response = await _http.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, operationName);
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
     }
 
     private void DiscoverApiPrefix(JsonElement root)
@@ -251,7 +260,8 @@ internal sealed class BusinessmapApiClient : IDisposable
         var status = (int)response.StatusCode;
         var hint = response.StatusCode switch
         {
-            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => " Verifique a chave e as permissões da conta.",
+            HttpStatusCode.Unauthorized => " A API não aceitou a chave. Confira se ela está ativa e pertence a esta conta.",
+            HttpStatusCode.Forbidden => " O servidor recusou esta operação. Confira se o usuário tem acesso à API V2 e aos quadros.",
             (HttpStatusCode)429 => " A API limitou as consultas; aguarde um pouco e tente novamente.",
             _ => string.Empty
         };
