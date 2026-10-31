@@ -2235,11 +2235,56 @@ public partial class MainWindow : Window
     {
         _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask,
             ReopenTodoTask, PauseTodoTask, UnpauseTodoTask, ToggleTodoTaskChecklist,
-            CreateTodoTaskAsync, ShowTodoTaskReport, UndoTodoTaskActions);
+            CreateTodoTaskAsync, ShowTodoTaskReport, UndoTodoTaskActions, LoadBusinessmapTasksAsync, _settings.Businessmap.Enabled);
         _todoTaskPanel.ShowOpenTasks();
         _todoTaskPanel.Show();
         _todoTaskPanel.Activate();
         Dispatcher.BeginInvoke(new Action(_todoTaskPanel.FocusFirstAction));
+    }
+
+    private async Task<IReadOnlyList<BusinessmapTaskCard>> LoadBusinessmapTasksAsync()
+    {
+        var configuration = _settings.Businessmap;
+        if (!configuration.Enabled) throw new InvalidOperationException("Ative a sincronização nas configurações de tarefas.");
+        if (configuration.Boards.Count == 0) throw new InvalidOperationException("Selecione ao menos um quadro nas configurações de tarefas.");
+        var key = WorkflowVariableProtection.Unprotect(configuration.ProtectedApiKey);
+        using var client = new BusinessmapApiClient(configuration.AccountUrl, key);
+        var result = new List<BusinessmapTaskCard>();
+        foreach (var boardSettings in configuration.Boards)
+        {
+            var lanesTask = client.GetLanesAsync(boardSettings.BoardId);
+            var cardsTask = client.GetCardsAsync(boardSettings.BoardId);
+            await Task.WhenAll(lanesTask, cardsTask);
+            var laneNames = lanesTask.Result.ToDictionary(lane => lane.Id, lane => lane.Name, StringComparer.Ordinal);
+            foreach (var card in cardsTask.Result)
+            {
+                if (boardSettings.UseLaneFilter && !boardSettings.IncludedLaneIds.Contains(card.LaneId, StringComparer.Ordinal)) continue;
+                if (boardSettings.HiddenLaneIds.Contains(card.LaneId, StringComparer.Ordinal)) continue;
+                if (boardSettings.UseOwnerFilter && !boardSettings.OwnerIds.Contains(card.OwnerId, StringComparer.Ordinal)) continue;
+                result.Add(card with
+                {
+                    BoardName = string.IsNullOrWhiteSpace(card.BoardName) ? boardSettings.BoardName : card.BoardName,
+                    LaneName = string.IsNullOrWhiteSpace(card.LaneName) && laneNames.TryGetValue(card.LaneId, out var laneName) ? laneName : card.LaneName
+                });
+            }
+        }
+        return result;
+    }
+
+    private void TodoTaskSettingsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new BusinessmapSettingsWindow(_settings.Businessmap) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _settings.Businessmap = dialog.Configuration;
+        try
+        {
+            _settingsStore.Save(_settings);
+            _todoTaskPanel?.SetBusinessmapEnabled(_settings.Businessmap.Enabled);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show($"Não foi possível salvar as configurações de tarefas: {exception.Message}", "Configurações de tarefas", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void ShowTodoTaskReport()

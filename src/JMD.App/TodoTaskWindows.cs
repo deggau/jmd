@@ -1,5 +1,9 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -13,6 +17,7 @@ using Brushes = System.Windows.Media.Brushes;
 using FontFamily = System.Windows.Media.FontFamily;
 using Orientation = System.Windows.Controls.Orientation;
 using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using MessageBox = System.Windows.MessageBox;
 
 namespace JMD.App;
 
@@ -297,7 +302,9 @@ internal sealed class TodoTaskEditWindow : Window
         _urls.Margin = new Thickness(0, 4, 0, 8); resourceFields.Children.Add(_urls);
         resourceFields.Children.Add(Label("Anexos"));
         StyleBox(_attachments); _attachments.Height = 32; _attachments.AcceptsReturn = true; _attachments.TextWrapping = TextWrapping.Wrap; _attachments.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _attachments.ToolTip = "Copie arquivos no Explorador e pressione Ctrl+V aqui para adicionar os caminhos.";
         _attachments.Text = task?.Attachments ?? ""; _attachments.Margin = new Thickness(0, 4, 0, 5); resourceFields.Children.Add(_attachments);
+        _attachments.PreviewKeyDown += Attachments_PreviewKeyDown;
         var addAttachment = CreateButton("Adicionar arquivo"); addAttachment.Height = 28; addAttachment.Margin = new Thickness(0, 0, 0, 4); addAttachment.HorizontalAlignment = HorizontalAlignment.Left;
         addAttachment.Click += (_, _) =>
         {
@@ -380,6 +387,31 @@ internal sealed class TodoTaskEditWindow : Window
         if (TodoTaskWindowFocusPolicy.ShouldActivateWindow(IsVisible, IsActive)) Activate();
         _title.Focus();
         Keyboard.Focus(_title);
+    }
+
+    private void Attachments_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.V || !Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;
+
+        try
+        {
+            if (!System.Windows.Clipboard.ContainsFileDropList()) return;
+            var copiedPaths = System.Windows.Clipboard.GetFileDropList().Cast<string>().ToList();
+            if (copiedPaths.Count == 0) return;
+
+            var paths = _attachments.Text.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            foreach (var path in copiedPaths)
+                if (!paths.Contains(path, StringComparer.OrdinalIgnoreCase)) paths.Add(path);
+
+            _attachments.Text = string.Join(Environment.NewLine, paths);
+            _attachments.CaretIndex = _attachments.Text.Length;
+            _attachments.ScrollToEnd();
+            e.Handled = true;
+        }
+        catch (Exception exception) when (exception is ExternalException or InvalidOperationException)
+        {
+            // Keep the normal text paste behavior if the clipboard is temporarily unavailable.
+        }
     }
 
     private void AddChecklistRow(string title, decimal weight, bool completed)
@@ -568,6 +600,10 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly Action<IReadOnlyList<TodoTaskEntry>> _undo;
     private readonly Button _historyButton;
     private readonly Button _undoButton;
+    private readonly Button _reportButton;
+    private readonly Button _newTaskButton;
+    private readonly Button _businessmapButton;
+    private readonly Func<Task<IReadOnlyList<BusinessmapTaskCard>>> _loadBusinessmapTasks;
     private readonly System.Windows.Threading.DispatcherTimer _undoTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly TextBlock _title;
     private readonly StackPanel _list = new();
@@ -575,13 +611,20 @@ internal sealed class TodoTaskPanelWindow : Window
     private List<TodoTaskEntry>? _undoSnapshot;
     private bool _showHistory;
     private bool _modalChildActive;
+    private bool _businessmapEnabled;
+    private bool _showBusinessmap;
+    private bool _loadingBusinessmap;
+    private string? _businessmapError;
+    private List<BusinessmapTaskCard> _businessmapTasks = [];
 
     public TodoTaskPanelWindow(ObservableCollection<TodoTask> tasks, Action<TodoTask> complete, Action<TodoTask> edit,
         Action<TodoTask> delete, Action<TodoTask> reopen, Action<TodoTask> pause, Action<TodoTask> unpause, Action<TodoTask, int> toggleChecklist,
-        Func<Task> onCreate, Action showReport, Action<IReadOnlyList<TodoTaskEntry>> undo)
+        Func<Task> onCreate, Action showReport, Action<IReadOnlyList<TodoTaskEntry>> undo,
+        Func<Task<IReadOnlyList<BusinessmapTaskCard>>> loadBusinessmapTasks, bool businessmapEnabled)
     {
         _tasks = tasks; _complete = complete; _edit = edit; _delete = delete; _reopen = reopen;
         _pause = pause; _unpause = unpause; _toggleChecklist = toggleChecklist; _create = onCreate; _showReport = showReport; _undo = undo;
+        _loadBusinessmapTasks = loadBusinessmapTasks; _businessmapEnabled = businessmapEnabled;
         Width = 390; Height = SystemParameters.WorkArea.Height; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false; Topmost = true; Background = new SolidColorBrush(Color.FromRgb(23, 25, 31));
         WindowStartupLocation = WindowStartupLocation.Manual; Left = SystemParameters.WorkArea.Right - Width; Top = SystemParameters.WorkArea.Top;
@@ -589,14 +632,17 @@ internal sealed class TodoTaskPanelWindow : Window
         var header = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
         _title = new TextBlock { Text = "Tarefas", FontSize = 21, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
         DockPanel.SetDock(_title, Dock.Left); header.Children.Add(_title);
+        _businessmapButton = IconButton("\uE71B", "Mostrar tarefas do Businessmap");
+        _businessmapButton.Click += async (_, _) => await ToggleBusinessmapAsync();
+        DockPanel.SetDock(_businessmapButton, Dock.Right); header.Children.Add(_businessmapButton);
         var collapse = IconButton("\uE76C", "Recolher painel"); collapse.Click += (_, _) => Hide(); DockPanel.SetDock(collapse, Dock.Right); header.Children.Add(collapse);
         _historyButton = IconButton("\uE81C", "Ver tarefas concluídas");
         _historyButton.Click += (_, _) => { _showHistory = !_showHistory; _historyButton.ToolTip = _showHistory ? "Ver tarefas em aberto" : "Ver tarefas concluídas"; Refresh(); };
         DockPanel.SetDock(_historyButton, Dock.Right); header.Children.Add(_historyButton); DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
-        var reportButton = IconButton("\uE9D2", "Relatório de tarefas"); reportButton.Click += (_, _) => _showReport(); DockPanel.SetDock(reportButton, Dock.Right); header.Children.Add(reportButton);
+        _reportButton = IconButton("\uE9D2", "Relatório de tarefas"); _reportButton.Click += (_, _) => _showReport(); DockPanel.SetDock(_reportButton, Dock.Right); header.Children.Add(_reportButton);
         var content = new DockPanel();
-        var newTaskButton = new Button { Content = "＋  Nova tarefa", Height = 40, Margin = new Thickness(0, 12, 0, 0), Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)), Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)), FontWeight = FontWeights.SemiBold, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
-        newTaskButton.Click += async (_, _) => await RunUndoableCreateAsync();
+        _newTaskButton = new Button { Content = "＋  Nova tarefa", Height = 40, Margin = new Thickness(0, 12, 0, 0), Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)), Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)), FontWeight = FontWeights.SemiBold, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
+        _newTaskButton.Click += async (_, _) => await RunUndoableCreateAsync();
         _undoButton = new Button
         {
             Content = "Desfazer", Height = 34, Margin = new Thickness(0, 10, 0, 0),
@@ -608,7 +654,7 @@ internal sealed class TodoTaskPanelWindow : Window
         _undoTimer.Tick += (_, _) => ClearUndo();
         var bottomActions = new StackPanel();
         bottomActions.Children.Add(_undoButton);
-        bottomActions.Children.Add(newTaskButton);
+        bottomActions.Children.Add(_newTaskButton);
         DockPanel.SetDock(bottomActions, Dock.Bottom); content.Children.Add(bottomActions);
         content.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _list }); root.Children.Add(content);
         Content = root; Refresh();
@@ -619,6 +665,11 @@ internal sealed class TodoTaskPanelWindow : Window
 
     public void Refresh()
     {
+        if (_showBusinessmap)
+        {
+            RenderBusinessmapTasks();
+            return;
+        }
         TryPromotePendingUndo();
         _list.Children.Clear();
         _title.Text = _showHistory ? "Histórico" : "Tarefas";
@@ -704,6 +755,73 @@ internal sealed class TodoTaskPanelWindow : Window
             layout.Children.Add(body); card.Child = layout; _list.Children.Add(card);
         }
         if (_list.Children.Count == 0) _list.Children.Add(new TextBlock { Text = _showHistory ? "Nenhuma tarefa concluída." : "Nenhuma tarefa em aberto.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 10, 0, 0) });
+    }
+
+    public void SetBusinessmapEnabled(bool enabled)
+    {
+        _businessmapEnabled = enabled;
+        _businessmapButton.ToolTip = enabled ? "Mostrar tarefas do Businessmap" : "Configure a integração do Businessmap";
+    }
+
+    private async Task ToggleBusinessmapAsync()
+    {
+        if (!_showBusinessmap && !_businessmapEnabled)
+        {
+            MessageBox.Show("Configure e ative a sincronização do Businessmap em … > Configurações de tarefas.", "Tarefas do Businessmap", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        _showBusinessmap = !_showBusinessmap;
+        _showHistory = false;
+        _historyButton.Visibility = _showBusinessmap ? Visibility.Collapsed : Visibility.Visible;
+        _reportButton.Visibility = _showBusinessmap ? Visibility.Collapsed : Visibility.Visible;
+        _newTaskButton.Visibility = _showBusinessmap ? Visibility.Collapsed : Visibility.Visible;
+        _undoButton.Visibility = Visibility.Collapsed;
+        _businessmapButton.ToolTip = _showBusinessmap ? "Voltar às tarefas do JMD" : "Mostrar tarefas do Businessmap";
+        if (_showBusinessmap) await ReloadBusinessmapAsync();
+        else Refresh();
+    }
+
+    private async Task ReloadBusinessmapAsync()
+    {
+        if (_loadingBusinessmap) return;
+        _loadingBusinessmap = true;
+        _businessmapError = null;
+        _businessmapTasks = [];
+        Refresh();
+        try { _businessmapTasks = (await _loadBusinessmapTasks()).ToList(); }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException or ArgumentException or JsonException or CryptographicException)
+        { _businessmapError = exception.Message; }
+        finally { _loadingBusinessmap = false; Refresh(); }
+    }
+
+    private void RenderBusinessmapTasks()
+    {
+        _list.Children.Clear();
+        _title.Text = "Businessmap";
+        var refresh = new Button { Content = "Atualizar cartões", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(9, 5, 9, 5), Margin = new Thickness(0, 0, 0, 10), Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+        refresh.Click += async (_, _) => await ReloadBusinessmapAsync();
+        _list.Children.Add(refresh);
+        if (_loadingBusinessmap)
+        {
+            _list.Children.Add(new TextBlock { Text = "Carregando cartões…", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 12 });
+            return;
+        }
+        if (_businessmapError is not null)
+        {
+            _list.Children.Add(new TextBlock { Text = _businessmapError, Foreground = new SolidColorBrush(Color.FromRgb(255, 145, 135)), FontSize = 12, TextWrapping = TextWrapping.Wrap });
+            return;
+        }
+        foreach (var task in _businessmapTasks)
+        {
+            var body = new StackPanel();
+            body.Children.Add(new TextBlock { Text = $"{task.BoardName} · {task.LaneName}", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 5) });
+            body.Children.Add(new TextBlock { Text = task.Title, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, FontSize = 14, TextWrapping = TextWrapping.Wrap });
+            body.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { task.OwnerName, task.ColumnName, task.Deadline }.Where(value => !string.IsNullOrWhiteSpace(value))), Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
+            if (!string.IsNullOrWhiteSpace(task.Description)) body.Children.Add(new TextBlock { Text = task.Description, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0), MaxHeight = 100 });
+            var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(9), Padding = new Thickness(12), Margin = new Thickness(0, 0, 0, 9), Child = body, ToolTip = $"Cartão #{task.Id}" };
+            _list.Children.Add(card);
+        }
+        if (_businessmapTasks.Count == 0) _list.Children.Add(new TextBlock { Text = "Nenhum cartão corresponde aos quadros e filtros selecionados.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
     }
 
     public void ShowOpenTasks()

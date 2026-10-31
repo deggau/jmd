@@ -374,6 +374,7 @@ internal sealed class UserSettings
     public List<SnippetEntry> Snippets { get; set; } = [];
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
     public List<WorkflowVariableEntry> WorkflowVariables { get; set; } = [];
+    public BusinessmapIntegrationSettings Businessmap { get; set; } = new();
 
     public Dictionary<string, string> Shortcuts { get; set; } = new(StringComparer.Ordinal)
     {
@@ -465,6 +466,14 @@ internal sealed class SettingsStore
                     loaded.Snippets ??= [];
                     loaded.CustomShortcuts ??= [];
                     loaded.WorkflowVariables ??= [];
+                    loaded.Businessmap ??= new BusinessmapIntegrationSettings();
+                    loaded.Businessmap.Boards ??= [];
+                    foreach (var board in loaded.Businessmap.Boards)
+                    {
+                        board.IncludedLaneIds ??= [];
+                        board.HiddenLaneIds ??= [];
+                        board.OwnerIds ??= [];
+                    }
                     foreach (var customShortcut in loaded.CustomShortcuts)
                     {
                         customShortcut.Steps ??= [];
