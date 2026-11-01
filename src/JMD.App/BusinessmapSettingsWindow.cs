@@ -233,14 +233,21 @@ internal sealed class BusinessmapSettingsWindow : Window
             using var client = CreateClient();
             var lanesTask = client.GetLanesAsync(board.Id);
             var cardsTask = client.GetCardsAsync(board.Id);
+            var ownersTask = client.GetBoardOwnersAsync(board.Id);
             await Task.WhenAll(lanesTask, cardsTask);
             _lanesByBoard[board.Id] = lanesTask.Result;
-            _ownersByBoard[board.Id] = cardsTask.Result
-                .Where(card => card.OwnerId.Length > 0)
-                .GroupBy(card => card.OwnerId, StringComparer.Ordinal)
-                .Select(group => new BusinessmapOwner(group.Key, group.Select(card => card.OwnerName).FirstOrDefault(name => name.Length > 0) ?? group.Key))
-                .OrderBy(owner => owner.Name, StringComparer.CurrentCultureIgnoreCase)
-                .ToList();
+            var owners = new Dictionary<string, BusinessmapOwner>(StringComparer.Ordinal);
+            try
+            {
+                foreach (var owner in await ownersTask) owners[owner.Id] = owner;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException or ArgumentException or JsonException)
+            {
+                // Keep lane selection available if this API key can read cards but not board assignees/users.
+            }
+            foreach (var owner in cardsTask.Result.Where(card => card.OwnerId.Length > 0))
+                owners.TryAdd(owner.OwnerId, new BusinessmapOwner(owner.OwnerId, owner.OwnerName.Length > 0 ? owner.OwnerName : owner.OwnerId));
+            _ownersByBoard[board.Id] = owners.Values.OrderBy(owner => owner.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
             _settings.Boards.FirstOrDefault(item => item.BoardId == board.Id)!.BoardName = board.Name;
             RenderBoardFilters(board, target);
         }
@@ -292,7 +299,7 @@ internal sealed class BusinessmapSettingsWindow : Window
         };
         ownerFilter.Unchecked += (_, _) => settings.UseOwnerFilter = false;
         if (owners.Count == 0)
-            target.Children.Add(new TextBlock { Text = "Nenhum responsável aparece nos cartões deste quadro.", Foreground = MutedBrush, FontSize = 10 });
+            target.Children.Add(new TextBlock { Text = "Nenhum responsável foi disponibilizado pela API para este quadro.", Foreground = MutedBrush, FontSize = 10 });
         foreach (var owner in owners)
         {
             var check = new CheckBox { Content = owner.Name, IsChecked = !settings.UseOwnerFilter || settings.OwnerIds.Count == 0 || settings.OwnerIds.Contains(owner.Id), Foreground = Brushes.White, FontSize = 11, Margin = new Thickness(8, 2, 0, 2) };

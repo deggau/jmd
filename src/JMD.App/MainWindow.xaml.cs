@@ -2254,8 +2254,20 @@ public partial class MainWindow : Window
         {
             var lanesTask = client.GetLanesAsync(boardSettings.BoardId);
             var cardsTask = client.GetCardsAsync(boardSettings.BoardId);
-            await Task.WhenAll(lanesTask, cardsTask);
+            var columnsTask = client.GetColumnsAsync(boardSettings.BoardId);
+            var ownersTask = client.GetBoardOwnersAsync(boardSettings.BoardId);
+            await Task.WhenAll(lanesTask, cardsTask, columnsTask);
             var laneNames = lanesTask.Result.ToDictionary(lane => lane.Id, lane => lane.Name, StringComparer.Ordinal);
+            var columnNames = columnsTask.Result.ToDictionary(column => column.Id, column => column.Name, StringComparer.Ordinal);
+            IReadOnlyDictionary<string, string> ownerNames;
+            try
+            {
+                ownerNames = (await ownersTask).ToDictionary(owner => owner.Id, owner => owner.Name, StringComparer.Ordinal);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException or ArgumentException or JsonException)
+            {
+                ownerNames = new Dictionary<string, string>(StringComparer.Ordinal);
+            }
             foreach (var card in cardsTask.Result)
             {
                 if (boardSettings.UseLaneFilter && !boardSettings.IncludedLaneIds.Contains(card.LaneId, StringComparer.Ordinal)) continue;
@@ -2264,7 +2276,9 @@ public partial class MainWindow : Window
                 result.Add(card with
                 {
                     BoardName = string.IsNullOrWhiteSpace(card.BoardName) ? boardSettings.BoardName : card.BoardName,
-                    LaneName = string.IsNullOrWhiteSpace(card.LaneName) && laneNames.TryGetValue(card.LaneId, out var laneName) ? laneName : card.LaneName
+                    LaneName = string.IsNullOrWhiteSpace(card.LaneName) && laneNames.TryGetValue(card.LaneId, out var laneName) ? laneName : card.LaneName,
+                    ColumnName = string.IsNullOrWhiteSpace(card.ColumnName) && columnNames.TryGetValue(card.ColumnId, out var columnName) ? columnName : card.ColumnName,
+                    OwnerName = string.IsNullOrWhiteSpace(card.OwnerName) && ownerNames.TryGetValue(card.OwnerId, out var ownerName) ? ownerName : card.OwnerName
                 });
             }
         }

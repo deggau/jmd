@@ -6,6 +6,7 @@ namespace JMD.App;
 
 internal sealed record BusinessmapBoard(string Id, string Name);
 internal sealed record BusinessmapLane(string Id, string Name, string WorkflowId = "", string WorkflowName = "");
+internal sealed record BusinessmapColumn(string Id, string Name, string WorkflowId = "");
 internal sealed record BusinessmapOwner(string Id, string Name);
 internal sealed record BusinessmapTaskCard(
     string Id,
@@ -27,6 +28,7 @@ internal sealed class BusinessmapApiClient : IDisposable
     private readonly HttpClient _http;
     private readonly Uri _accountRoot;
     private readonly string _apiKey;
+    private readonly SemaphoreSlim _openApiGate = new(1, 1);
     private JsonDocument? _openApi;
     private string _apiPrefix = "/api/v2";
     private string _apiKeyHeader = "apikey";
@@ -63,39 +65,62 @@ internal sealed class BusinessmapApiClient : IDisposable
     {
         await EnsureOpenApiAsync(cancellationToken);
         var operation = FindOperation("GetLanes");
-        var parameters = GetParameters(operation);
-        var workflowRequired = parameters.Any(parameter => IsRequired(parameter) && ParameterName(parameter).Contains("workflow", StringComparison.OrdinalIgnoreCase));
-        var workflows = workflowRequired
-            ? await GetWorkflowsAsync(boardId, cancellationToken)
-            : [new BusinessmapWorkflow("", "")];
-        var lanes = new List<BusinessmapLane>();
-        foreach (var workflow in workflows)
-        {
-            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["board_id"] = boardId };
-            if (workflow.Id.Length > 0) values["workflow_id"] = workflow.Id;
-            var document = await InvokeAsync(operation, values, cancellationToken);
-            lanes.AddRange(FindItems(document.RootElement).Select(item => new BusinessmapLane(
-                ReadString(item, "lane_id", "id"),
-                ReadString(item, "name", "lane_name", "title"),
-                ReadString(item, "workflow_id", "workflow"),
-                ReadString(item, "workflow_name"))));
-        }
-        return lanes.Where(lane => lane.Id.Length > 0 && lane.Name.Length > 0)
+        var workflowsTask = GetWorkflowsAsync(boardId, cancellationToken);
+        using var document = await InvokeAsync(operation, new Dictionary<string, string> { ["board_id"] = boardId }, cancellationToken);
+        var workflowNames = (await workflowsTask).ToDictionary(workflow => workflow.Id, workflow => workflow.Name, StringComparer.Ordinal);
+        return FindItems(document.RootElement).Select(item =>
+            {
+                var workflowId = ReadString(item, "workflow_id", "workflow");
+                return new BusinessmapLane(ReadString(item, "lane_id", "id"), ReadString(item, "name", "lane_name", "title"),
+                    workflowId, workflowNames.GetValueOrDefault(workflowId, ReadString(item, "workflow_name")));
+            })
+            .Where(lane => lane.Id.Length > 0 && lane.Name.Length > 0)
             .DistinctBy(lane => lane.Id)
             .OrderBy(lane => lane.WorkflowName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(lane => lane.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
     }
 
+    public async Task<IReadOnlyList<BusinessmapColumn>> GetColumnsAsync(string boardId, CancellationToken cancellationToken = default)
+    {
+        await EnsureOpenApiAsync(cancellationToken);
+        using var document = await InvokeAsync(FindOperation("GetColumns"), new Dictionary<string, string> { ["board_id"] = boardId }, cancellationToken);
+        return FindItems(document.RootElement).Select(item => new BusinessmapColumn(
+                ReadString(item, "column_id", "id"), ReadString(item, "name", "column_name"), ReadString(item, "workflow_id")))
+            .Where(column => column.Id.Length > 0 && column.Name.Length > 0)
+            .DistinctBy(column => column.Id)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<BusinessmapOwner>> GetBoardOwnersAsync(string boardId, CancellationToken cancellationToken = default)
+    {
+        await EnsureOpenApiAsync(cancellationToken);
+        using var assignees = await InvokeAsync(FindOperation("GetBoardAssignees"), new Dictionary<string, string> { ["board_id"] = boardId }, cancellationToken);
+        var userIds = FindItems(assignees.RootElement).Select(item => ReadString(item, "user_id", "id"))
+            .Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        if (userIds.Count == 0) return [];
+        using var users = await InvokeAsync(FindOperation("GetUsers"), new Dictionary<string, string> { ["user_ids"] = string.Join(',', userIds) }, cancellationToken);
+        return FindItems(users.RootElement).Select(item => new BusinessmapOwner(
+                ReadString(item, "user_id", "id"), ReadString(item, "realname", "username", "name")))
+            .Where(owner => owner.Id.Length > 0)
+            .DistinctBy(owner => owner.Id)
+            .OrderBy(owner => owner.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<BusinessmapTaskCard>> GetCardsAsync(string boardId, CancellationToken cancellationToken = default)
     {
         await EnsureOpenApiAsync(cancellationToken);
-        var operation = FindOperation("GetAllCards");
+        var operation = FindOperation("GetCards");
         var allCards = new List<BusinessmapTaskCard>();
         var maxPages = 100;
         for (var page = 1; page <= maxPages; page++)
         {
-            var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["board_id"] = boardId, ["board_ids"] = boardId, ["page"] = page.ToString() };
+            var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["board_id"] = boardId, ["board_ids"] = boardId, ["page"] = page.ToString(), ["per_page"] = "200",
+                ["state"] = "active", ["fields"] = "card_id,title,description,owner_user_id,deadline,board_id,workflow_id,column_id,lane_id"
+            };
             using var document = await InvokeAsync(operation, parameters, cancellationToken);
             var root = document.RootElement;
             var items = FindItems(root).ToList();
@@ -125,13 +150,19 @@ internal sealed class BusinessmapApiClient : IDisposable
     private async Task EnsureOpenApiAsync(CancellationToken cancellationToken)
     {
         if (_openApi is not null) return;
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_accountRoot, "openapi/json"));
-        using var response = await _http.SendAsync(request, cancellationToken);
-        await EnsureSuccessAsync(response, "Não foi possível carregar a OpenAPI da conta");
-        var content = await response.Content.ReadAsStringAsync(cancellationToken);
-        _openApi = JsonDocument.Parse(content);
-        DiscoverApiPrefix(_openApi.RootElement);
-        DiscoverApiKeyHeader(_openApi.RootElement);
+        await _openApiGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (_openApi is not null) return;
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_accountRoot, "openapi/json"));
+            using var response = await _http.SendAsync(request, cancellationToken);
+            await EnsureSuccessAsync(response, "Não foi possível carregar a OpenAPI da conta");
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            _openApi = JsonDocument.Parse(content);
+            DiscoverApiPrefix(_openApi.RootElement);
+            DiscoverApiKeyHeader(_openApi.RootElement);
+        }
+        finally { _openApiGate.Release(); }
     }
 
     private async Task<JsonDocument> GetJsonAsync(string path, string operationName, CancellationToken cancellationToken)
@@ -181,7 +212,7 @@ internal sealed class BusinessmapApiClient : IDisposable
             if (!path.Value.TryGetProperty("get", out var get)) continue;
             var operationId = ReadString(get, "operationId");
             if (operationId.Contains(operationHint, StringComparison.OrdinalIgnoreCase))
-                return new ApiOperation(path.Name, get);
+                return new ApiOperation(path.Name, path.Value, get);
         }
         throw new InvalidOperationException($"A OpenAPI desta conta não publicou a operação de leitura {operationHint}. Confira se a API V2 está habilitada.");
     }
@@ -219,9 +250,14 @@ internal sealed class BusinessmapApiClient : IDisposable
 
     private IEnumerable<JsonElement> GetParameters(ApiOperation operation)
     {
-        if (!operation.Definition.TryGetProperty("parameters", out var parameters) || parameters.ValueKind != JsonValueKind.Array)
-            return [];
-        return parameters.EnumerateArray().Select(ResolveReference).Where(parameter => parameter.ValueKind == JsonValueKind.Object).ToArray();
+        var pathParameters = operation.PathItem.TryGetProperty("parameters", out var pathValues) && pathValues.ValueKind == JsonValueKind.Array
+            ? pathValues.EnumerateArray()
+            : Enumerable.Empty<JsonElement>();
+        var operationParameters = operation.Definition.TryGetProperty("parameters", out var operationValues) && operationValues.ValueKind == JsonValueKind.Array
+            ? operationValues.EnumerateArray()
+            : Enumerable.Empty<JsonElement>();
+        return pathParameters.Concat(operationParameters).Select(ResolveReference)
+            .Where(parameter => parameter.ValueKind == JsonValueKind.Object).ToArray();
     }
 
     private JsonElement ResolveReference(JsonElement value)
@@ -320,8 +356,13 @@ internal sealed class BusinessmapApiClient : IDisposable
 
     private static int? ReadNestedInt(JsonElement root, string objectName, string propertyName)
     {
-        if (!TryGetProperty(root, objectName, out var nested) || !TryGetProperty(nested, propertyName, out var value)) return null;
-        return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : null;
+        if (TryGetProperty(root, objectName, out var nested) && TryGetProperty(nested, propertyName, out var value) &&
+            value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)) return number;
+        if (root.ValueKind == JsonValueKind.Object)
+            foreach (var property in root.EnumerateObject())
+                if (property.Value.ValueKind == JsonValueKind.Object && ReadNestedInt(property.Value, objectName, propertyName) is { } nestedNumber)
+                    return nestedNumber;
+        return null;
     }
 
     private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)
@@ -336,9 +377,10 @@ internal sealed class BusinessmapApiClient : IDisposable
     public void Dispose()
     {
         _openApi?.Dispose();
+        _openApiGate.Dispose();
         _http.Dispose();
     }
 
-    private sealed record ApiOperation(string Path, JsonElement Definition);
+    private sealed record ApiOperation(string Path, JsonElement PathItem, JsonElement Definition);
     private sealed record BusinessmapWorkflow(string Id, string Name);
 }
