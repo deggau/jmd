@@ -4311,6 +4311,11 @@ public partial class MainWindow : Window
         ShowAboutPage();
     }
 
+    private void AndroidMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        new AndroidDownloadWindow { Owner = this }.ShowDialog();
+    }
+
     private void AdvancedSettingsMenuItem_Click(object sender, RoutedEventArgs e)
     {
         SettingsTabs.Visibility = Visibility.Visible;
