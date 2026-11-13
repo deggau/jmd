@@ -48,6 +48,7 @@ internal sealed class TodoTaskReportWindow : Window
     private readonly TextBlock _rangeLabel = new();
     private readonly Button _showMonthButton;
     private readonly Button _calendarToggleButton;
+    private readonly System.Windows.Controls.CheckBox _executedOnly = new() { Content = "Executado", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
     private bool _calendarExpanded = true;
     private DateTime _displayMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
     private TodoTaskDateFilter _dateFilter = new();
@@ -97,6 +98,10 @@ internal sealed class TodoTaskReportWindow : Window
         _showMonthButton = ReportButton("Mês"); _showMonthButton.Margin = new Thickness(10, 0, 0, 0); _showMonthButton.ToolTip = "Mostrar todas as atividades do mês";
         _showMonthButton.Click += (_, _) => { _dateFilter = new(); RefreshReport(); };
         monthControls.Children.Add(_showMonthButton); DockPanel.SetDock(monthControls, Dock.Left); calendarControls.Children.Add(monthControls);
+        _executedOnly.ToolTip = "Mostrar somente tarefas e etapas concluídas";
+        _executedOnly.Checked += (_, _) => RefreshReport();
+        _executedOnly.Unchecked += (_, _) => RefreshReport();
+        monthControls.Children.Add(_executedOnly);
         calendarPanel.Children.Add(calendarControls);
         calendarPanel.Children.Add(_calendar);
         DockPanel.SetDock(calendarPanel, Dock.Top); root.Children.Add(calendarPanel);
@@ -117,7 +122,8 @@ internal sealed class TodoTaskReportWindow : Window
             : culture.TextInfo.ToTitleCase(_displayMonth.ToString("MMMM yyyy", culture));
         _showMonthButton.Visibility = _dateFilter.HasSelection ? Visibility.Visible : Visibility.Collapsed;
         var visible = _events.Select(entry => (Entry: entry, LocalTime: entry.OccurredAt.ToLocalTime()))
-            .Where(item => item.LocalTime.Date >= startDate && item.LocalTime.Date <= endDate).ToList();
+            .Where(item => item.LocalTime.Date >= startDate && item.LocalTime.Date <= endDate)
+            .Where(item => !_executedOnly.IsChecked.GetValueOrDefault() || IsCompletionEvent(item.Entry)).ToList();
         RenderCalendar();
 
         _report.Children.Clear();
@@ -154,6 +160,14 @@ internal sealed class TodoTaskReportWindow : Window
             _report.Children.Add(columns);
         }
         if (visible.Count == 0) _report.Children.Add(new TextBlock { Text = "Nenhuma atividade de tarefa neste período.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 16, 0, 0) });
+    }
+
+    private static bool IsCompletionEvent(ConversionHistoryEntry entry)
+    {
+        if (entry.CommandName.StartsWith("Tarefa concluída", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!entry.CommandName.StartsWith("Tarefa checklist", StringComparison.OrdinalIgnoreCase)) return false;
+        return entry.AfterValue.Contains("concluído", StringComparison.OrdinalIgnoreCase)
+            || entry.AfterValue.Contains("concluída", StringComparison.OrdinalIgnoreCase);
     }
 
     private void RenderCalendar()
