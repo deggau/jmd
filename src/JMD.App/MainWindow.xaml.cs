@@ -110,6 +110,7 @@ public partial class MainWindow : Window
     private readonly TodoTaskStore _todoTaskStore;
     private readonly ObservableCollection<TodoTask> _todoTasks;
     private TodoTaskPanelWindow? _todoTaskPanel;
+    private JmdroidApiServer? _jmdroidApiServer;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
 
     public event Action<string, string, bool, NotificationClickTarget, TimeSpan>? TrayNotification;
@@ -4313,7 +4314,90 @@ public partial class MainWindow : Window
 
     private void AndroidMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        new AndroidDownloadWindow { Owner = this }.ShowDialog();
+        new AndroidDownloadWindow(OpenAndroidConnectionSetup) { Owner = this }.ShowDialog();
+    }
+
+    private void OpenAndroidConnectionSetup()
+    {
+        _jmdroidApiServer ??= new JmdroidApiServer(
+            GetJmdroidApiCommands,
+            ExecuteJmdroidCommandAsync,
+            _settings.JmdroidDevices,
+            () => _settingsStore.Save(_settings));
+        new AndroidPairingWindow(_jmdroidApiServer) { Owner = this }.ShowDialog();
+    }
+
+    private IReadOnlyList<JmdroidApiCommand> GetJmdroidApiCommands()
+    {
+        if (!Dispatcher.CheckAccess()) return Dispatcher.Invoke(GetJmdroidApiCommands);
+        var remoteIds = new HashSet<string>(["clipboard", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact"], StringComparer.Ordinal);
+        return _commands.Select(command =>
+        {
+            var searchTerms = command.VoicePhrasesDisplay
+                .Replace("Jey:", string.Empty, StringComparison.CurrentCultureIgnoreCase)
+                .Split('·', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var enabled = !_settings.DisabledCommands.Contains(command.Id);
+            var available = remoteIds.Contains(command.Id) && enabled;
+            var reason = !enabled ? "Este comando está desativado nas configurações do JMD."
+                : available ? null : "Este comando depende de interação com o computador e não pode ser executado remotamente.";
+            return new JmdroidApiCommand(command.Id, command.Name, command.Description, command.Shortcut,
+                available, reason, searchTerms);
+        }).ToArray();
+    }
+
+    private async Task<JmdroidExecutionResult> ExecuteJmdroidCommandAsync(
+        string commandId, JsonElement input, CancellationToken cancellationToken)
+    {
+        var text = input.TryGetProperty("text", out var textElement) && textElement.ValueKind == JsonValueKind.String
+            ? textElement.GetString()
+            : null;
+        if (string.IsNullOrEmpty(text) || text.Length > 1_000_000)
+            return new JmdroidExecutionResult("failed", Error: "Informe o campo text com até 1.000.000 de caracteres.");
+
+        return await Dispatcher.InvokeAsync(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_settings.DisabledCommands.Contains(commandId))
+                return new JmdroidExecutionResult("failed", Error: "Este comando está desativado nas configurações do JMD.");
+
+            string? output;
+            string? error = null;
+            int? inputCount = null;
+            int? outputCount = null;
+            if (commandId == "clipboard")
+            {
+                var result = _transformation.Transform(text, _settings.PreferredDelimiter);
+                output = result.Value;
+                error = result.Error;
+                inputCount = result.InputItemCount;
+                outputCount = result.OutputItemCount;
+            }
+            else if (commandId is "upperCase" or "lowerCase" or "titleCase")
+            {
+                output = commandId switch
+                {
+                    "upperCase" => TextCaseTransform.Upper(text),
+                    "lowerCase" => TextCaseTransform.Lower(text),
+                    _ => TextCaseTransform.Title(text)
+                };
+            }
+            else if (commandId is "jsonPretty" or "jsonCompact")
+            {
+                var result = _structuredDataFormatter.Transform(text,
+                    commandId == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact).Transformation;
+                output = result.Value;
+                error = result.Error;
+            }
+            else
+            {
+                return new JmdroidExecutionResult("failed", Error: "Este comando não está disponível para execução remota.");
+            }
+
+            if (output is null)
+                return new JmdroidExecutionResult("failed", Error: error ?? "Não foi possível executar o comando.");
+            RecordActionHistory($"Executar pelo JMDroid: {commandId}", text, output);
+            return new JmdroidExecutionResult("succeeded", output, InputItemCount: inputCount, OutputItemCount: outputCount);
+        }).Task;
     }
 
     private void AdvancedSettingsMenuItem_Click(object sender, RoutedEventArgs e)
@@ -5150,6 +5234,7 @@ public partial class MainWindow : Window
 
     public void DisposeServices()
     {
+        if (_jmdroidApiServer is not null) _ = _jmdroidApiServer.DisposeAsync();
         _todoReminderTimer.Stop();
         _memoryRefreshTimer.Stop();
         _benchmarkRecordingTimer.Stop();

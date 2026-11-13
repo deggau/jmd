@@ -16,12 +16,14 @@ internal sealed class AndroidDownloadWindow : Window
     private const string DownloadUrl = "https://github.com/deggau/jmdDroid/releases/latest/download/jmdroid.apk";
     private static readonly Color SurfaceColor = Color.FromRgb(23, 25, 31);
     private static readonly Color MutedColor = Color.FromRgb(160, 166, 178);
+    private readonly Action _openConnectionSetup;
 
-    public AndroidDownloadWindow()
+    public AndroidDownloadWindow(Action openConnectionSetup)
     {
+        _openConnectionSetup = openConnectionSetup;
         Title = "JMD para Android";
         Width = 410;
-        Height = 540;
+        Height = 590;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(SurfaceColor);
@@ -38,7 +40,7 @@ internal sealed class AndroidDownloadWindow : Window
         });
         content.Children.Add(new TextBlock
         {
-            Text = "Leia o QR code com a câmera do celular para baixar o APK mais recente.",
+            Text = "Baixe o app ou configure uma conexão local com o JMD no computador.",
             FontSize = 13,
             Foreground = new SolidColorBrush(MutedColor),
             TextWrapping = TextWrapping.Wrap,
@@ -75,6 +77,19 @@ internal sealed class AndroidDownloadWindow : Window
         };
         link.MouseLeftButtonUp += (_, _) => OpenDownload();
         content.Children.Add(link);
+
+        var connectButton = new Button
+        {
+            Content = "Configurar conexão com o JMD",
+            Padding = new Thickness(16, 9, 16, 9),
+            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        connectButton.Click += (_, _) => _openConnectionSetup();
+        content.Children.Add(connectButton);
 
         var openButton = new Button
         {

@@ -373,6 +373,7 @@ internal sealed class UserSettings
     public string JeyEnglishModel { get; set; } = "vosk";
     public List<SnippetEntry> Snippets { get; set; } = [];
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
+    public List<JmdroidPairedDevice> JmdroidDevices { get; set; } = [];
     public List<WorkflowVariableEntry> WorkflowVariables { get; set; } = [];
     public BusinessmapIntegrationSettings Businessmap { get; set; } = new();
 
@@ -398,6 +399,14 @@ internal sealed class UserSettings
     };
     public Dictionary<string, List<string>> VoicePhrases { get; set; } = new(StringComparer.Ordinal);
     public HashSet<string> DisabledCommands { get; set; } = new(StringComparer.Ordinal);
+}
+
+internal sealed class JmdroidPairedDevice
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = "JMDroid";
+    public string TokenSha256 { get; set; } = string.Empty;
+    public DateTimeOffset PairedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 internal sealed class SnippetEntry
@@ -465,6 +474,7 @@ internal sealed class SettingsStore
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];
                     loaded.CustomShortcuts ??= [];
+                    loaded.JmdroidDevices ??= [];
                     loaded.WorkflowVariables ??= [];
                     loaded.Businessmap ??= new BusinessmapIntegrationSettings();
                     loaded.Businessmap.Boards ??= [];
