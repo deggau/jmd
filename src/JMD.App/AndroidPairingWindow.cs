@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -12,6 +13,7 @@ using HorizontalAlignment = System.Windows.HorizontalAlignment;
 using Image = System.Windows.Controls.Image;
 using MessageBox = System.Windows.MessageBox;
 using Orientation = System.Windows.Controls.Orientation;
+using TextBox = System.Windows.Controls.TextBox;
 using UserControl = System.Windows.Controls.UserControl;
 
 namespace JMD.App;
@@ -22,6 +24,15 @@ internal sealed class AndroidPairingPanel : UserControl
     private static readonly Color MutedColor = Color.FromRgb(150, 155, 167);
     private readonly JmdroidApiServer _server;
     private readonly Image _qrImage = new() { Width = 250, Height = 250, Stretch = Stretch.Uniform };
+    private readonly TextBox _addressBox = new()
+    {
+        IsReadOnly = true,
+        Padding = new Thickness(9, 7, 9, 7),
+        Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
+        Foreground = Brushes.White,
+        BorderBrush = new SolidColorBrush(Color.FromRgb(58, 62, 72)),
+        VerticalContentAlignment = VerticalAlignment.Center
+    };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center };
     private readonly StackPanel _requestsPanel = new();
     private readonly StackPanel _devicesPanel = new();
@@ -91,6 +102,35 @@ internal sealed class AndroidPairingPanel : UserControl
             HorizontalAlignment = HorizontalAlignment.Center,
             Child = _qrImage
         });
+        content.Children.Add(new TextBlock
+        {
+            Text = "Endereço da API (também incluído no QR code)",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 16, 0, 6)
+        });
+        var addressRow = new DockPanel();
+        var openBrowserButton = new Button
+        {
+            Content = "Abrir no navegador",
+            Padding = new Thickness(10, 7, 10, 7),
+            Margin = new Thickness(8, 0, 0, 0),
+            Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        DockPanel.SetDock(openBrowserButton, Dock.Right);
+        openBrowserButton.Click += (_, _) => OpenApiAddress();
+        addressRow.Children.Add(openBrowserButton);
+        addressRow.Children.Add(_addressBox);
+        content.Children.Add(addressRow);
+        content.Children.Add(new TextBlock
+        {
+            Text = "O QR contém os dados de pareamento do JMDroid. Ao abrir no navegador, o Windows pode exibir um aviso por o certificado HTTPS ser local.",
+            Foreground = new SolidColorBrush(MutedColor),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 0)
+        });
         content.Children.Add(SectionTitle("Pedidos aguardando aprovação"));
         content.Children.Add(_requestsPanel);
         content.Children.Add(SectionTitle("Aparelhos autorizados"));
@@ -140,14 +180,29 @@ internal sealed class AndroidPairingPanel : UserControl
                 bitmap.Freeze();
             }
             _qrImage.Source = bitmap;
-            _status.Text = $"API ativa em {_server.BaseUrl}. QR code válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}.\n" +
+            _addressBox.Text = pairing.BaseUrl;
+            _status.Text = $"API ativa em {pairing.BaseUrl}. QR code válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}.\n" +
                            "O Windows pode pedir permissão de rede privada para o JMD.";
             RefreshLists();
         }
         catch (Exception exception)
         {
             _qrImage.Source = null;
+            _addressBox.Clear();
             _status.Text = $"Não foi possível iniciar a API: {exception.Message}";
+        }
+    }
+
+    private void OpenApiAddress()
+    {
+        if (string.IsNullOrWhiteSpace(_addressBox.Text)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(_addressBox.Text) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            _status.Text = $"Não foi possível abrir o navegador: {exception.Message}";
         }
     }
 

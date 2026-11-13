@@ -42,6 +42,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan PairingLifetime = TimeSpan.FromMinutes(2);
+    private const int PreferredListeningPort = 47831;
     private readonly Func<IReadOnlyList<JmdroidApiCommand>> _getCommands;
     private readonly Func<string, JsonElement, CancellationToken, Task<JmdroidExecutionResult>> _executeCommand;
     private readonly IList<JmdroidPairedDevice> _devices;
@@ -61,6 +62,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private bool _disposed;
     private string? _baseUrl;
     private int _listeningPort;
+    private int _preferredPort = PreferredListeningPort;
     private IPAddress? _listeningAddress;
 
     public event Action? StateChanged;
@@ -101,18 +103,19 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             var ipAddress = _listeningAddress ?? GetLanAddress();
             var certificate = _certificate ?? throw new InvalidOperationException("Certificado HTTPS da API não está disponível.");
             var fingerprint = Convert.ToHexString(SHA256.HashData(certificate.RawData));
-            _baseUrl ??= $"https://{ipAddress}:{_listeningPort}";
+            var baseUrl = _baseUrl ?? $"https://{ipAddress}:{_listeningPort}";
+            _baseUrl = baseUrl;
             var session = new PairingSession(
                 Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(),
                 CreateSecret(),
                 DateTimeOffset.UtcNow.Add(PairingLifetime));
             _pairingSession = session;
             var payload = JsonSerializer.Serialize(new PairingQrPayload(
-                "jmd-pairing", 1, _baseUrl, fingerprint, session.Id, session.Secret, session.ExpiresAt), JsonOptions);
+                "jmd-pairing", 1, baseUrl, fingerprint, session.Id, session.Secret, session.ExpiresAt), JsonOptions);
             using var qrData = QRCodeGenerator.GenerateQrCode(payload, QRCodeGenerator.ECCLevel.Q);
             var qrPng = new PngByteQRCode(qrData).GetGraphic(8);
             StateChanged?.Invoke();
-            return new JmdroidPairingInfo(_baseUrl, fingerprint, payload, qrPng, session.ExpiresAt);
+            return new JmdroidPairingInfo(baseUrl, fingerprint, payload, qrPng, session.ExpiresAt);
         }
         finally { _lifecycleLock.Release(); }
     }
@@ -192,35 +195,52 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 
     private async Task StartListenerAsync(CancellationToken cancellationToken)
     {
-        var port = ReserveEphemeralPort();
         var listeningAddress = GetLanAddress();
-        var certificate = CreateServerCertificate(listeningAddress);
-        var builder = WebApplication.CreateSlimBuilder();
-        builder.Logging.ClearProviders();
-        builder.WebHost.ConfigureKestrel(options =>
+        var port = _preferredPort;
+        async Task<(WebApplication App, X509Certificate2 Certificate)> StartOnPortAsync(int candidatePort)
         {
-            options.Limits.MaxRequestBodySize = 1_048_576;
-            options.Listen(listeningAddress, port, listen => listen.UseHttps(certificate));
-        });
-        var app = builder.Build();
-        app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
-        MapRoutes(app);
+            var certificate = CreateServerCertificate(listeningAddress);
+            var builder = WebApplication.CreateSlimBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(options =>
+            {
+                options.Limits.MaxRequestBodySize = 1_048_576;
+                options.Listen(listeningAddress, candidatePort, listen => listen.UseHttps(certificate));
+            });
+            var app = builder.Build();
+            app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
+            MapRoutes(app);
+            try
+            {
+                await app.StartAsync(cancellationToken);
+                return (app, certificate);
+            }
+            catch
+            {
+                certificate.Dispose();
+                await app.DisposeAsync();
+                throw;
+            }
+        }
+
+        (WebApplication App, X509Certificate2 Certificate) started;
         try
         {
-            await app.StartAsync(cancellationToken);
-            _application = app;
-            _certificate = certificate;
-            _listeningPort = port;
-            _listeningAddress = listeningAddress;
-            _baseUrl = $"https://{listeningAddress}:{port}";
-            StateChanged?.Invoke();
+            started = await StartOnPortAsync(port);
         }
-        catch
+        catch (Exception exception) when (IsPortUnavailable(exception))
         {
-            certificate.Dispose();
-            await app.DisposeAsync();
-            throw;
+            port = ReserveEphemeralPort(listeningAddress);
+            started = await StartOnPortAsync(port);
         }
+
+        _preferredPort = port;
+        _application = started.App;
+        _certificate = started.Certificate;
+        _listeningPort = port;
+        _listeningAddress = listeningAddress;
+        _baseUrl = $"https://{listeningAddress}:{port}";
+        StateChanged?.Invoke();
     }
 
     private void MapRoutes(WebApplication app)
@@ -559,9 +579,18 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         }
     }
 
-    private static int ReserveEphemeralPort()
+    private static bool IsPortUnavailable(Exception exception)
     {
-        using var listener = new TcpListener(IPAddress.Any, 0);
+        for (var current = exception; current is not null; current = current.InnerException)
+            if (current is SocketException socketException &&
+                socketException.SocketErrorCode is SocketError.AddressAlreadyInUse or SocketError.AccessDenied)
+                return true;
+        return false;
+    }
+
+    private static int ReserveEphemeralPort(IPAddress address)
+    {
+        using var listener = new TcpListener(address, 0);
         listener.Start();
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }

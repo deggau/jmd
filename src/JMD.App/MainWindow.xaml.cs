@@ -130,6 +130,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AndroidSettingsPage.IsVisibleChanged += (_, _) => Topmost = !AndroidSettingsPage.IsVisible;
         VoiceRecognitionDebugHistory.ItemsSource = _wakeRecognitionHistory;
         FooterVersionText.Text = $"v{GetInstalledVersion()}";
         _settings = _settingsStore.Load();
@@ -5153,10 +5154,10 @@ public partial class MainWindow : Window
 
     private void Window_Deactivated(object? sender, EventArgs e)
     {
-        if (!IsVisible || _showingDialog) return;
+        if (!IsVisible || _showingDialog || AndroidSettingsPage.IsVisible) return;
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() =>
         {
-            if (!IsVisible || IsActive || _showingDialog) return;
+            if (!IsVisible || IsActive || _showingDialog || AndroidSettingsPage.IsVisible) return;
             if (System.Windows.Application.Current.Windows.OfType<Window>()
                 .Any(window => !ReferenceEquals(window, this) && ReferenceEquals(window.Owner, this) && window.IsVisible))
                 return;
