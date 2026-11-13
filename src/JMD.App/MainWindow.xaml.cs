@@ -111,6 +111,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<TodoTask> _todoTasks;
     private TodoTaskPanelWindow? _todoTaskPanel;
     private JmdroidApiServer? _jmdroidApiServer;
+    private AndroidSettingsPanel? _androidSettingsPanel;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
 
     public event Action<string, string, bool, NotificationClickTarget, TimeSpan>? TrayNotification;
@@ -2950,6 +2951,7 @@ public partial class MainWindow : Window
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Visible;
+        AndroidSettingsPage.Visibility = Visibility.Collapsed;
         WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
@@ -2978,6 +2980,7 @@ public partial class MainWindow : Window
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        AndroidSettingsPage.Visibility = Visibility.Collapsed;
         WorkflowSettingsPage.Visibility = Visibility.Visible;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
@@ -3007,6 +3010,7 @@ public partial class MainWindow : Window
     {
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        AndroidSettingsPage.Visibility = Visibility.Collapsed;
         WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Visible;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
@@ -3024,6 +3028,7 @@ public partial class MainWindow : Window
         BuildSnippetManagementPage();
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        AndroidSettingsPage.Visibility = Visibility.Collapsed;
         WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Visible;
@@ -3372,6 +3377,7 @@ public partial class MainWindow : Window
         CommandsList.Visibility = Visibility.Collapsed;
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        AndroidSettingsPage.Visibility = Visibility.Collapsed;
         WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Collapsed;
@@ -4314,17 +4320,36 @@ public partial class MainWindow : Window
 
     private void AndroidMenuItem_Click(object sender, RoutedEventArgs e)
     {
-        new AndroidDownloadWindow(OpenAndroidConnectionSetup) { Owner = this }.ShowDialog();
-    }
-
-    private void OpenAndroidConnectionSetup()
-    {
         _jmdroidApiServer ??= new JmdroidApiServer(
             GetJmdroidApiCommands,
             ExecuteJmdroidCommandAsync,
             _settings.JmdroidDevices,
             () => _settingsStore.Save(_settings));
-        new AndroidPairingWindow(_jmdroidApiServer) { Owner = this }.ShowDialog();
+        _androidSettingsPanel ??= new AndroidSettingsPanel(_jmdroidApiServer);
+        AndroidSettingsHost.Content = _androidSettingsPanel;
+        _navigation.ShowShortcutSettings();
+        CommandsList.Visibility = Visibility.Collapsed;
+        SettingsTabs.Visibility = Visibility.Visible;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        WorkflowSettingsPage.Visibility = Visibility.Collapsed;
+        SqlInTestPage.Visibility = Visibility.Collapsed;
+        SnippetManagementPage.Visibility = Visibility.Collapsed;
+        HistoryPage.Visibility = Visibility.Collapsed;
+        AndroidSettingsPage.Visibility = Visibility.Visible;
+        AboutPage.Visibility = Visibility.Collapsed;
+        JeySettingsPage.Visibility = Visibility.Collapsed;
+        AdvancedSettingsPage.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Collapsed;
+        FooterHints.Visibility = Visibility.Collapsed;
+        SearchBox.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos comandos";
+        PageTitle.Text = "JMDroid para Android";
+        PageSubtitle.Text = "Instale o app ou conecte seus aparelhos";
+        foreach (var id in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
+            _hotkeys?.Unregister(id);
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
     }
 
     private IReadOnlyList<JmdroidApiCommand> GetJmdroidApiCommands()
@@ -4404,6 +4429,7 @@ public partial class MainWindow : Window
     {
         SettingsTabs.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        AndroidSettingsPage.Visibility = Visibility.Collapsed;
         WorkflowSettingsPage.Visibility = Visibility.Collapsed;
         SqlInTestPage.Visibility = Visibility.Collapsed;
         SnippetManagementPage.Visibility = Visibility.Collapsed;

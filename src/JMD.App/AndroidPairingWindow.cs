@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -11,10 +12,11 @@ using HorizontalAlignment = System.Windows.HorizontalAlignment;
 using Image = System.Windows.Controls.Image;
 using MessageBox = System.Windows.MessageBox;
 using Orientation = System.Windows.Controls.Orientation;
+using UserControl = System.Windows.Controls.UserControl;
 
 namespace JMD.App;
 
-internal sealed class AndroidPairingWindow : Window
+internal sealed class AndroidPairingPanel : UserControl
 {
     private static readonly Color SurfaceColor = Color.FromRgb(23, 25, 31);
     private static readonly Color MutedColor = Color.FromRgb(150, 155, 167);
@@ -24,21 +26,14 @@ internal sealed class AndroidPairingWindow : Window
     private readonly StackPanel _requestsPanel = new();
     private readonly StackPanel _devicesPanel = new();
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromMilliseconds(800) };
-    private bool _closing;
+    private bool _active;
+    private bool _tickHandlerAdded;
 
-    public AndroidPairingWindow(JmdroidApiServer server)
+    public AndroidPairingPanel(JmdroidApiServer server)
     {
         _server = server;
-        Title = "Conectar JMDroid";
-        Width = 610;
-        Height = 780;
-        MinWidth = 560;
-        MinHeight = 640;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = new SolidColorBrush(SurfaceColor);
         Foreground = Brushes.White;
-
-        var root = new DockPanel { Margin = new Thickness(24) };
+        var root = new DockPanel { Margin = new Thickness(10, 12, 10, 10) };
         var title = new TextBlock
         {
             Text = "Conectar um aparelho",
@@ -52,6 +47,19 @@ internal sealed class AndroidPairingWindow : Window
         var footer = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
         DockPanel.SetDock(footer, Dock.Bottom);
         footer.Children.Add(_status);
+        var firewallButton = new Button
+        {
+            Content = "Permitir acesso no Firewall (rede privada)",
+            Padding = new Thickness(14, 8, 14, 8),
+            Margin = new Thickness(0, 10, 0, 0),
+            Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            ToolTip = "O Windows solicitará permissão de administrador. A regra vale apenas para o JMD em redes privadas."
+        };
+        firewallButton.Click += async (_, _) => await ConfigureFirewallAsync(firewallButton);
+        footer.Children.Add(firewallButton);
         var newQrButton = new Button
         {
             Content = "Gerar um novo QR code",
@@ -91,19 +99,29 @@ internal sealed class AndroidPairingWindow : Window
         root.Children.Add(scroll);
         Content = root;
 
-        Loaded += async (_, _) =>
+    }
+
+    public bool IsActive => _active;
+
+    public async Task ActivateAsync()
+    {
+        if (_active) return;
+        _active = true;
+        if (!_tickHandlerAdded)
         {
-            await RefreshQrAsync();
             _refreshTimer.Tick += (_, _) => RefreshLists();
-            _refreshTimer.Start();
-        };
-        Closing += async (_, _) =>
-        {
-            if (_closing) return;
-            _closing = true;
-            _refreshTimer.Stop();
-            await _server.ClosePairingScreenAsync();
-        };
+            _tickHandlerAdded = true;
+        }
+        await RefreshQrAsync();
+        if (_active) _refreshTimer.Start();
+    }
+
+    public async Task DeactivateAsync()
+    {
+        if (!_active) return;
+        _active = false;
+        _refreshTimer.Stop();
+        await _server.ClosePairingScreenAsync();
     }
 
     private async Task RefreshQrAsync()
@@ -133,6 +151,29 @@ internal sealed class AndroidPairingWindow : Window
         }
     }
 
+    private async Task ConfigureFirewallAsync(Button button)
+    {
+        button.IsEnabled = false;
+        _status.Text = "Aguardando autorização do Windows para configurar o Firewall…";
+        try
+        {
+            await JmdroidFirewallRule.ConfigurePrivateNetworkAccessAsync();
+            _status.Text = "Firewall configurado para permitir conexões TCP ao JMD em redes privadas. O celular e o computador precisam estar na mesma rede.";
+        }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
+        {
+            _status.Text = "A configuração do Firewall foi cancelada no aviso do Windows.";
+        }
+        catch (Exception exception)
+        {
+            _status.Text = $"Não foi possível configurar o Firewall: {exception.Message}";
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
+    }
+
     private void RefreshLists()
     {
         _requestsPanel.Children.Clear();
@@ -156,7 +197,7 @@ internal sealed class AndroidPairingWindow : Window
             approve.Click += (_, _) =>
             {
                 if (!_server.ApprovePairing(request.Id))
-                    MessageBox.Show(this, "O pedido expirou. Gere um novo QR code e tente novamente.", "Pareamento", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show(Window.GetWindow(this), "O pedido expirou. Gere um novo QR code e tente novamente.", "Pareamento", MessageBoxButton.OK, MessageBoxImage.Information);
                 RefreshLists();
             };
             var deny = SmallButton("Negar", false);
@@ -185,7 +226,7 @@ internal sealed class AndroidPairingWindow : Window
             var remove = SmallButton("Revogar", false);
             remove.Click += async (_, _) =>
             {
-                if (MessageBox.Show(this, $"Revogar o acesso de {device.Name}?", "Remover aparelho", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                if (MessageBox.Show(Window.GetWindow(this), $"Revogar o acesso de {device.Name}?", "Remover aparelho", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
                     await _server.RevokeDeviceAsync(device.Id);
                 RefreshLists();
             };

@@ -8,28 +8,18 @@ using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using HorizontalAlignment = System.Windows.HorizontalAlignment;
 using Image = System.Windows.Controls.Image;
+using UserControl = System.Windows.Controls.UserControl;
 
 namespace JMD.App;
 
-internal sealed class AndroidDownloadWindow : Window
+internal sealed class AndroidInstallPanel : UserControl
 {
     private const string DownloadUrl = "https://github.com/deggau/jmdDroid/releases/latest/download/jmdroid.apk";
-    private static readonly Color SurfaceColor = Color.FromRgb(23, 25, 31);
     private static readonly Color MutedColor = Color.FromRgb(160, 166, 178);
-    private readonly Action _openConnectionSetup;
 
-    public AndroidDownloadWindow(Action openConnectionSetup)
+    public AndroidInstallPanel()
     {
-        _openConnectionSetup = openConnectionSetup;
-        Title = "JMD para Android";
-        Width = 410;
-        Height = 590;
-        ResizeMode = ResizeMode.NoResize;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = new SolidColorBrush(SurfaceColor);
-        Foreground = Brushes.White;
-
-        var content = new StackPanel { Margin = new Thickness(28), HorizontalAlignment = HorizontalAlignment.Center };
+        var content = new StackPanel { Margin = new Thickness(10, 12, 10, 18), HorizontalAlignment = HorizontalAlignment.Center };
         content.Children.Add(new TextBlock
         {
             Text = "JMD para Android",
@@ -40,12 +30,12 @@ internal sealed class AndroidDownloadWindow : Window
         });
         content.Children.Add(new TextBlock
         {
-            Text = "Baixe o app ou configure uma conexão local com o JMD no computador.",
+            Text = "Leia o QR code com o celular para baixar o APK do JMDroid.",
             FontSize = 13,
             Foreground = new SolidColorBrush(MutedColor),
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
-            Margin = new Thickness(4, 0, 4, 20)
+            Margin = new Thickness(4, 0, 4, 16)
         });
 
         var qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=280x280&format=png&data=" + Uri.EscapeDataString(DownloadUrl);
@@ -77,19 +67,6 @@ internal sealed class AndroidDownloadWindow : Window
         };
         link.MouseLeftButtonUp += (_, _) => OpenDownload();
         content.Children.Add(link);
-
-        var connectButton = new Button
-        {
-            Content = "Configurar conexão com o JMD",
-            Padding = new Thickness(16, 9, 16, 9),
-            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            Foreground = new SolidColorBrush(Color.FromRgb(23, 25, 31)),
-            BorderThickness = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 8)
-        };
-        connectButton.Click += (_, _) => _openConnectionSetup();
-        content.Children.Add(connectButton);
 
         var openButton = new Button
         {

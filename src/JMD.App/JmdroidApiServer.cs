@@ -225,6 +225,48 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 
     private void MapRoutes(WebApplication app)
     {
+        app.MapGet("/", async context =>
+        {
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.Headers.CacheControl = "no-store";
+            await context.Response.WriteAsync("""
+                <!doctype html>
+                <html lang="pt-BR">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <title>JMD · Serviço de pareamento</title>
+                  <style>
+                    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #17191f; color: #f4f5f7; }
+                    body { box-sizing: border-box; min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; }
+                    main { width: min(100%, 520px); box-sizing: border-box; padding: 32px; border: 1px solid #393d47; border-radius: 16px; background: #22252d; }
+                    h1 { margin: 0 0 8px; font-size: 28px; }
+                    p { color: #bec3cc; }
+                    .status { display: inline-flex; align-items: center; gap: 9px; margin-top: 12px; padding: 9px 13px; border-radius: 999px; background: #303d2b; color: #b4f36a; font-weight: 650; }
+                    .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+                    a { color: #b4f36a; }
+                  </style>
+                </head>
+                <body>
+                  <main>
+                    <h1>JMD · Pareamento com celular</h1>
+                    <p>Esta página confirma que o serviço local do JMD está respondendo neste endereço.</p>
+                    <div class="status"><span class="dot"></span>Serviço ativo</div>
+                    <p>Para conectar um celular, use o QR code exibido no JMDroid e aprove o pedido no aplicativo.</p>
+                    <p>Verificação técnica: <a href="/health">/health</a></p>
+                  </main>
+                </body>
+                </html>
+                """, context.RequestAborted);
+        });
+
+        app.MapGet("/health", () => Results.Json(new
+        {
+            status = "ok",
+            service = "jmdroid-pairing",
+            timestamp = DateTimeOffset.UtcNow
+        }));
+
         app.MapPost("/api/v1/pairing/requests", async context =>
         {
             var payload = await context.Request.ReadFromJsonAsync<PairingClaim>(JsonOptions, context.RequestAborted);
