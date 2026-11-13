@@ -14,6 +14,7 @@ using Image = System.Windows.Controls.Image;
 using MessageBox = System.Windows.MessageBox;
 using Orientation = System.Windows.Controls.Orientation;
 using TextBox = System.Windows.Controls.TextBox;
+using ComboBox = System.Windows.Controls.ComboBox;
 using UserControl = System.Windows.Controls.UserControl;
 
 namespace JMD.App;
@@ -23,6 +24,7 @@ internal sealed class AndroidPairingPanel : UserControl
     private static readonly Color SurfaceColor = Color.FromRgb(23, 25, 31);
     private static readonly Color MutedColor = Color.FromRgb(150, 155, 167);
     private readonly JmdroidApiServer _server;
+    private readonly ComboBox _networkSelector = new() { Margin = new Thickness(0, 0, 0, 12), Padding = new Thickness(6) };
     private readonly Image _qrImage = new() { Width = 250, Height = 250, Stretch = Stretch.Uniform };
     private readonly TextBox _addressBox = new()
     {
@@ -60,14 +62,14 @@ internal sealed class AndroidPairingPanel : UserControl
         footer.Children.Add(_status);
         var firewallButton = new Button
         {
-            Content = "Permitir acesso no Firewall (rede privada)",
+            Content = "Permitir acesso no Firewall (rede atual)",
             Padding = new Thickness(14, 8, 14, 8),
             Margin = new Thickness(0, 10, 0, 0),
             Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)),
             Foreground = Brushes.White,
             BorderThickness = new Thickness(0),
             HorizontalAlignment = HorizontalAlignment.Center,
-            ToolTip = "O Windows solicitará permissão de administrador. A regra vale apenas para o JMD em redes privadas."
+            ToolTip = "O Windows solicitará permissão de administrador. A regra libera somente a porta ativa do JMD na rede local privada."
         };
         firewallButton.Click += async (_, _) => await ConfigureFirewallAsync(firewallButton);
         footer.Children.Add(firewallButton);
@@ -94,6 +96,20 @@ internal sealed class AndroidPairingPanel : UserControl
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 16)
         });
+        content.Children.Add(new TextBlock
+        {
+            Text = "Rede do computador compartilhada com o celular",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        _networkSelector.ItemsSource = _server.AvailableNetworkAddresses;
+        _networkSelector.DisplayMemberPath = nameof(JmdroidNetworkAddress.DisplayName);
+        if (_networkSelector.Items.Count > 0) _networkSelector.SelectedIndex = 0;
+        _networkSelector.SelectionChanged += async (_, _) =>
+        {
+            if (_active) await RefreshQrAsync();
+        };
+        content.Children.Add(_networkSelector);
         content.Children.Add(new Border
         {
             Background = Brushes.White,
@@ -126,7 +142,7 @@ internal sealed class AndroidPairingPanel : UserControl
         content.Children.Add(addressRow);
         content.Children.Add(new TextBlock
         {
-            Text = "O QR contém os dados de pareamento do JMDroid. Ao abrir no navegador, o Windows pode exibir um aviso por o certificado HTTPS ser local.",
+            Text = "O QR contém os dados de pareamento do JMDroid; no celular, leia o QR pelo app em vez de abrir o endereço no navegador. Escolha acima a interface Wi-Fi/Ethernet que o celular alcança; evite selecionar a interface da VPN. No navegador do computador, o certificado HTTPS local pode exibir “Sua conexão não é particular”; abra as opções avançadas e continue para confirmar a página de diagnóstico. Para o celular, computador e telefone precisam estar na mesma rede, e a rede do Windows deve estar marcada como Privada para a regra de Firewall deste botão.",
             Foreground = new SolidColorBrush(MutedColor),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 6, 0, 0)
@@ -169,7 +185,8 @@ internal sealed class AndroidPairingPanel : UserControl
         _status.Text = "Iniciando conexão HTTPS local…";
         try
         {
-            var pairing = await _server.OpenPairingScreenAsync();
+            var selectedAddress = (_networkSelector.SelectedItem as JmdroidNetworkAddress)?.Address;
+            var pairing = await _server.OpenPairingScreenAsync(selectedAddress);
             var bitmap = new BitmapImage();
             using (var stream = new MemoryStream(pairing.QrPng))
             {
@@ -212,8 +229,9 @@ internal sealed class AndroidPairingPanel : UserControl
         _status.Text = "Aguardando autorização do Windows para configurar o Firewall…";
         try
         {
-            await JmdroidFirewallRule.ConfigurePrivateNetworkAccessAsync();
-            _status.Text = "Firewall configurado para permitir conexões TCP ao JMD em redes privadas. O celular e o computador precisam estar na mesma rede.";
+            var listeningAddress = _server.ListeningAddress ?? throw new InvalidOperationException("A API ainda não está ouvindo em um endereço de rede.");
+            await JmdroidFirewallRule.ConfigurePrivateNetworkAccessAsync(listeningAddress, _server.ListeningPort);
+            _status.Text = $"Firewall configurado para a porta {_server.ListeningPort} na rede local. O celular e o computador precisam estar na mesma rede.";
         }
         catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
         {

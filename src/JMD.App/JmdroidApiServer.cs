@@ -35,6 +35,10 @@ internal sealed record JmdroidCommandInfo(
     object? InputSchema);
 
 internal sealed record JmdroidPairingInfo(string BaseUrl, string CertificateSha256, string QrPayload, byte[] QrPng, DateTimeOffset ExpiresAt);
+internal sealed record JmdroidNetworkAddress(string InterfaceName, IPAddress Address)
+{
+    public string DisplayName => $"{InterfaceName} — {Address}";
+}
 internal sealed record JmdroidPairingRequestView(string Id, string DeviceName, string AppVersion, DateTimeOffset CreatedAt);
 internal sealed record JmdroidExecutionResult(string Status, string? Text = null, string? Error = null, int? InputItemCount = null, int? OutputItemCount = null);
 
@@ -83,20 +87,35 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     public bool IsRunning => _application is not null;
     public int ConnectedDeviceCount { get { lock (_connectionLock) return _activeConnections.Count; } }
     public string? BaseUrl => _baseUrl;
+    public IPAddress? ListeningAddress => _listeningAddress;
+    public int ListeningPort => _listeningPort;
+    public IReadOnlyList<JmdroidNetworkAddress> AvailableNetworkAddresses => GetLanAddresses();
     public IReadOnlyList<JmdroidPairedDevice> PairedDevices
     {
         get { lock (_requestLock) return _devices.ToArray(); }
     }
     public bool IsDeviceConnected(string deviceId) { lock (_connectionLock) return _activeConnections.ContainsKey(deviceId); }
 
-    public async Task<JmdroidPairingInfo> OpenPairingScreenAsync(CancellationToken cancellationToken = default)
+    public async Task<JmdroidPairingInfo> OpenPairingScreenAsync(IPAddress? preferredAddress = null, CancellationToken cancellationToken = default)
     {
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (preferredAddress is not null && !GetLanAddresses().Any(candidate => candidate.Address.Equals(preferredAddress)))
+                throw new InvalidOperationException("O endereço selecionado não pertence a uma interface IPv4 privada ativa.");
+
+            if (_application is not null && preferredAddress is not null && !_listeningAddress!.Equals(preferredAddress))
+            {
+                if (_activeConnections.Count > 0)
+                    throw new InvalidOperationException("Desconecte os aparelhos antes de trocar a interface de rede.");
+                _pairingScreenOpen = false;
+                _pairingSession = null;
+                await StopIfIdleAsync();
+            }
+
             if (_application is null)
-                await StartListenerAsync(cancellationToken);
+                await StartListenerAsync(preferredAddress, cancellationToken);
 
             _pairingScreenOpen = true;
             foreach (var pending in _pending.Values) pending.State = "expired";
@@ -193,9 +212,9 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         finally { _lifecycleLock.Release(); }
     }
 
-    private async Task StartListenerAsync(CancellationToken cancellationToken)
+    private async Task StartListenerAsync(IPAddress? preferredAddress, CancellationToken cancellationToken)
     {
-        var listeningAddress = GetLanAddress();
+        var listeningAddress = preferredAddress ?? GetLanAddress();
         var port = _preferredPort;
         async Task<(WebApplication App, X509Certificate2 Certificate)> StartOnPortAsync(int candidatePort)
         {
@@ -595,17 +614,36 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
+    private static IReadOnlyList<JmdroidNetworkAddress> GetLanAddresses()
+    {
+        return NetworkInterface.GetAllNetworkInterfaces()
+            .Where(item => item.OperationalStatus == OperationalStatus.Up &&
+                           item.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel))
+            .SelectMany(item =>
+            {
+                var properties = item.GetIPProperties();
+                var hasIpv4Gateway = properties.GatewayAddresses.Any(gateway =>
+                    gateway.Address.AddressFamily == AddressFamily.InterNetwork && !gateway.Address.Equals(IPAddress.Any));
+                var interfacePriority = item.NetworkInterfaceType switch
+                {
+                    NetworkInterfaceType.Wireless80211 => 300,
+                    NetworkInterfaceType.Ethernet => 200,
+                    _ => 0
+                };
+                var priority = (hasIpv4Gateway ? 100 : 0) + interfacePriority;
+                return properties.UnicastAddresses
+                    .Select(unicast => (Address: unicast.Address, Priority: priority, InterfaceName: item.Name));
+            })
+            .Where(candidate => candidate.Address.AddressFamily == AddressFamily.InterNetwork && IsPrivateIpv4(candidate.Address))
+            .OrderByDescending(candidate => candidate.Priority)
+            .Select(candidate => new JmdroidNetworkAddress(candidate.InterfaceName, candidate.Address))
+            .DistinctBy(candidate => candidate.Address)
+            .ToArray();
+    }
+
     private static IPAddress GetLanAddress()
     {
-        var candidates = NetworkInterface.GetAllNetworkInterfaces()
-            .Where(item => item.OperationalStatus == OperationalStatus.Up && item.NetworkInterfaceType != NetworkInterfaceType.Loopback)
-            .SelectMany(item => item.GetIPProperties().UnicastAddresses)
-            .Select(item => item.Address)
-            .Where(address => address.AddressFamily == AddressFamily.InterNetwork && IsPrivateIpv4(address))
-            .ToArray();
-        return candidates.FirstOrDefault(address => address.ToString().StartsWith("192.168.", StringComparison.Ordinal))
-               ?? candidates.FirstOrDefault(address => address.ToString().StartsWith("10.", StringComparison.Ordinal))
-               ?? candidates.FirstOrDefault(address => IsPrivateIpv4(address))
+        return GetLanAddresses().Select(candidate => candidate.Address).FirstOrDefault()
                ?? throw new InvalidOperationException("Não encontrei um endereço IPv4 da rede local.");
     }
 
