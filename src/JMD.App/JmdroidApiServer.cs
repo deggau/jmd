@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -237,7 +236,6 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             try
             {
                 await app.StartAsync(cancellationToken);
-                await VerifyLocalHttpsAsync(candidatePort, cancellationToken);
                 return (app, certificate);
             }
             catch
@@ -618,20 +616,6 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         using var listener = new TcpListener(address, 0);
         listener.Start();
         return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
-
-    private static async Task VerifyLocalHttpsAsync(int port, CancellationToken cancellationToken)
-    {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(5));
-        using var handler = new HttpClientHandler
-        {
-            UseProxy = false,
-            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
-        };
-        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        using var response = await client.GetAsync($"https://127.0.0.1:{port}/health", timeout.Token);
-        response.EnsureSuccessStatusCode();
     }
 
     private static IReadOnlyList<JmdroidNetworkAddress> GetLanAddresses()
