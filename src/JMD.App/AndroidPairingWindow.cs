@@ -105,12 +105,13 @@ internal sealed class AndroidPairingPanel : UserControl
         var addressRow = new DockPanel();
         var openBrowserButton = new Button
         {
-            Content = "Testar no navegador",
+            Content = "Testar neste PC",
             Padding = new Thickness(9, 6, 9, 6),
             Margin = new Thickness(7, 0, 0, 0),
             Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)),
             Foreground = Brushes.White,
             BorderThickness = new Thickness(0),
+            ToolTip = "Abre a API por localhost, sem depender da rota de rede, VPN ou proxy configurado para o IP da rede.",
             VerticalAlignment = VerticalAlignment.Center
         };
         DockPanel.SetDock(openBrowserButton, Dock.Right);
@@ -236,10 +237,10 @@ internal sealed class AndroidPairingPanel : UserControl
 
     private void OpenApiAddress()
     {
-        if (string.IsNullOrWhiteSpace(_addressBox.Text)) return;
+        if (!Uri.TryCreate(_addressBox.Text, UriKind.Absolute, out var apiUri)) return;
         try
         {
-            Process.Start(new ProcessStartInfo(_addressBox.Text) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo($"https://localhost:{apiUri.Port}/") { UseShellExecute = true });
         }
         catch (Exception exception)
         {

@@ -61,6 +61,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, ConcurrentBag<WebSocket>> _deviceSockets = new(StringComparer.Ordinal);
     private WebApplication? _application;
     private X509Certificate2? _certificate;
+    private RSA? _certificatePrivateKey;
     private PairingSession? _pairingSession;
     private bool _pairingScreenOpen;
     private bool _disposed;
@@ -216,37 +217,39 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     {
         var listeningAddress = preferredAddress ?? GetLanAddress();
         var port = _preferredPort;
-        async Task<(WebApplication App, X509Certificate2 Certificate)> StartOnPortAsync(int candidatePort)
+        async Task<(WebApplication App, X509Certificate2 Certificate, RSA PrivateKey)> StartOnPortAsync(int candidatePort)
         {
-            var certificate = CreateServerCertificate(listeningAddress);
-            var builder = WebApplication.CreateSlimBuilder();
-            builder.Logging.ClearProviders();
-            builder.WebHost.ConfigureKestrel(options =>
-            {
-                options.Limits.MaxRequestBodySize = 1_048_576;
-                // Bind only the interface selected for this pairing session. Binding every
-                // detected adapter makes startup depend on VPN, virtual, and policy-managed
-                // interfaces that the phone may not be able to reach.
-                foreach (var address in new[] { listeningAddress, IPAddress.Loopback }.Distinct())
-                    options.Listen(address, candidatePort, listen => listen.UseHttps(certificate));
-            });
-            var app = builder.Build();
-            app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
-            MapRoutes(app);
+            var (certificate, privateKey) = CreateServerCertificate(listeningAddress);
+            WebApplication? app = null;
             try
             {
+                var builder = WebApplication.CreateSlimBuilder();
+                builder.Logging.ClearProviders();
+                builder.WebHost.ConfigureKestrel(options =>
+                {
+                    options.Limits.MaxRequestBodySize = 1_048_576;
+                    // Bind only the interface selected for this pairing session. Binding every
+                    // detected adapter makes startup depend on VPN, virtual, and policy-managed
+                    // interfaces that the phone may not be able to reach.
+                    foreach (var address in new[] { listeningAddress, IPAddress.Loopback }.Distinct())
+                        options.Listen(address, candidatePort, listen => listen.UseHttps(certificate));
+                });
+                app = builder.Build();
+                app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
+                MapRoutes(app);
                 await app.StartAsync(cancellationToken);
-                return (app, certificate);
+                return (app, certificate, privateKey);
             }
             catch
             {
+                if (app is not null) await app.DisposeAsync();
                 certificate.Dispose();
-                await app.DisposeAsync();
+                privateKey.Dispose();
                 throw;
             }
         }
 
-        (WebApplication App, X509Certificate2 Certificate) started;
+        (WebApplication App, X509Certificate2 Certificate, RSA PrivateKey) started;
         try
         {
             started = await StartOnPortAsync(port);
@@ -260,6 +263,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         _preferredPort = port;
         _application = started.App;
         _certificate = started.Certificate;
+        _certificatePrivateKey = started.PrivateKey;
         _listeningPort = port;
         _listeningAddress = listeningAddress;
         _baseUrl = $"https://{listeningAddress}:{port}";
@@ -598,6 +602,8 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             await app.DisposeAsync();
             _certificate?.Dispose();
             _certificate = null;
+            _certificatePrivateKey?.Dispose();
+            _certificatePrivateKey = null;
             StateChanged?.Invoke();
         }
     }
@@ -659,19 +665,28 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                (bytes[0] == 192 && bytes[1] == 168);
     }
 
-    private static X509Certificate2 CreateServerCertificate(IPAddress ipAddress)
+    private static (X509Certificate2 Certificate, RSA PrivateKey) CreateServerCertificate(IPAddress ipAddress)
     {
-        using var rsa = RSA.Create(2048);
-        var request = new CertificateRequest("CN=JMD local API", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        var names = new SubjectAlternativeNameBuilder();
-        foreach (var address in GetLanAddresses().Select(item => item.Address).Append(ipAddress).Distinct())
-            names.AddIpAddress(address);
-        names.AddDnsName("localhost");
-        request.CertificateExtensions.Add(names.Build());
-        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
-        request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, false));
-        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
-        return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+        var rsa = RSA.Create(2048);
+        try
+        {
+            var request = new CertificateRequest("CN=JMD local API", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            var names = new SubjectAlternativeNameBuilder();
+            foreach (var address in GetLanAddresses().Select(item => item.Address).Append(ipAddress).Distinct())
+                names.AddIpAddress(address);
+            names.AddDnsName("localhost");
+            request.CertificateExtensions.Add(names.Build());
+            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+            request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, false));
+            request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
+            var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+            return (certificate, rsa);
+        }
+        catch
+        {
+            rsa.Dispose();
+            throw;
+        }
     }
 
     private static string CreateSecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -707,6 +722,8 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             }
             _certificate?.Dispose();
             _certificate = null;
+            _certificatePrivateKey?.Dispose();
+            _certificatePrivateKey = null;
         }
         finally
         {
