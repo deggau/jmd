@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -224,7 +225,11 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             builder.WebHost.ConfigureKestrel(options =>
             {
                 options.Limits.MaxRequestBodySize = 1_048_576;
-                options.Listen(listeningAddress, candidatePort, listen => listen.UseHttps(certificate));
+                // Bind only the interface selected for this pairing session. Binding every
+                // detected adapter makes startup depend on VPN, virtual, and policy-managed
+                // interfaces that the phone may not be able to reach.
+                foreach (var address in new[] { listeningAddress, IPAddress.Loopback }.Distinct())
+                    options.Listen(address, candidatePort, listen => listen.UseHttps(certificate));
             });
             var app = builder.Build();
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
@@ -232,6 +237,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             try
             {
                 await app.StartAsync(cancellationToken);
+                await VerifyLocalHttpsAsync(candidatePort, cancellationToken);
                 return (app, certificate);
             }
             catch
@@ -614,6 +620,20 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
+    private static async Task VerifyLocalHttpsAsync(int port, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        using var handler = new HttpClientHandler
+        {
+            UseProxy = false,
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        };
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        using var response = await client.GetAsync($"https://127.0.0.1:{port}/health", timeout.Token);
+        response.EnsureSuccessStatusCode();
+    }
+
     private static IReadOnlyList<JmdroidNetworkAddress> GetLanAddresses()
     {
         return NetworkInterface.GetAllNetworkInterfaces()
@@ -660,7 +680,8 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest("CN=JMD local API", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         var names = new SubjectAlternativeNameBuilder();
-        names.AddIpAddress(ipAddress);
+        foreach (var address in GetLanAddresses().Select(item => item.Address).Append(ipAddress).Distinct())
+            names.AddIpAddress(address);
         names.AddDnsName("localhost");
         request.CertificateExtensions.Add(names.Build());
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));

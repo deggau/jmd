@@ -25,7 +25,7 @@ internal sealed class AndroidPairingPanel : UserControl
     private static readonly Color MutedColor = Color.FromRgb(150, 155, 167);
     private readonly JmdroidApiServer _server;
     private readonly ComboBox _networkSelector = new() { Margin = new Thickness(0, 0, 0, 12), Padding = new Thickness(6) };
-    private readonly Image _qrImage = new() { Width = 250, Height = 250, Stretch = Stretch.Uniform };
+    private readonly Image _qrImage = new() { Width = 184, Height = 184, Stretch = Stretch.Uniform };
     private readonly TextBox _addressBox = new()
     {
         IsReadOnly = true,
@@ -46,90 +46,68 @@ internal sealed class AndroidPairingPanel : UserControl
     {
         _server = server;
         Foreground = Brushes.White;
-        var root = new DockPanel { Margin = new Thickness(10, 12, 10, 10) };
+        var root = new Grid { Margin = new Thickness(10, 8, 10, 8) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var title = new TextBlock
         {
             Text = "Conectar um aparelho",
-            FontSize = 22,
+            FontSize = 18,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 6)
+            Margin = new Thickness(0, 0, 0, 8)
         };
-        DockPanel.SetDock(title, Dock.Top);
+        Grid.SetRow(title, 0);
         root.Children.Add(title);
 
-        var footer = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
-        DockPanel.SetDock(footer, Dock.Bottom);
-        footer.Children.Add(_status);
-        var firewallButton = new Button
+        var connectionCard = new Border
         {
-            Content = "Permitir acesso no Firewall (rede atual)",
-            Padding = new Thickness(14, 8, 14, 8),
-            Margin = new Thickness(0, 10, 0, 0),
-            Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            ToolTip = "O Windows solicitará permissão de administrador. A regra libera somente a porta ativa do JMD na rede local privada."
+            Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(58, 62, 72)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(10),
+            Margin = new Thickness(0, 0, 0, 8)
         };
-        firewallButton.Click += async (_, _) => await ConfigureFirewallAsync(firewallButton);
-        footer.Children.Add(firewallButton);
-        var newQrButton = new Button
-        {
-            Content = "Gerar um novo QR code",
-            Padding = new Thickness(14, 8, 14, 8),
-            Margin = new Thickness(0, 10, 0, 0),
-            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
-            Foreground = new SolidColorBrush(SurfaceColor),
-            BorderThickness = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Center
-        };
-        newQrButton.Click += async (_, _) => await RefreshQrAsync();
-        footer.Children.Add(newQrButton);
-        root.Children.Add(footer);
-
-        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var content = new StackPanel();
-        content.Children.Add(new TextBlock
-        {
-            Text = "No JMDroid, escolha Conectar e leia este QR code. O JMD só libera o acesso depois que você aprovar o aparelho nesta tela.",
-            Foreground = new SolidColorBrush(MutedColor),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 16)
-        });
-        content.Children.Add(new TextBlock
-        {
-            Text = "Rede do computador compartilhada com o celular",
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 6)
-        });
-        _networkSelector.ItemsSource = _server.AvailableNetworkAddresses;
-        _networkSelector.DisplayMemberPath = nameof(JmdroidNetworkAddress.DisplayName);
-        if (_networkSelector.Items.Count > 0) _networkSelector.SelectedIndex = 0;
-        _networkSelector.SelectionChanged += async (_, _) =>
-        {
-            if (_active) await RefreshQrAsync();
-        };
-        content.Children.Add(_networkSelector);
-        content.Children.Add(new Border
+        var connection = new Grid();
+        connection.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        connection.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var qrBorder = new Border
         {
             Background = Brushes.White,
-            Padding = new Thickness(10),
-            CornerRadius = new CornerRadius(12),
-            HorizontalAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(6),
+            CornerRadius = new CornerRadius(8),
+            VerticalAlignment = VerticalAlignment.Center,
             Child = _qrImage
-        });
-        content.Children.Add(new TextBlock
+        };
+        Grid.SetColumn(qrBorder, 0);
+        connection.Children.Add(qrBorder);
+        var details = new StackPanel { Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        details.Children.Add(new TextBlock
         {
-            Text = "Endereço da API (também incluído no QR code)",
+            Text = "No JMDroid, toque em Conectar e leia o QR code.",
+            Foreground = Brushes.White,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 16, 0, 6)
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+        details.Children.Add(new TextBlock { Text = "Interface de rede", Foreground = new SolidColorBrush(MutedColor), FontSize = 11 });
+        _networkSelector.Margin = new Thickness(0, 3, 0, 8);
+        _networkSelector.Padding = new Thickness(6);
+        details.Children.Add(_networkSelector);
+        details.Children.Add(new TextBlock
+        {
+            Text = "Endereço da API",
+            Foreground = new SolidColorBrush(MutedColor),
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 0, 3)
         });
         var addressRow = new DockPanel();
         var openBrowserButton = new Button
         {
-            Content = "Abrir no navegador",
-            Padding = new Thickness(10, 7, 10, 7),
-            Margin = new Thickness(8, 0, 0, 0),
+            Content = "Testar no navegador",
+            Padding = new Thickness(9, 6, 9, 6),
+            Margin = new Thickness(7, 0, 0, 0),
             Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)),
             Foreground = Brushes.White,
             BorderThickness = new Thickness(0),
@@ -139,20 +117,64 @@ internal sealed class AndroidPairingPanel : UserControl
         openBrowserButton.Click += (_, _) => OpenApiAddress();
         addressRow.Children.Add(openBrowserButton);
         addressRow.Children.Add(_addressBox);
-        content.Children.Add(addressRow);
-        content.Children.Add(new TextBlock
+        details.Children.Add(addressRow);
+        _status.TextAlignment = TextAlignment.Left;
+        _status.Margin = new Thickness(0, 7, 0, 0);
+        details.Children.Add(_status);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        var firewallButton = new Button
         {
-            Text = "O QR contém os dados de pareamento do JMDroid; no celular, leia o QR pelo app em vez de abrir o endereço no navegador. Escolha acima a interface Wi-Fi/Ethernet que o celular alcança; evite selecionar a interface da VPN. No navegador do computador, o certificado HTTPS local pode exibir “Sua conexão não é particular”; abra as opções avançadas e continue para confirmar a página de diagnóstico. Para o celular, computador e telefone precisam estar na mesma rede, e a rede do Windows deve estar marcada como Privada para a regra de Firewall deste botão.",
-            Foreground = new SolidColorBrush(MutedColor),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 6, 0, 0)
-        });
-        content.Children.Add(SectionTitle("Pedidos aguardando aprovação"));
-        content.Children.Add(_requestsPanel);
-        content.Children.Add(SectionTitle("Aparelhos autorizados"));
-        content.Children.Add(_devicesPanel);
-        scroll.Content = content;
-        root.Children.Add(scroll);
+            Content = "Configurar Firewall",
+            Padding = new Thickness(11, 7, 11, 7),
+            Margin = new Thickness(0, 0, 7, 0),
+            Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            ToolTip = "O Windows solicitará permissão de administrador. A regra libera somente a porta ativa do JMD na rede local privada."
+        };
+        firewallButton.Click += async (_, _) => await ConfigureFirewallAsync(firewallButton);
+        actions.Children.Add(firewallButton);
+        var newQrButton = new Button
+        {
+            Content = "Gerar novo QR code",
+            Padding = new Thickness(11, 7, 11, 7),
+            Background = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            Foreground = new SolidColorBrush(SurfaceColor),
+            BorderThickness = new Thickness(0)
+        };
+        newQrButton.Click += async (_, _) => await RefreshQrAsync();
+        actions.Children.Add(newQrButton);
+        details.Children.Add(actions);
+        Grid.SetColumn(details, 1);
+        connection.Children.Add(details);
+        connectionCard.Child = connection;
+        Grid.SetRow(connectionCard, 1);
+        root.Children.Add(connectionCard);
+
+        var lists = new Grid();
+        lists.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        lists.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        lists.ColumnDefinitions[0].MinWidth = 180;
+        lists.ColumnDefinitions[1].MinWidth = 180;
+        var requestsColumn = new StackPanel { Margin = new Thickness(0, 0, 8, 0) };
+        var devicesColumn = new StackPanel { Margin = new Thickness(8, 0, 0, 0) };
+        requestsColumn.Children.Add(SectionTitle("Pedidos de aprovação"));
+        requestsColumn.Children.Add(_requestsPanel);
+        devicesColumn.Children.Add(SectionTitle("Aparelhos autorizados"));
+        devicesColumn.Children.Add(_devicesPanel);
+        Grid.SetColumn(devicesColumn, 1);
+        lists.Children.Add(requestsColumn);
+        lists.Children.Add(devicesColumn);
+        var listsScroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = lists };
+        Grid.SetRow(listsScroll, 2);
+        root.Children.Add(listsScroll);
+        _networkSelector.ItemsSource = _server.AvailableNetworkAddresses;
+        _networkSelector.DisplayMemberPath = nameof(JmdroidNetworkAddress.DisplayName);
+        if (_networkSelector.Items.Count > 0) _networkSelector.SelectedIndex = 0;
+        _networkSelector.SelectionChanged += async (_, _) =>
+        {
+            if (_active) await RefreshQrAsync();
+        };
         Content = root;
 
     }
@@ -198,15 +220,17 @@ internal sealed class AndroidPairingPanel : UserControl
             }
             _qrImage.Source = bitmap;
             _addressBox.Text = pairing.BaseUrl;
-            _status.Text = $"API ativa em {pairing.BaseUrl}. QR code válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}.\n" +
-                           "O Windows pode pedir permissão de rede privada para o JMD.";
+            _status.Text = $"HTTPS validado neste PC · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
+                           "No navegador, avance pelo aviso do certificado local. No Android, use o QR pelo JMDroid. " +
+                           "Para celular/VPN, permita acesso à LAN nas opções da VPN.";
             RefreshLists();
         }
         catch (Exception exception)
         {
+            CriticalErrorLog.Write("Iniciar API local do JMDroid", exception);
             _qrImage.Source = null;
             _addressBox.Clear();
-            _status.Text = $"Não foi possível iniciar a API: {exception.Message}";
+            _status.Text = $"Não foi possível iniciar a API: {exception.GetBaseException().Message}";
         }
     }
 
