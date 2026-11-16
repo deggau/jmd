@@ -225,6 +225,8 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             {
                 var builder = WebApplication.CreateSlimBuilder();
                 builder.Logging.ClearProviders();
+                builder.Logging.SetMinimumLevel(LogLevel.Debug);
+                builder.Logging.AddProvider(new JmdroidLoggerProvider());
                 builder.WebHost.ConfigureKestrel(options =>
                 {
                     options.Limits.MaxRequestBodySize = 1_048_576;
@@ -679,8 +681,22 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
             request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, false));
             request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
-            var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
-            return (certificate, rsa);
+            using var generatedCertificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+            var pfx = generatedCertificate.Export(X509ContentType.Pfx);
+            try
+            {
+                // Materialize a separate ephemeral key handle for SslStream. This avoids relying
+                // on the temporary key handle created by CertificateRequest on Windows.
+                var serverCertificate = X509CertificateLoader.LoadPkcs12(
+                    pfx,
+                    (string?)null,
+                    X509KeyStorageFlags.EphemeralKeySet);
+                return (serverCertificate, rsa);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(pfx);
+            }
         }
         catch
         {
@@ -691,6 +707,28 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 
     private static string CreateSecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     private static string TokenHash(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
+    private sealed class JmdroidLoggerProvider : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new JmdroidLogger(categoryName);
+        public void Dispose() { }
+    }
+
+    private sealed class JmdroidLogger(string categoryName) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning ||
+            categoryName.StartsWith("Microsoft.AspNetCore.Server.Kestrel", StringComparison.Ordinal) && logLevel >= LogLevel.Debug;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (!IsEnabled(logLevel)) return;
+            var message = formatter(state, exception);
+            if (exception is not null || logLevel >= LogLevel.Warning)
+                CriticalErrorLog.Write($"JMDroid API · {categoryName} · evento {eventId.Id}", exception?.ToString() ?? message);
+        }
+    }
 
     private static bool FixedTimeTextEquals(string? left, string? right)
     {

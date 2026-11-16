@@ -23,6 +23,9 @@ internal static class CriticalErrorLog
     }
 
     public static void Write(string source, Exception exception)
+        => Write(source, exception.ToString());
+
+    public static void Write(string source, string details)
     {
         try
         {
@@ -33,7 +36,7 @@ internal static class CriticalErrorLog
                 if (!File.Exists(path))
                     File.WriteAllText(path, "JMD — registro de falhas críticas" + Environment.NewLine, Encoding.UTF8);
                 File.AppendAllText(path,
-                    $"{Environment.NewLine}[{DateTimeOffset.Now:O}] Origem: {source}{Environment.NewLine}{exception}{Environment.NewLine}",
+                    $"{Environment.NewLine}[{DateTimeOffset.Now:O}] Origem: {source}{Environment.NewLine}{details}{Environment.NewLine}",
                     Encoding.UTF8);
             }
         }

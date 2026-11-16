@@ -221,7 +221,7 @@ internal sealed class AndroidPairingPanel : UserControl
             }
             _qrImage.Source = bitmap;
             _addressBox.Text = pairing.BaseUrl;
-            _status.Text = $"HTTPS validado neste PC · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
+            _status.Text = $"Listener iniciado · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
                            "No navegador, avance pelo aviso do certificado local. No Android, use o QR pelo JMDroid. " +
                            "Para celular/VPN, permita acesso à LAN nas opções da VPN.";
             RefreshLists();
