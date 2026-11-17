@@ -8,7 +8,7 @@ Este documento define como o JMDroid pode parear com uma instância do JMD na me
 
 - O computador precisa estar ligado, com o JMD aberto e acessível pela rede local. O app não executa comandos do computador quando ele está desligado.
 - A primeira versão aceita conexão na mesma rede local. Não se deve publicar a porta do JMD diretamente na internet.
-- A API usa HTTPS. Como o certificado do servidor é local e autoassinado, o JMDroid confia nele somente quando a impressão digital SHA-256 recebida no QR code confere.
+- A API usa HTTPS por padrão. Opcionalmente, o usuário pode selecionar HTTP para uma rede local confiável; nesse modo, todo o tráfego fica sem criptografia e `certificateSha256` fica vazio. Não exponha a porta fora da rede privada.
 - A API só abre o listener enquanto a tela de pareamento por QR estiver aberta ou enquanto existir pelo menos uma sessão WebSocket autenticada. Fechar a tela encerra o listener quando não houver sessão conectada; terminar a última sessão também o encerra.
 - Se o listener tiver sido encerrado após uma desconexão, o usuário precisa abrir novamente **Configurações > Android > Conectar** no JMD desktop para permitir uma nova conexão. Reconexão automática com o listener fechado não é possível.
 
@@ -16,7 +16,7 @@ Este documento define como o JMDroid pode parear com uma instância do JMD na me
 
 ### 1. Abrir o pareamento no desktop
 
-Ao abrir a tela de conexão, o JMD inicia o listener HTTPS em uma porta local disponível e cria uma sessão de pareamento aleatória, válida por 2 minutos e utilizável uma única vez. O QR code contém um objeto JSON neste formato:
+Ao abrir a tela de conexão, o JMD inicia o listener em uma porta local disponível e cria uma sessão de pareamento aleatória, válida por 2 minutos e utilizável uma única vez. HTTPS é o padrão. Com HTTP selecionado, `baseUrl` começa com `http://` e `certificateSha256` fica vazio. O QR code HTTPS contém um objeto JSON neste formato:
 
 ```json
 {
@@ -30,7 +30,7 @@ Ao abrir a tela de conexão, o JMD inicia o listener HTTPS em uma porta local di
 }
 ```
 
-O `pairingSecret` é temporário e serve apenas para iniciar o pedido. Ele não é o token de acesso do aparelho.
+O `pairingSecret` é temporário e serve apenas para iniciar o pedido. Ele não é o token de acesso do aparelho. HTTP só deve ser usado em uma rede local confiável, pois o segredo e os tokens trafegam sem criptografia.
 
 ### 2. Solicitar pareamento pelo JMDroid
 
@@ -93,7 +93,7 @@ Authorization: Bearer {accessToken}
 Upgrade: websocket
 ```
 
-O JMDroid mantém uma sessão WebSocket enquanto estiver conectado. A sessão conta para o ciclo de vida do listener e permite ao desktop exibir o aparelho como conectado. O servidor fecha a sessão e a API ao revogar o aparelho ou encerrar a última conexão quando a tela de pareamento estiver fechada.
+O JMDroid mantém uma sessão WebSocket (`wss://` em HTTPS ou `ws://` em HTTP) enquanto estiver conectado. A sessão conta para o ciclo de vida do listener e permite ao desktop exibir o aparelho como conectado. O servidor fecha a sessão e a API ao revogar o aparelho ou encerrar a última conexão quando a tela de pareamento estiver fechada.
 
 Mensagem inicial do servidor:
 
@@ -105,7 +105,7 @@ Mensagem inicial do servidor:
 }
 ```
 
-O servidor envia pings WebSocket de protocolo para manter a sessão e detectar desconexões; clientes WebSocket Android respondem automaticamente no protocolo. O token deve ser enviado apenas em HTTPS/WSS e nunca aparecer em logs.
+O servidor envia pings WebSocket de protocolo para manter a sessão e detectar desconexões; clientes WebSocket Android respondem automaticamente no protocolo. O token deve ser enviado apenas em HTTPS/WSS no modo HTTPS. Em HTTP, ele trafega sem criptografia na rede local e nunca deve aparecer em logs.
 
 ## Listar e filtrar comandos
 

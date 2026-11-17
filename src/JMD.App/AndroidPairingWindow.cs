@@ -33,7 +33,14 @@ internal sealed class AndroidPairingPanel : UserControl
         Content = "Testar por HTTP (diagnóstico local)",
         Foreground = Brushes.White,
         Margin = new Thickness(0, 5, 0, 0),
-        ToolTip = "Abre uma porta HTTP temporária acessível somente neste computador. O QR code continua usando HTTPS."
+        ToolTip = "Abre uma porta HTTP temporária acessível somente neste computador para testar o health check."
+    };
+    private readonly System.Windows.Controls.CheckBox _httpPairingCheckBox = new()
+    {
+        Content = "Usar HTTP para conectar o celular (sem criptografia)",
+        Foreground = Brushes.White,
+        Margin = new Thickness(0, 5, 0, 0),
+        ToolTip = "O QR e toda a API usarão HTTP sem criptografia. Ative somente em uma rede local confiável."
     };
     private readonly System.Windows.Shapes.Ellipse _httpHealthIndicator = new()
     {
@@ -164,6 +171,7 @@ internal sealed class AndroidPairingPanel : UserControl
         addressRow.Children.Add(_addressBox);
         details.Children.Add(addressRow);
         details.Children.Add(_httpDiagnosticCheckBox);
+        details.Children.Add(_httpPairingCheckBox);
         var healthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 0) };
         healthStatus.Children.Add(_httpHealthIndicator);
         healthStatus.Children.Add(new TextBlock { Text = " ", Width = 5 });
@@ -231,6 +239,14 @@ internal sealed class AndroidPairingPanel : UserControl
         {
             if (_active) await RefreshQrAsync();
         };
+        _httpPairingCheckBox.Checked += async (_, _) =>
+        {
+            if (_active) await RefreshQrAsync();
+        };
+        _httpPairingCheckBox.Unchecked += async (_, _) =>
+        {
+            if (_active) await RefreshQrAsync();
+        };
         Content = root;
 
     }
@@ -274,7 +290,8 @@ internal sealed class AndroidPairingPanel : UserControl
         try
         {
             var selectedAddress = (_networkSelector.SelectedItem as JmdroidNetworkAddress)?.Address;
-            var pairing = await _server.OpenPairingScreenAsync(selectedAddress);
+            var useHttp = _httpPairingCheckBox.IsChecked == true;
+            var pairing = await _server.OpenPairingScreenAsync(selectedAddress, useHttp);
             var bitmap = new BitmapImage();
             using (var stream = new MemoryStream(pairing.QrPng))
             {
@@ -286,10 +303,15 @@ internal sealed class AndroidPairingPanel : UserControl
             }
             _qrImage.Source = bitmap;
             _addressBox.Text = pairing.BaseUrl;
-            _httpsHealthCertificateSha256 = pairing.CertificateSha256;
+            _httpsHealthCertificateSha256 = string.IsNullOrWhiteSpace(pairing.CertificateSha256)
+                ? null
+                : pairing.CertificateSha256;
             _httpDiagnosticCheckBox.IsEnabled = _server.HttpDiagnosticPort > 0;
-            _status.Text = $"Listener iniciado · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
-                           "No navegador, avance pelo aviso do certificado local. No Android, use o QR pelo JMDroid. " +
+            var transportName = useHttp ? "HTTP sem criptografia" : "HTTPS";
+            _status.Text = $"Listener {transportName} iniciado · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
+                           (useHttp
+                               ? "Use somente na sua rede doméstica confiável. No Android, leia este QR pelo JMDroid. "
+                               : "No navegador, avance pelo aviso do certificado local. No Android, use o QR pelo JMDroid. ") +
                            "Para celular/VPN, permita acesso à LAN nas opções da VPN.";
             RefreshLists();
         }
@@ -311,7 +333,9 @@ internal sealed class AndroidPairingPanel : UserControl
                 ? _server.HttpDiagnosticPort > 0
                     ? $"http://127.0.0.1:{_server.HttpDiagnosticPort}/"
                     : throw new InvalidOperationException("A porta HTTP de diagnóstico não foi iniciada.")
-                : $"https://localhost:{apiUri.Port}/";
+                : apiUri.Scheme == Uri.UriSchemeHttp
+                    ? $"http://127.0.0.1:{apiUri.Port}/"
+                    : $"https://localhost:{apiUri.Port}/";
             Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
         }
         catch (Exception exception)
@@ -326,7 +350,7 @@ internal sealed class AndroidPairingPanel : UserControl
         _healthCheckInProgress = true;
         try
         {
-            var httpPort = _server.HttpDiagnosticPort;
+            var httpPort = _server.UsesHttp ? _server.ListeningPort : _server.HttpDiagnosticPort;
             var httpsPort = _server.ListeningPort;
             var httpHealthy = httpPort > 0 && await IsHealthEndpointHealthyAsync(
                 HealthCheckClient, $"http://127.0.0.1:{httpPort}/health");

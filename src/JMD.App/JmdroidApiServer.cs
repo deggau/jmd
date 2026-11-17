@@ -71,6 +71,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private string? _baseUrl;
     private int _listeningPort;
     private int _httpDiagnosticPort;
+    private bool _usesHttp;
     private int _preferredPort = PreferredListeningPort;
     private IPAddress? _listeningAddress;
 
@@ -95,6 +96,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     public IPAddress? ListeningAddress => _listeningAddress;
     public int ListeningPort => _listeningPort;
     public int HttpDiagnosticPort => _httpDiagnosticPort;
+    public bool UsesHttp => _usesHttp;
     public IReadOnlyList<JmdroidNetworkAddress> AvailableNetworkAddresses => GetLanAddresses();
     public IReadOnlyList<JmdroidPairedDevice> PairedDevices
     {
@@ -102,7 +104,10 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     }
     public bool IsDeviceConnected(string deviceId) { lock (_connectionLock) return _activeConnections.ContainsKey(deviceId); }
 
-    public async Task<JmdroidPairingInfo> OpenPairingScreenAsync(IPAddress? preferredAddress = null, CancellationToken cancellationToken = default)
+    public async Task<JmdroidPairingInfo> OpenPairingScreenAsync(
+        IPAddress? preferredAddress = null,
+        bool useHttp = false,
+        CancellationToken cancellationToken = default)
     {
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
@@ -111,7 +116,9 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             if (preferredAddress is not null && !GetLanAddresses().Any(candidate => candidate.Address.Equals(preferredAddress)))
                 throw new InvalidOperationException("O endereço selecionado não pertence a uma interface IPv4 privada ativa.");
 
-            if (_application is not null && preferredAddress is not null && !_listeningAddress!.Equals(preferredAddress))
+            var requestedAddress = preferredAddress ?? GetLanAddress();
+            if (_application is not null &&
+                (!_listeningAddress!.Equals(requestedAddress) || _usesHttp != useHttp))
             {
                 if (_activeConnections.Count > 0)
                     throw new InvalidOperationException("Desconecte os aparelhos antes de trocar a interface de rede.");
@@ -121,14 +128,16 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             }
 
             if (_application is null)
-                await StartListenerAsync(preferredAddress, cancellationToken);
+                await StartListenerAsync(requestedAddress, useHttp, cancellationToken);
 
             _pairingScreenOpen = true;
             foreach (var pending in _pending.Values) pending.State = "expired";
             var ipAddress = _listeningAddress ?? GetLanAddress();
-            var certificate = _certificate ?? throw new InvalidOperationException("Certificado HTTPS da API não está disponível.");
-            var fingerprint = Convert.ToHexString(SHA256.HashData(certificate.RawData));
-            var baseUrl = _baseUrl ?? $"https://{ipAddress}:{_listeningPort}";
+            var fingerprint = _certificate is null
+                ? string.Empty
+                : Convert.ToHexString(SHA256.HashData(_certificate.RawData));
+            var scheme = _usesHttp ? "http" : "https";
+            var baseUrl = _baseUrl ?? $"{scheme}://{ipAddress}:{_listeningPort}";
             _baseUrl = baseUrl;
             var session = new PairingSession(
                 Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(),
@@ -218,13 +227,14 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         finally { _lifecycleLock.Release(); }
     }
 
-    private async Task StartListenerAsync(IPAddress? preferredAddress, CancellationToken cancellationToken)
+    private async Task StartListenerAsync(IPAddress listeningAddress, bool useHttp, CancellationToken cancellationToken)
     {
-        var listeningAddress = preferredAddress ?? GetLanAddress();
         var port = _preferredPort;
-        async Task<(WebApplication App, X509Certificate2 Certificate, RSA PrivateKey)> StartOnPortAsync(int candidatePort)
+        async Task<(WebApplication App, X509Certificate2? Certificate, RSA? PrivateKey)> StartOnPortAsync(int candidatePort)
         {
-            var (certificate, privateKey) = CreateServerCertificate(listeningAddress);
+            X509Certificate2? certificate = null;
+            RSA? privateKey = null;
+            if (!useHttp) (certificate, privateKey) = CreateServerCertificate(listeningAddress);
             WebApplication? app = null;
             try
             {
@@ -239,7 +249,10 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                     // detected adapter makes startup depend on VPN, virtual, and policy-managed
                     // interfaces that the phone may not be able to reach.
                     foreach (var address in new[] { listeningAddress, IPAddress.Loopback }.Distinct())
-                        options.Listen(address, candidatePort, listen => listen.UseHttps(certificate));
+                        options.Listen(address, candidatePort, listen =>
+                        {
+                            if (certificate is not null) listen.UseHttps(certificate);
+                        });
                     // Diagnostic only: expose the same status page over plain HTTP on loopback.
                     // Port 0 lets Kestrel choose a free port, and this endpoint is never reachable
                     // from the LAN or included in the Android pairing QR.
@@ -254,13 +267,13 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             catch
             {
                 if (app is not null) await app.DisposeAsync();
-                certificate.Dispose();
-                privateKey.Dispose();
+                certificate?.Dispose();
+                privateKey?.Dispose();
                 throw;
             }
         }
 
-        (WebApplication App, X509Certificate2 Certificate, RSA PrivateKey) started;
+        (WebApplication App, X509Certificate2? Certificate, RSA? PrivateKey) started;
         try
         {
             started = await StartOnPortAsync(port);
@@ -277,6 +290,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         _certificatePrivateKey = started.PrivateKey;
         _listeningPort = port;
         _listeningAddress = listeningAddress;
+        _usesHttp = useHttp;
         var serverAddresses = started.App.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>();
         _httpDiagnosticPort = serverAddresses?.Addresses
             .Select(address => Uri.TryCreate(address, UriKind.Absolute, out var uri) ? uri : null)
@@ -284,7 +298,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                           IPAddress.TryParse(uri.Host, out var parsedAddress) && IPAddress.IsLoopback(parsedAddress))
             .Select(uri => uri!.Port)
             .FirstOrDefault() ?? 0;
-        _baseUrl = $"https://{listeningAddress}:{port}";
+        _baseUrl = $"{(useHttp ? "http" : "https")}://{listeningAddress}:{port}";
         StateChanged?.Invoke();
     }
 
@@ -614,6 +628,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         _baseUrl = null;
         _listeningPort = 0;
         _httpDiagnosticPort = 0;
+        _usesHttp = false;
         _listeningAddress = null;
         try { await app.StopAsync(); }
         finally
