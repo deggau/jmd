@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -25,6 +27,21 @@ internal sealed class AndroidPairingPanel : UserControl
     private static readonly Color MutedColor = Color.FromRgb(150, 155, 167);
     private readonly JmdroidApiServer _server;
     private readonly ComboBox _networkSelector = new() { Margin = new Thickness(0, 0, 0, 12), Padding = new Thickness(6) };
+    private readonly System.Windows.Controls.CheckBox _httpDiagnosticCheckBox = new()
+    {
+        Content = "Testar por HTTP (diagnóstico local)",
+        Foreground = Brushes.White,
+        Margin = new Thickness(0, 5, 0, 0),
+        ToolTip = "Abre uma porta HTTP temporária acessível somente neste computador. O QR code continua usando HTTPS."
+    };
+    private readonly System.Windows.Shapes.Ellipse _httpHealthIndicator = new()
+    {
+        Width = 10,
+        Height = 10,
+        Fill = Brushes.Red,
+        VerticalAlignment = VerticalAlignment.Center
+    };
+    private readonly TextBlock _httpHealthText = new() { Text = "HTTP localhost: OFF", Foreground = Brushes.White };
     private readonly Image _qrImage = new() { Width = 184, Height = 184, Stretch = Stretch.Uniform };
     private readonly TextBox _addressBox = new()
     {
@@ -39,8 +56,14 @@ internal sealed class AndroidPairingPanel : UserControl
     private readonly StackPanel _requestsPanel = new();
     private readonly StackPanel _devicesPanel = new();
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromMilliseconds(800) };
+    private readonly DispatcherTimer _healthTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private static readonly HttpClient HealthCheckClient = new(new SocketsHttpHandler { UseProxy = false })
+    {
+        Timeout = TimeSpan.FromSeconds(2)
+    };
     private bool _active;
     private bool _tickHandlerAdded;
+    private bool _healthCheckInProgress;
 
     public AndroidPairingPanel(JmdroidApiServer server)
     {
@@ -119,6 +142,12 @@ internal sealed class AndroidPairingPanel : UserControl
         addressRow.Children.Add(openBrowserButton);
         addressRow.Children.Add(_addressBox);
         details.Children.Add(addressRow);
+        details.Children.Add(_httpDiagnosticCheckBox);
+        var healthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 0) };
+        healthStatus.Children.Add(_httpHealthIndicator);
+        healthStatus.Children.Add(new TextBlock { Text = " ", Width = 5 });
+        healthStatus.Children.Add(_httpHealthText);
+        details.Children.Add(healthStatus);
         _status.TextAlignment = TextAlignment.Left;
         _status.Margin = new Thickness(0, 7, 0, 0);
         details.Children.Add(_status);
@@ -189,10 +218,16 @@ internal sealed class AndroidPairingPanel : UserControl
         if (!_tickHandlerAdded)
         {
             _refreshTimer.Tick += (_, _) => RefreshLists();
+            _healthTimer.Tick += async (_, _) => await RefreshHealthStatusAsync();
             _tickHandlerAdded = true;
         }
         await RefreshQrAsync();
-        if (_active) _refreshTimer.Start();
+        if (_active)
+        {
+            _refreshTimer.Start();
+            _healthTimer.Start();
+            await RefreshHealthStatusAsync();
+        }
     }
 
     public async Task DeactivateAsync()
@@ -200,6 +235,8 @@ internal sealed class AndroidPairingPanel : UserControl
         if (!_active) return;
         _active = false;
         _refreshTimer.Stop();
+        _healthTimer.Stop();
+        SetHttpHealthStatus(false);
         await _server.ClosePairingScreenAsync();
     }
 
@@ -221,6 +258,7 @@ internal sealed class AndroidPairingPanel : UserControl
             }
             _qrImage.Source = bitmap;
             _addressBox.Text = pairing.BaseUrl;
+            _httpDiagnosticCheckBox.IsEnabled = _server.HttpDiagnosticPort > 0;
             _status.Text = $"Listener iniciado · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
                            "No navegador, avance pelo aviso do certificado local. No Android, use o QR pelo JMDroid. " +
                            "Para celular/VPN, permita acesso à LAN nas opções da VPN.";
@@ -240,12 +278,59 @@ internal sealed class AndroidPairingPanel : UserControl
         if (!Uri.TryCreate(_addressBox.Text, UriKind.Absolute, out var apiUri)) return;
         try
         {
-            Process.Start(new ProcessStartInfo($"https://localhost:{apiUri.Port}/") { UseShellExecute = true });
+            var address = _httpDiagnosticCheckBox.IsChecked == true
+                ? _server.HttpDiagnosticPort > 0
+                    ? $"http://127.0.0.1:{_server.HttpDiagnosticPort}/"
+                    : throw new InvalidOperationException("A porta HTTP de diagnóstico não foi iniciada.")
+                : $"https://localhost:{apiUri.Port}/";
+            Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
         }
         catch (Exception exception)
         {
             _status.Text = $"Não foi possível abrir o navegador: {exception.Message}";
         }
+    }
+
+    private async Task RefreshHealthStatusAsync()
+    {
+        if (_healthCheckInProgress) return;
+        _healthCheckInProgress = true;
+        try
+        {
+            var port = _server.HttpDiagnosticPort;
+            if (port <= 0)
+            {
+                SetHttpHealthStatus(false);
+                return;
+            }
+
+            using var response = await HealthCheckClient.GetAsync($"http://127.0.0.1:{port}/health");
+            if (!response.IsSuccessStatusCode)
+            {
+                SetHttpHealthStatus(false);
+                return;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+            var isHealthy = payload.RootElement.TryGetProperty("status", out var status) &&
+                            status.ValueKind == JsonValueKind.String && status.GetString() == "ok";
+            SetHttpHealthStatus(isHealthy);
+        }
+        catch
+        {
+            SetHttpHealthStatus(false);
+        }
+        finally
+        {
+            _healthCheckInProgress = false;
+        }
+    }
+
+    private void SetHttpHealthStatus(bool isHealthy)
+    {
+        _httpHealthIndicator.Fill = isHealthy ? Brushes.LimeGreen : Brushes.Red;
+        _httpHealthText.Text = isHealthy ? "HTTP localhost: OK" : "HTTP localhost: OFF";
     }
 
     private async Task ConfigureFirewallAsync(Button button)

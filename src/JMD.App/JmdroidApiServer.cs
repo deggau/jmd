@@ -10,8 +10,11 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QRCoder;
 
@@ -67,6 +70,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private bool _disposed;
     private string? _baseUrl;
     private int _listeningPort;
+    private int _httpDiagnosticPort;
     private int _preferredPort = PreferredListeningPort;
     private IPAddress? _listeningAddress;
 
@@ -90,6 +94,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     public string? BaseUrl => _baseUrl;
     public IPAddress? ListeningAddress => _listeningAddress;
     public int ListeningPort => _listeningPort;
+    public int HttpDiagnosticPort => _httpDiagnosticPort;
     public IReadOnlyList<JmdroidNetworkAddress> AvailableNetworkAddresses => GetLanAddresses();
     public IReadOnlyList<JmdroidPairedDevice> PairedDevices
     {
@@ -235,6 +240,10 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                     // interfaces that the phone may not be able to reach.
                     foreach (var address in new[] { listeningAddress, IPAddress.Loopback }.Distinct())
                         options.Listen(address, candidatePort, listen => listen.UseHttps(certificate));
+                    // Diagnostic only: expose the same status page over plain HTTP on loopback.
+                    // Port 0 lets Kestrel choose a free port, and this endpoint is never reachable
+                    // from the LAN or included in the Android pairing QR.
+                    options.Listen(IPAddress.Loopback, 0);
                 });
                 app = builder.Build();
                 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
@@ -268,6 +277,13 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         _certificatePrivateKey = started.PrivateKey;
         _listeningPort = port;
         _listeningAddress = listeningAddress;
+        var serverAddresses = started.App.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>();
+        _httpDiagnosticPort = serverAddresses?.Addresses
+            .Select(address => Uri.TryCreate(address, UriKind.Absolute, out var uri) ? uri : null)
+            .Where(uri => uri is not null && uri.Scheme == Uri.UriSchemeHttp &&
+                          IPAddress.TryParse(uri.Host, out var parsedAddress) && IPAddress.IsLoopback(parsedAddress))
+            .Select(uri => uri!.Port)
+            .FirstOrDefault() ?? 0;
         _baseUrl = $"https://{listeningAddress}:{port}";
         StateChanged?.Invoke();
     }
@@ -597,6 +613,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         _application = null;
         _baseUrl = null;
         _listeningPort = 0;
+        _httpDiagnosticPort = 0;
         _listeningAddress = null;
         try { await app.StopAsync(); }
         finally
