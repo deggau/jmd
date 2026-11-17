@@ -693,6 +693,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             var names = new SubjectAlternativeNameBuilder();
             foreach (var address in GetLanAddresses().Select(item => item.Address).Append(ipAddress).Distinct())
                 names.AddIpAddress(address);
+            names.AddIpAddress(IPAddress.Loopback);
             names.AddDnsName("localhost");
             request.CertificateExtensions.Add(names.Build());
             request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));

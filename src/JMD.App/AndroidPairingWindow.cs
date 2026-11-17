@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -42,6 +43,14 @@ internal sealed class AndroidPairingPanel : UserControl
         VerticalAlignment = VerticalAlignment.Center
     };
     private readonly TextBlock _httpHealthText = new() { Text = "HTTP localhost: OFF", Foreground = Brushes.White };
+    private readonly System.Windows.Shapes.Ellipse _httpsHealthIndicator = new()
+    {
+        Width = 10,
+        Height = 10,
+        Fill = Brushes.Red,
+        VerticalAlignment = VerticalAlignment.Center
+    };
+    private readonly TextBlock _httpsHealthText = new() { Text = "HTTPS localhost: OFF", Foreground = Brushes.White };
     private readonly Image _qrImage = new() { Width = 184, Height = 184, Stretch = Stretch.Uniform };
     private readonly TextBox _addressBox = new()
     {
@@ -61,6 +70,8 @@ internal sealed class AndroidPairingPanel : UserControl
     {
         Timeout = TimeSpan.FromSeconds(2)
     };
+    private readonly HttpClient _httpsHealthCheckClient;
+    private string? _httpsHealthCertificateSha256;
     private bool _active;
     private bool _tickHandlerAdded;
     private bool _healthCheckInProgress;
@@ -68,6 +79,16 @@ internal sealed class AndroidPairingPanel : UserControl
     public AndroidPairingPanel(JmdroidApiServer server)
     {
         _server = server;
+        _httpsHealthCheckClient = new HttpClient(new HttpClientHandler
+        {
+            UseProxy = false,
+            ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
+                certificate is not null && _httpsHealthCertificateSha256 is { } expectedFingerprint &&
+                string.Equals(
+                    Convert.ToHexString(SHA256.HashData(certificate.RawData)),
+                    expectedFingerprint,
+                    StringComparison.OrdinalIgnoreCase)
+        }) { Timeout = TimeSpan.FromSeconds(2) };
         Foreground = Brushes.White;
         var root = new Grid { Margin = new Thickness(10, 8, 10, 8) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -148,6 +169,11 @@ internal sealed class AndroidPairingPanel : UserControl
         healthStatus.Children.Add(new TextBlock { Text = " ", Width = 5 });
         healthStatus.Children.Add(_httpHealthText);
         details.Children.Add(healthStatus);
+        var httpsHealthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
+        httpsHealthStatus.Children.Add(_httpsHealthIndicator);
+        httpsHealthStatus.Children.Add(new TextBlock { Text = " ", Width = 5 });
+        httpsHealthStatus.Children.Add(_httpsHealthText);
+        details.Children.Add(httpsHealthStatus);
         _status.TextAlignment = TextAlignment.Left;
         _status.Margin = new Thickness(0, 7, 0, 0);
         details.Children.Add(_status);
@@ -237,6 +263,8 @@ internal sealed class AndroidPairingPanel : UserControl
         _refreshTimer.Stop();
         _healthTimer.Stop();
         SetHttpHealthStatus(false);
+        SetHttpsHealthStatus(false);
+        _httpsHealthCertificateSha256 = null;
         await _server.ClosePairingScreenAsync();
     }
 
@@ -258,6 +286,7 @@ internal sealed class AndroidPairingPanel : UserControl
             }
             _qrImage.Source = bitmap;
             _addressBox.Text = pairing.BaseUrl;
+            _httpsHealthCertificateSha256 = pairing.CertificateSha256;
             _httpDiagnosticCheckBox.IsEnabled = _server.HttpDiagnosticPort > 0;
             _status.Text = $"Listener iniciado · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
                            "No navegador, avance pelo aviso do certificado local. No Android, use o QR pelo JMDroid. " +
@@ -297,29 +326,20 @@ internal sealed class AndroidPairingPanel : UserControl
         _healthCheckInProgress = true;
         try
         {
-            var port = _server.HttpDiagnosticPort;
-            if (port <= 0)
-            {
-                SetHttpHealthStatus(false);
-                return;
-            }
-
-            using var response = await HealthCheckClient.GetAsync($"http://127.0.0.1:{port}/health");
-            if (!response.IsSuccessStatusCode)
-            {
-                SetHttpHealthStatus(false);
-                return;
-            }
-
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var payload = await JsonDocument.ParseAsync(stream);
-            var isHealthy = payload.RootElement.TryGetProperty("status", out var status) &&
-                            status.ValueKind == JsonValueKind.String && status.GetString() == "ok";
-            SetHttpHealthStatus(isHealthy);
+            var httpPort = _server.HttpDiagnosticPort;
+            var httpsPort = _server.ListeningPort;
+            var httpHealthy = httpPort > 0 && await IsHealthEndpointHealthyAsync(
+                HealthCheckClient, $"http://127.0.0.1:{httpPort}/health");
+            var httpsHealthy = httpsPort > 0 && _httpsHealthCertificateSha256 is not null &&
+                               await IsHealthEndpointHealthyAsync(
+                                   _httpsHealthCheckClient, $"https://127.0.0.1:{httpsPort}/health");
+            SetHttpHealthStatus(httpHealthy);
+            SetHttpsHealthStatus(httpsHealthy);
         }
         catch
         {
             SetHttpHealthStatus(false);
+            SetHttpsHealthStatus(false);
         }
         finally
         {
@@ -327,10 +347,33 @@ internal sealed class AndroidPairingPanel : UserControl
         }
     }
 
+    private static async Task<bool> IsHealthEndpointHealthyAsync(HttpClient client, string address)
+    {
+        try
+        {
+            using var response = await client.GetAsync(address);
+            if (!response.IsSuccessStatusCode) return false;
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var payload = await JsonDocument.ParseAsync(stream);
+            return payload.RootElement.TryGetProperty("status", out var status) &&
+                   status.ValueKind == JsonValueKind.String && status.GetString() == "ok";
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void SetHttpHealthStatus(bool isHealthy)
     {
         _httpHealthIndicator.Fill = isHealthy ? Brushes.LimeGreen : Brushes.Red;
         _httpHealthText.Text = isHealthy ? "HTTP localhost: OK" : "HTTP localhost: OFF";
+    }
+
+    private void SetHttpsHealthStatus(bool isHealthy)
+    {
+        _httpsHealthIndicator.Fill = isHealthy ? Brushes.LimeGreen : Brushes.Red;
+        _httpsHealthText.Text = isHealthy ? "HTTPS localhost: OK" : "HTTPS localhost: OFF";
     }
 
     private async Task ConfigureFirewallAsync(Button button)
