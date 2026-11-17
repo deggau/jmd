@@ -1,8 +1,8 @@
 # API local do JMD para o JMDroid
 
-**Estado:** implementada no JMD desktop; o cliente Android ainda precisa integrar este contrato.
+**Estado:** implementada no JMD desktop; o cliente Android precisa integrar este contrato.
 
-Este documento define como o JMDroid pode parear com uma instância do JMD na mesma rede local, descobrir os comandos disponíveis, filtrar a lista e solicitar a execução de um comando. Não há servidor central: o JMD no computador executa as ações.
+Este documento define como o JMDroid pode parear com uma instância do JMD na mesma rede local, descobrir e executar comandos, gerenciar tarefas e consultar o histórico de tarefas. Não há servidor central: o JMD no computador executa as ações.
 
 ## Premissas
 
@@ -142,7 +142,9 @@ Resposta:
 }
 ```
 
-Por padrão, só são retornados comandos remotos disponíveis. `includeUnavailable=true` também retorna comandos que dependem de clipboard, seleção/janela em foco, diálogos ou outra interação exclusiva do desktop, com `available: false` e um motivo legível. Comandos desativados nas configurações do JMD também não podem ser executados remotamente.
+Por padrão, são retornados os comandos disponíveis e os comandos personalizados, mesmo quando a execução remota ainda está desativada. `includeUnavailable=true` também retorna os demais comandos locais que dependem de clipboard, seleção/janela em foco, diálogos ou outra interação exclusiva do desktop. Itens indisponíveis incluem `available: false` e um motivo legível. Comandos desativados nas configurações do JMD não podem ser executados remotamente.
+
+Comandos personalizados aparecem com o mesmo `id` salvo no JMD (prefixo `custom:`). Para habilitar um, edite-o no JMD e marque **Permitir execução pelo JMDroid (Android)**. A permissão é individual por comando e fica desabilitada por padrão. Workflows podem abrir programas, digitar e interagir com janelas deste computador; habilite apenas os comandos que deseja controlar pelo celular. Após habilitar, `inputSchema` descreve as variáveis `{{nome}}` usadas pelas etapas. Envie os valores em `input.variables`; variáveis omitidas ainda podem ser resolvidas pelas variáveis globais cadastradas no JMD.
 
 As rotas autenticadas de comandos aceitam até 120 chamadas por minuto por aparelho. Ao exceder o limite, a API responde `429` e inclui `Retry-After`.
 
@@ -182,7 +184,82 @@ O app valida `commandId` contra o catálogo remoto e valida os campos conforme `
 
 Quando aplicável, o objeto `result` também contém `inputItemCount` e `outputItemCount` (por exemplo, no comando SQL IN). Uma falha de validação/execução retorna `status: "failed"` e o objeto `error` no formato documentado abaixo.
 
-Na primeira versão, operações que dependem do desktop devem ser excluídas do catálogo executável remoto. A API não deve simular teclas, ler o clipboard ou operar janelas em segundo plano sem uma definição explícita de comportamento.
+Workflows personalizados habilitados são executados no computador como se fossem acionados no JMD. Os demais comandos que dependem de interação com o desktop permanecem indisponíveis para execução remota.
+
+## Tarefas
+
+Todas as rotas abaixo usam `Authorization: Bearer {accessToken}` e aceitam até 120 chamadas por minuto por aparelho. As respostas de tarefa usam camelCase. Datas são ISO 8601 com fuso horário; listas de `urls`, `attachments` e `checklist` mantêm os dados editáveis no painel desktop.
+
+### Listar e consultar
+
+```http
+GET /api/v1/tasks?status=open
+GET /api/v1/tasks/{taskId}
+Authorization: Bearer {accessToken}
+```
+
+`status` pode ser `open` (padrão), `completed` ou `all`. A listagem responde `{ "items": [...], "count": 1, "status": "open" }`. Cada tarefa contém `id`, `title`, `description`, `createdAt`, `completedAt`, `taskNumber`, `reminderIntervalMinutes`, `categoryColor`, `lastReminderAt`, `urls`, `attachments`, `pausedAt`, `pauseReason`, `pausedBy` e `checklist`. Cada etapa contém `title`, `weight` e `isCompleted`.
+
+### Criar e editar
+
+```http
+POST /api/v1/tasks
+PUT /api/v1/tasks/{taskId}
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+```
+
+O corpo de criação e edição contém os mesmos campos editáveis:
+
+```json
+{
+  "title": "Preparar release",
+  "description": "Revisar build e publicação",
+  "reminderIntervalMinutes": 30,
+  "categoryColor": "Laranja",
+  "urls": "https://github.com/deggau/jmd",
+  "attachments": "C:\\docs\\release.txt",
+  "checklist": [
+    { "title": "Compilar", "weight": 50, "isCompleted": false },
+    { "title": "Validar instalador", "weight": 50, "isCompleted": false }
+  ]
+}
+```
+
+`title` é obrigatório (até 300 caracteres); `description` aceita até 100.000 caracteres; `urls` e `attachments` até 20.000 cada; `reminderIntervalMinutes` é nulo ou de 1 a 10.080; a lista aceita até 100 etapas e a soma dos pesos não pode passar de 100. Criação retorna `201 Created`, o objeto criado e o cabeçalho `Location`. Edição retorna `200 OK` com o objeto atualizado. Criar, editar ou alterar uma tarefa é registrado no histórico.
+
+### Etapas, conclusão e ciclo de vida
+
+```http
+PUT  /api/v1/tasks/{taskId}/checklist/{index}
+POST /api/v1/tasks/{taskId}/complete
+POST /api/v1/tasks/{taskId}/reopen
+POST /api/v1/tasks/{taskId}/pause
+POST /api/v1/tasks/{taskId}/unpause
+DELETE /api/v1/tasks/{taskId}
+Authorization: Bearer {accessToken}
+```
+
+Para marcar ou desmarcar uma etapa, o índice é baseado em zero e o corpo define o estado final, tornando a operação segura para repetição:
+
+```json
+{ "isCompleted": true }
+```
+
+Quando todas as etapas somam 100% concluído, a tarefa é concluída automaticamente, como no painel. `/complete` e `/reopen` concluem ou reabrem a tarefa. Para pausar, envie `{ "reason": "Aguardando aprovação", "responsible": "Ana" }`; ambos os campos são opcionais. Uma tarefa concluída não pode ser pausada (`409`). `/unpause` não precisa de corpo. Exclusão retorna `204 No Content`. As operações de conclusão, pausa, retomada, exclusão e checklist também geram histórico.
+
+Rotas de tarefa inexistente retornam `404 task_not_found`; campos ou índices inválidos retornam `400 invalid_input`. Todas as mutações mantêm o banco de tarefas e a lista aberta no painel desktop sincronizados.
+
+### Consultar histórico de tarefas
+
+```http
+GET /api/v1/tasks/history?q=release&page=0&pageSize=30
+Authorization: Bearer {accessToken}
+```
+
+`q` é opcional. `page` começa em zero e `pageSize` varia de 1 a 100 (padrão 30). A resposta contém `{ "items": [...], "totalCount": 1, "page": 0, "pageSize": 30 }`; os itens são ordenados do mais recente para o mais antigo e incluem `id`, `occurredAt`, `commandName`, `beforeValue`, `afterValue`, `source` e `sourceDeviceName`. Este endpoint retorna somente mudanças de tarefas, sem dados de conversão ou relatório.
+
+`source` é `APP` para ações originadas no JMD desktop ou `JMDroid` para ações recebidas pela API. Para `JMDroid`, `sourceDeviceName` identifica o celular que enviou a mudança; isso diferencia aparelhos pareados diferentes. Para `APP`, `sourceDeviceName` é nulo. O histórico visual do JMD também destaca essa origem nos eventos de tarefa.
 
 ## Erros
 
@@ -197,12 +274,14 @@ Todas as respostas de erro usam:
 }
 ```
 
-Códigos esperados: `invalid_pairing_session`, `pairing_expired`, `pairing_denied`, `unauthorized`, `device_revoked`, `command_not_found`, `command_disabled`, `command_unavailable`, `invalid_input`, `duplicate_request`, `rate_limited`.
+Códigos esperados: `invalid_pairing_session`, `pairing_expired`, `pairing_denied`, `unauthorized`, `device_revoked`, `command_not_found`, `command_disabled`, `command_unavailable`, `task_not_found`, `task_state_conflict`, `invalid_input`, `duplicate_request`, `rate_limited`.
 
 - `400`: pedido ou parâmetros inválidos.
 - `401`: token ausente/inválido ou sessão de pareamento inválida.
 - `403`: aparelho revogado ou comando não permitido.
 - `404`: pedido ou comando inexistente.
+- `404`: tarefa inexistente (`task_not_found`).
+- `409`: estado da tarefa não permite a operação (`task_state_conflict`).
 - `409`: requisição repetida com `requestId` já processado.
 - `410`: pareamento expirado.
 - `422`: parâmetros não passam pelo schema do comando.

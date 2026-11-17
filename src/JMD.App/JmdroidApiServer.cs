@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QRCoder;
+using JMD.Core;
 
 namespace JMD.App;
 
@@ -27,7 +28,9 @@ internal sealed record JmdroidApiCommand(
     string Shortcut,
     bool Available,
     string? UnavailableReason,
-    IReadOnlyList<string> SearchTerms);
+    IReadOnlyList<string> SearchTerms,
+    bool ShowWhenUnavailable = false,
+    object? InputSchema = null);
 internal sealed record JmdroidCommandInfo(
     string Id,
     string Name,
@@ -54,6 +57,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private readonly Func<string, JsonElement, CancellationToken, Task<JmdroidExecutionResult>> _executeCommand;
     private readonly IList<JmdroidPairedDevice> _devices;
     private readonly Action _saveSettings;
+    private readonly TodoTaskApiService _todoTaskApi;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly object _requestLock = new();
     private readonly object _connectionLock = new();
@@ -82,12 +86,14 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         Func<IReadOnlyList<JmdroidApiCommand>> getCommands,
         Func<string, JsonElement, CancellationToken, Task<JmdroidExecutionResult>> executeCommand,
         IList<JmdroidPairedDevice> devices,
-        Action saveSettings)
+        Action saveSettings,
+        TodoTaskApiService todoTaskApi)
     {
         _getCommands = getCommands;
         _executeCommand = executeCommand;
         _devices = devices;
         _saveSettings = saveSettings;
+        _todoTaskApi = todoTaskApi;
     }
 
     public bool IsRunning => _application is not null;
@@ -492,6 +498,202 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         }
         app.MapPost("/api/v1/commands/{commandId}/execute", ExecuteCommandHandler);
 
+        async Task<JmdroidPairedDevice?> AuthorizeTaskApiAsync(HttpContext context)
+        {
+            if (!TryAuthenticate(context, out var device))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status401Unauthorized, "unauthorized", "Token ausente ou inválido.");
+                return null;
+            }
+            if (await RateLimitAsync(context, device!.Id)) return null;
+            return device;
+        }
+
+        app.MapGet("/api/v1/tasks", async context =>
+        {
+            if (await AuthorizeTaskApiAsync(context) is null) return;
+            var status = context.Request.Query["status"].FirstOrDefault() ?? "open";
+            try
+            {
+                var items = _todoTaskApi.GetTasks(status);
+                await context.Response.WriteAsJsonAsync(new { items, count = items.Count, status }, JsonOptions, context.RequestAborted);
+            }
+            catch (ArgumentException exception)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", exception.Message);
+            }
+        });
+
+        app.MapGet("/api/v1/tasks/{taskId}", async context =>
+        {
+            if (await AuthorizeTaskApiAsync(context) is null) return;
+            var taskId = Convert.ToString(context.Request.RouteValues["taskId"]);
+            var task = taskId is null ? null : _todoTaskApi.GetTask(taskId);
+            if (task is null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+                return;
+            }
+            await context.Response.WriteAsJsonAsync(task, JsonOptions, context.RequestAborted);
+        });
+
+        app.MapPost("/api/v1/tasks", async context =>
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            var body = await ReadJsonBodyAsync<TodoTaskApiTaskInput>(context);
+            if (body is null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", "Informe os dados da tarefa.");
+                return;
+            }
+            try
+            {
+                var task = _todoTaskApi.Create(body, "JMDroid", device.Name);
+                context.Response.StatusCode = StatusCodes.Status201Created;
+                context.Response.Headers.Location = $"/api/v1/tasks/{Uri.EscapeDataString(task.Id)}";
+                await context.Response.WriteAsJsonAsync(task, JsonOptions, context.RequestAborted);
+            }
+            catch (ArgumentException exception)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", exception.Message);
+            }
+        });
+
+        app.MapPut("/api/v1/tasks/{taskId}", async context =>
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            var taskId = Convert.ToString(context.Request.RouteValues["taskId"]);
+            var body = await ReadJsonBodyAsync<TodoTaskApiTaskInput>(context);
+            if (taskId is null || body is null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", "Informe o identificador e os dados da tarefa.");
+                return;
+            }
+            try
+            {
+                var task = _todoTaskApi.Update(taskId, body, "JMDroid", device.Name);
+                if (task is null) await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+                else await context.Response.WriteAsJsonAsync(task, JsonOptions, context.RequestAborted);
+            }
+            catch (ArgumentException exception)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", exception.Message);
+            }
+        });
+
+        app.MapPut("/api/v1/tasks/{taskId}/checklist/{index:int}", async context =>
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            var taskId = Convert.ToString(context.Request.RouteValues["taskId"]);
+            var body = await ReadJsonBodyAsync<TodoTaskApiChecklistCompletion>(context);
+            if (taskId is null || body is null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", "Informe o estado de conclusão da etapa.");
+                return;
+            }
+            try
+            {
+                var task = _todoTaskApi.SetChecklistStep(taskId, Convert.ToInt32(context.Request.RouteValues["index"]), body.IsCompleted, "JMDroid", device.Name);
+                if (task is null) await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+                else await context.Response.WriteAsJsonAsync(task, JsonOptions, context.RequestAborted);
+            }
+            catch (ArgumentOutOfRangeException exception)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", exception.Message);
+            }
+        });
+
+        async Task SetTaskCompletionAsync(HttpContext context, bool completed)
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            var taskId = Convert.ToString(context.Request.RouteValues["taskId"]);
+            var task = taskId is null ? null : _todoTaskApi.SetCompleted(taskId, completed, "JMDroid", device.Name);
+            if (task is null) await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+            else await context.Response.WriteAsJsonAsync(task, JsonOptions, context.RequestAborted);
+        }
+        app.MapPost("/api/v1/tasks/{taskId}/complete", context => SetTaskCompletionAsync(context, true));
+        app.MapPost("/api/v1/tasks/{taskId}/reopen", context => SetTaskCompletionAsync(context, false));
+
+        app.MapPost("/api/v1/tasks/{taskId}/pause", async context =>
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            var taskId = Convert.ToString(context.Request.RouteValues["taskId"]);
+            var body = context.Request.ContentLength == 0
+                ? new TodoTaskApiPauseInput()
+                : await ReadJsonBodyAsync<TodoTaskApiPauseInput>(context);
+            if (body is null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", "O corpo da pausa não é um JSON válido.");
+                return;
+            }
+            if (body.Reason is null || body.Responsible is null || body.Reason.Length > 1000 || body.Responsible.Length > 200)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", "Motivo ou responsável excede o tamanho permitido.");
+                return;
+            }
+            try
+            {
+                var task = taskId is null ? null : _todoTaskApi.Pause(taskId, body.Reason, body.Responsible, "JMDroid", device.Name);
+                if (task is null) await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+                else await context.Response.WriteAsJsonAsync(task, JsonOptions, context.RequestAborted);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status409Conflict, "task_state_conflict", exception.Message);
+            }
+        });
+
+        app.MapPost("/api/v1/tasks/{taskId}/unpause", async context =>
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            var taskId = Convert.ToString(context.Request.RouteValues["taskId"]);
+            var task = taskId is null ? null : _todoTaskApi.Unpause(taskId, "JMDroid", device.Name);
+            if (task is null) await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+            else await context.Response.WriteAsJsonAsync(task, JsonOptions, context.RequestAborted);
+        });
+
+        app.MapDelete("/api/v1/tasks/{taskId}", async context =>
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            var taskId = Convert.ToString(context.Request.RouteValues["taskId"]);
+            var task = taskId is null ? null : _todoTaskApi.Delete(taskId, "JMDroid", device.Name);
+            if (task is null) await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+            else context.Response.StatusCode = StatusCodes.Status204NoContent;
+        });
+
+        app.MapGet("/api/v1/tasks/history", async context =>
+        {
+            if (await AuthorizeTaskApiAsync(context) is null) return;
+            var query = context.Request.Query["q"].ToString().Trim();
+            var pageProvided = context.Request.Query.ContainsKey("page");
+            var sizeProvided = context.Request.Query.ContainsKey("pageSize");
+            var pageValid = int.TryParse(context.Request.Query["page"], out var page);
+            var sizeValid = int.TryParse(context.Request.Query["pageSize"], out var pageSize);
+            if (!sizeProvided) pageSize = 30;
+            if (query.Length > 200 || (pageProvided && !pageValid) ||
+                (sizeProvided && !sizeValid) || page < 0 || pageSize is < 1 or > 100)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", "Use page >= 0 e pageSize entre 1 e 100.");
+                return;
+            }
+            try
+            {
+                var result = _todoTaskApi.GetTaskHistory(query, page, pageSize);
+                await context.Response.WriteAsJsonAsync(result, JsonOptions, context.RequestAborted);
+            }
+            catch (ArgumentOutOfRangeException exception)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", exception.Message);
+            }
+        });
+
         app.Map("/api/v1/session", HandleSessionAsync);
     }
 
@@ -549,7 +751,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 
     private IReadOnlyList<JmdroidCommandInfo> FilterCommands(string query, bool includeUnavailable)
     {
-        var candidates = _getCommands().Where(item => includeUnavailable || item.Available);
+        var candidates = _getCommands().Where(item => includeUnavailable || item.Available || item.ShowWhenUnavailable);
         var matches = query.Length == 0
             ? candidates.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
             : candidates
@@ -572,7 +774,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             command.Shortcut,
             command.Available,
             command.UnavailableReason,
-            command.Available ? new
+            command.Available ? command.InputSchema ?? new
             {
                 type = "object",
                 properties = new { text = new { type = "string", maxLength = 1_000_000 } },
@@ -769,6 +971,12 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         var leftBytes = Encoding.UTF8.GetBytes(left);
         var rightBytes = Encoding.UTF8.GetBytes(right);
         return leftBytes.Length == rightBytes.Length && CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
+    }
+
+    private static async Task<T?> ReadJsonBodyAsync<T>(HttpContext context)
+    {
+        try { return await context.Request.ReadFromJsonAsync<T>(JsonOptions, context.RequestAborted); }
+        catch (JsonException) { return default; }
     }
 
     private static async Task WriteErrorAsync(HttpContext context, int status, string code, string message)

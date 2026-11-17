@@ -42,7 +42,10 @@ public sealed class GlobalHotkeyService : IDisposable
 
         if (!RegisterHotKey(_source.Handle, id, modifiers, (uint)binding.VirtualKey))
         {
-            error = "Atalho indisponível: o Windows ou outro aplicativo já pode estar usando essa combinação.";
+            var errorCode = Marshal.GetLastWin32Error();
+            error = errorCode == 1409
+                ? "Atalho indisponível: outro aplicativo já registrou essa combinação."
+                : $"O Windows recusou o registro do atalho (erro {errorCode}).";
             return false;
         }
 
@@ -64,6 +67,12 @@ public sealed class GlobalHotkeyService : IDisposable
         _commandsById.Remove(registration.Id);
     }
 
+    public void UnregisterAll()
+    {
+        foreach (var commandId in _registrations.Keys.ToArray())
+            Unregister(commandId);
+    }
+
     private IntPtr WindowHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (message == WmHotkey && _commandsById.TryGetValue(wParam.ToInt32(), out var commandId))
@@ -77,7 +86,7 @@ public sealed class GlobalHotkeyService : IDisposable
     public void Dispose()
     {
         _source.RemoveHook(WindowHook);
-        foreach (var commandId in _registrations.Keys.ToArray()) Unregister(commandId);
+        UnregisterAll();
     }
 
     [DllImport("user32.dll", SetLastError = true)]

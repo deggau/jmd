@@ -48,7 +48,7 @@ internal sealed class TodoTaskReportWindow : Window
     private readonly TextBlock _rangeLabel = new();
     private readonly Button _showMonthButton;
     private readonly Button _calendarToggleButton;
-    private readonly System.Windows.Controls.CheckBox _executedOnly = new() { Content = "Executado", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
+    private readonly System.Windows.Controls.CheckBox _executedOnly = new() { Content = "Executado", VerticalAlignment = VerticalAlignment.Center };
     private bool _calendarExpanded = true;
     private DateTime _displayMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
     private TodoTaskDateFilter _dateFilter = new();
@@ -74,7 +74,18 @@ internal sealed class TodoTaskReportWindow : Window
         close.Click += (_, _) => Close(); Grid.SetColumn(close, 1); header.Children.Add(close);
         DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
 
-        var calendarPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 0, 16) };
+        var calendarPanel = new Grid { Margin = new Thickness(0, 0, 0, 16) };
+        calendarPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        calendarPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _executedOnly.Style = (Style)System.Windows.Application.Current.FindResource("CompactToggleCheckBoxStyle");
+        _executedOnly.HorizontalAlignment = HorizontalAlignment.Left;
+        _executedOnly.Margin = new Thickness(0, 4, 12, 0);
+        _executedOnly.ToolTip = "Mostrar somente tarefas e etapas concluídas";
+        _executedOnly.Checked += (_, _) => RefreshReport();
+        _executedOnly.Unchecked += (_, _) => RefreshReport();
+        Grid.SetColumn(_executedOnly, 0);
+        calendarPanel.Children.Add(_executedOnly);
+        var calendarControlsPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
         var calendarControls = new DockPanel { Width = 340, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 0, 8) };
         var nextMonth = ReportButton("›"); nextMonth.ToolTip = "Próximo mês";
         nextMonth.Click += (_, _) => { _displayMonth = _displayMonth.AddMonths(1); _dateFilter = new(); RefreshReport(); };
@@ -98,12 +109,10 @@ internal sealed class TodoTaskReportWindow : Window
         _showMonthButton = ReportButton("Mês"); _showMonthButton.Margin = new Thickness(10, 0, 0, 0); _showMonthButton.ToolTip = "Mostrar todas as atividades do mês";
         _showMonthButton.Click += (_, _) => { _dateFilter = new(); RefreshReport(); };
         monthControls.Children.Add(_showMonthButton); DockPanel.SetDock(monthControls, Dock.Left); calendarControls.Children.Add(monthControls);
-        _executedOnly.ToolTip = "Mostrar somente tarefas e etapas concluídas";
-        _executedOnly.Checked += (_, _) => RefreshReport();
-        _executedOnly.Unchecked += (_, _) => RefreshReport();
-        monthControls.Children.Add(_executedOnly);
-        calendarPanel.Children.Add(calendarControls);
-        calendarPanel.Children.Add(_calendar);
+        calendarControlsPanel.Children.Add(calendarControls);
+        calendarControlsPanel.Children.Add(_calendar);
+        Grid.SetColumn(calendarControlsPanel, 1);
+        calendarPanel.Children.Add(calendarControlsPanel);
         DockPanel.SetDock(calendarPanel, Dock.Top); root.Children.Add(calendarPanel);
         root.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _report });
         Content = root;

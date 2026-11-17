@@ -425,6 +425,7 @@ internal sealed class CustomShortcutEntry
     public string Target { get; set; } = string.Empty;
     public string Shortcut { get; set; } = string.Empty;
     public bool FocusIfAlreadyOpen { get; set; }
+    public bool AllowJmdroidExecution { get; set; }
     public List<CustomWorkflowStep> Steps { get; set; } = [];
 }
 

@@ -75,6 +75,7 @@ public partial class MainWindow : Window
     private readonly System.Windows.Threading.DispatcherTimer _benchmarkRecordingTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private DateTimeOffset _benchmarkRecordingStartedAt;
     private readonly System.Windows.Threading.DispatcherTimer _memoryRefreshTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly System.Windows.Threading.DispatcherTimer _hotkeyRecoveryTimer = new() { Interval = TimeSpan.FromSeconds(8) };
     private readonly System.Windows.Threading.DispatcherTimer _audioDebugTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private DateTimeOffset _audioDebugDeadline;
     private string _audioDebugLatestTranscript = "Aguardando transcrição…";
@@ -88,6 +89,7 @@ public partial class MainWindow : Window
     private GlobalHotkeyService? _hotkeys;
     private IntPtr _previousWindow;
     private bool _closingForExit;
+    private bool _hotkeysPausedForSettings;
     private bool _conversionRunning;
     private bool _updatingKeepAwakeToggle;
     private bool _updatingCaptureExclusionToggle;
@@ -111,6 +113,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<TodoTask> _todoTasks;
     private TodoTaskPanelWindow? _todoTaskPanel;
     private JmdroidApiServer? _jmdroidApiServer;
+    private TodoTaskApiService? _todoTaskApiService;
     private AndroidSettingsPanel? _androidSettingsPanel;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
 
@@ -252,6 +255,11 @@ public partial class MainWindow : Window
         SourceInitialized += MainWindow_SourceInitialized;
         _memoryRefreshTimer.Tick += (_, _) => RefreshMemoryStatus();
         _memoryRefreshTimer.Start();
+        _hotkeyRecoveryTimer.Tick += (_, _) =>
+        {
+            if (!_hotkeysPausedForSettings)
+                RegisterConfiguredShortcuts(reportCustomFailures: false);
+        };
         RefreshMemoryStatus();
         _benchmarkRecordingTimer.Tick += BenchmarkRecordingTimer_Tick;
         Closing += MainWindow_Closing;
@@ -279,7 +287,8 @@ public partial class MainWindow : Window
         }
         _hotkeys = new GlobalHotkeyService(source);
         _hotkeys.HotkeyPressed += id => Dispatcher.BeginInvoke(new Action(() => _ = HandleHotkeyAsync(id)));
-        RegisterConfiguredShortcuts();
+        RegisterConfiguredShortcuts(resetRegistrations: true);
+        _hotkeyRecoveryTimer.Start();
         RefreshCommandStatuses();
         RefreshShortcutStatuses();
     }
@@ -362,9 +371,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RegisterConfiguredShortcuts()
+    private void RegisterConfiguredShortcuts(bool resetRegistrations = false, bool reportCustomFailures = true)
     {
         if (_hotkeys is null) return;
+        if (resetRegistrations) _hotkeys.UnregisterAll();
+        _hotkeysPausedForSettings = false;
         foreach (var id in ShortcutIds)
         {
             if (_settings.DisabledCommands.Contains(id))
@@ -387,6 +398,11 @@ public partial class MainWindow : Window
                 SetShortcutStatus(id, error ?? "Atalho inválido.", false);
                 continue;
             }
+            if (HasShortcutConflict(value, id))
+            {
+                SetShortcutStatus(id, "Combinação duplicada em outro comando.", false);
+                continue;
+            }
             if (!_hotkeys.TryRegister(id, binding!, out error))
                 SetShortcutStatus(id, error ?? "Atalho indisponível.", false);
             else
@@ -399,10 +415,33 @@ public partial class MainWindow : Window
                 _hotkeys.Unregister(shortcut.Id);
                 continue;
             }
-            if (!ShortcutParser.TryParse(shortcut.Shortcut, out var binding, out _) ||
-                !_hotkeys.TryRegister(shortcut.Id, binding!, out _))
+            if (!ShortcutParser.TryParse(shortcut.Shortcut, out var binding, out _) || HasShortcutConflict(shortcut.Shortcut, shortcut.Id))
+            {
+                _hotkeys.Unregister(shortcut.Id);
+                if (reportCustomFailures) SetStatus($"Atalho personalizado indisponível: {shortcut.Name}", false);
+                continue;
+            }
+            if (!_hotkeys.TryRegister(shortcut.Id, binding!, out _) && reportCustomFailures)
                 SetStatus($"Atalho personalizado indisponível: {shortcut.Name}", false);
         }
+    }
+
+    private void PauseConfiguredShortcuts()
+    {
+        _hotkeysPausedForSettings = true;
+        foreach (var id in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
+            _hotkeys?.Unregister(id);
+    }
+
+    private void HideToBackground()
+    {
+        if (_hotkeysPausedForSettings)
+        {
+            RegisterConfiguredShortcuts(resetRegistrations: true);
+            RefreshCommandStatuses();
+            RefreshShortcutStatuses();
+        }
+        Hide();
     }
 
     private void BuildSettingsPanel()
@@ -991,8 +1030,9 @@ public partial class MainWindow : Window
 
     private void CreateCustomShortcutFromDialog(CustomShortcutEntry? existing = null)
     {
-        (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen, List<CustomWorkflowStep> Steps)? previous = existing is null
+        (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen, bool AllowJmdroidExecution, List<CustomWorkflowStep> Steps)? previous = existing is null
             ? null : (existing.Name, existing.Target, existing.Shortcut, existing.FocusIfAlreadyOpen,
+                existing.AllowJmdroidExecution,
                 existing.Steps.Select(step => new CustomWorkflowStep
                 {
                     Action = step.Action, Value = step.Value, DelayMilliseconds = step.DelayMilliseconds,
@@ -1027,6 +1067,7 @@ public partial class MainWindow : Window
         var target = steps.FirstOrDefault(step => step.Action == "Open")?.Value ?? string.Empty;
         var shortcutText = dialog.Shortcut;
         var focusIfAlreadyOpen = dialog.FocusIfAlreadyOpen;
+        var allowJmdroidExecution = dialog.AllowJmdroidExecution;
         var phrases = dialog.VoicePhrases.ToList();
         var error = ValidateCustomWorkflowDraft(dialog, existing?.Id);
         if (error is not null)
@@ -1041,6 +1082,7 @@ public partial class MainWindow : Window
         entry.Steps = steps;
         entry.Shortcut = shortcutText;
         entry.FocusIfAlreadyOpen = focusIfAlreadyOpen;
+        entry.AllowJmdroidExecution = allowJmdroidExecution;
         if (existing is null) _settings.CustomShortcuts.Add(entry);
         _settings.VoicePhrases[entry.Id] = phrases;
         var settingsPersisted = false;
@@ -1080,6 +1122,7 @@ public partial class MainWindow : Window
                 entry.Target = previous.Value.Target;
                 entry.Shortcut = previous.Value.Shortcut;
                 entry.FocusIfAlreadyOpen = previous.Value.FocusIfAlreadyOpen;
+                entry.AllowJmdroidExecution = previous.Value.AllowJmdroidExecution;
                 entry.Steps = previous.Value.Steps;
                 _settings.VoicePhrases[entry.Id] = previousPhrases;
             }
@@ -2201,7 +2244,7 @@ public partial class MainWindow : Window
         Show();
         WindowState = WindowState.Normal;
         Activate();
-        RegisterConfiguredShortcuts();
+        RegisterConfiguredShortcuts(resetRegistrations: true);
         RefreshCommandStatuses();
         SearchBox.Focus();
         Keyboard.Focus(SearchBox);
@@ -2669,6 +2712,9 @@ public partial class MainWindow : Window
                     entry.AfterValue,
                     entry.OccurredAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.CurrentCulture),
                     FormatSourceDisplay(entry.ApplicationName, entry.WindowTitle),
+                    entry.Source == "JMDroid"
+                        ? $"JMDroid · {entry.SourceDeviceName ?? "Celular sem nome"}"
+                        : "APP",
                     entry.IsVoiceTriggered,
                     entry.VoiceTranscript ?? "Transcrição indisponível",
                     entry.HasVoiceAudio,
@@ -2848,6 +2894,7 @@ public partial class MainWindow : Window
         string AfterValue,
         string DisplayDate,
         string SourceDisplay,
+        string SourceOriginDisplay,
         bool IsVoiceTriggered,
         string VoiceTranscript,
         bool HasVoiceAudio,
@@ -2890,7 +2937,7 @@ public partial class MainWindow : Window
     private async void CommandButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string id }) return;
-        Hide();
+        HideToBackground();
         if (_settings.DisabledCommands.Contains(id))
         {
             Notify("JMD", "Esse comando está desativado. Ative-o em Gerenciar atalhos.", false);
@@ -2966,8 +3013,7 @@ public partial class MainWindow : Window
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "Gerenciar atalhos";
         PageSubtitle.Text = "Configure os comandos e combinações globais";
-        foreach (var id in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
-            _hotkeys?.Unregister(id);
+        PauseConfiguredShortcuts();
         RefreshShortcutStatuses();
         Show();
         WindowState = WindowState.Normal;
@@ -3046,7 +3092,7 @@ public partial class MainWindow : Window
 
     private void RetryShortcuts_Click(object sender, RoutedEventArgs e)
     {
-        RegisterConfiguredShortcuts();
+        RegisterConfiguredShortcuts(resetRegistrations: true);
         RefreshCommandStatuses();
         RefreshShortcutStatuses();
         SetStatus("Estado dos atalhos atualizado.", true);
@@ -4321,11 +4367,20 @@ public partial class MainWindow : Window
 
     private void AndroidMenuItem_Click(object sender, RoutedEventArgs e)
     {
+        var taskApi = _todoTaskApiService;
+        if (taskApi is null)
+        {
+            taskApi = new TodoTaskApiService(_todoTaskStore,
+                _historyStore ?? throw new InvalidOperationException("O histórico ainda não está disponível."));
+            taskApi.TasksChanged += RefreshTodoTasksFromApi;
+            _todoTaskApiService = taskApi;
+        }
         _jmdroidApiServer ??= new JmdroidApiServer(
             GetJmdroidApiCommands,
             ExecuteJmdroidCommandAsync,
             _settings.JmdroidDevices,
-            () => _settingsStore.Save(_settings));
+            () => _settingsStore.Save(_settings),
+            taskApi);
         _androidSettingsPanel ??= new AndroidSettingsPanel(_jmdroidApiServer);
         AndroidSettingsHost.Content = _androidSettingsPanel;
         _navigation.ShowShortcutSettings();
@@ -4346,11 +4401,23 @@ public partial class MainWindow : Window
         ManageButton.Content = "Voltar aos comandos";
         PageTitle.Text = "JMDroid para Android";
         PageSubtitle.Text = "Instale o app ou conecte seus aparelhos";
-        foreach (var id in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
-            _hotkeys?.Unregister(id);
+        PauseConfiguredShortcuts();
         Show();
         WindowState = WindowState.Normal;
         Activate();
+    }
+
+    private void RefreshTodoTasksFromApi()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(RefreshTodoTasksFromApi);
+            return;
+        }
+        _todoTasks.Clear();
+        foreach (var task in _todoTaskStore.GetAll()) _todoTasks.Add(FromTodoTaskEntry(task));
+        _todoTaskPanel?.Refresh();
+        if (HistoryPage.Visibility == Visibility.Visible) RefreshHistory();
     }
 
     private IReadOnlyList<JmdroidApiCommand> GetJmdroidApiCommands()
@@ -4363,17 +4430,72 @@ public partial class MainWindow : Window
                 .Replace("Jey:", string.Empty, StringComparison.CurrentCultureIgnoreCase)
                 .Split('·', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             var enabled = !_settings.DisabledCommands.Contains(command.Id);
-            var available = remoteIds.Contains(command.Id) && enabled;
+            var custom = _settings.CustomShortcuts.FirstOrDefault(item => item.Id == command.Id);
+            var available = enabled && (remoteIds.Contains(command.Id) || custom?.AllowJmdroidExecution == true);
             var reason = !enabled ? "Este comando está desativado nas configurações do JMD."
-                : available ? null : "Este comando depende de interação com o computador e não pode ser executado remotamente.";
+                : available ? null : custom is not null
+                    ? "A execução remota está desativada. Habilite ‘Permitir execução pelo JMDroid (Android)’ ao editar este comando."
+                    : "Este comando depende de interação com o computador e não pode ser executado remotamente.";
+            var variables = custom is null ? [] : custom.Steps
+                .SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}")
+                    .Select(match => match.Groups[1].Value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            object? inputSchema = custom is null ? null : new
+            {
+                type = "object",
+                properties = new
+                {
+                    variables = new
+                    {
+                        type = "object",
+                        additionalProperties = false,
+                        properties = variables.ToDictionary(name => name, _ => (object)new { type = "string", maxLength = 10000 })
+                    }
+                }
+            };
             return new JmdroidApiCommand(command.Id, command.Name, command.Description, command.Shortcut,
-                available, reason, searchTerms);
+                available, reason, searchTerms, custom is not null, inputSchema);
         }).ToArray();
     }
 
     private async Task<JmdroidExecutionResult> ExecuteJmdroidCommandAsync(
         string commandId, JsonElement input, CancellationToken cancellationToken)
     {
+        var custom = _settings.CustomShortcuts.FirstOrDefault(item => item.Id == commandId);
+        if (custom is not null)
+        {
+            if (!_settings.CustomShortcuts.Any(item => item.Id == commandId && item.AllowJmdroidExecution))
+                return new JmdroidExecutionResult("failed", Error: "A execução remota deste comando está desativada. Habilite-a ao editar o comando no JMD.");
+            var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (input.ValueKind == JsonValueKind.Object && input.TryGetProperty("variables", out var suppliedVariables))
+            {
+                if (suppliedVariables.ValueKind != JsonValueKind.Object)
+                    return new JmdroidExecutionResult("failed", Error: "O campo variables precisa ser um objeto de textos.");
+                foreach (var property in suppliedVariables.EnumerateObject())
+                {
+                    if (property.Value.ValueKind != JsonValueKind.String || property.Value.GetString() is not { Length: <= 10000 } value)
+                        return new JmdroidExecutionResult("failed", Error: "Cada variável deve ser um texto com até 10.000 caracteres.");
+                    variables[property.Name] = value;
+                }
+            }
+            var referencedVariables = custom.Steps.SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}")
+                    .Select(match => match.Groups[1].Value))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (variables.Keys.Any(name => !referencedVariables.Contains(name)))
+                return new JmdroidExecutionResult("failed", Error: "Foi informada uma variável que não é usada por este comando.");
+            try
+            {
+                var succeeded = await Dispatcher.InvokeAsync(() => RunCustomWorkflowAsync(custom, dynamicVariables: variables)).Task.Unwrap();
+                return succeeded
+                    ? new JmdroidExecutionResult("succeeded", $"Workflow concluído: {custom.Name}.")
+                    : new JmdroidExecutionResult("failed", Error: $"O workflow {custom.Name} falhou. Consulte o Histórico do JMD.");
+            }
+            catch (OperationCanceledException)
+            {
+                return new JmdroidExecutionResult("failed", Error: "A execução foi cancelada.");
+            }
+        }
         var text = input.TryGetProperty("text", out var textElement) && textElement.ValueKind == JsonValueKind.String
             ? textElement.GetString()
             : null;
@@ -4821,7 +4943,7 @@ public partial class MainWindow : Window
     {
         if (e.Key == Key.Escape)
         {
-            Hide();
+            HideToBackground();
             e.Handled = true;
         }
         else if (e.Key == Key.Enter && _navigation.CurrentPage == AppPage.Palette &&
@@ -4864,7 +4986,7 @@ public partial class MainWindow : Window
 
     private async Task ExecuteCommandAsync(string id, IReadOnlyDictionary<string, string>? dynamicVariables = null, string? matchedPhrase = null)
     {
-        Hide();
+        HideToBackground();
         if (_settings.DisabledCommands.Contains(id))
         {
             Notify("JMD", "Esse comando está desativado. Ative-o em Gerenciar atalhos.", false);
@@ -4969,7 +5091,7 @@ public partial class MainWindow : Window
         var dynamicMatch = FindTypedWorkflowMatch(request.Query);
         var isJeyPhraseMatch = dynamicMatch?.CommandId == command.Id;
         var filterDescription = DescribeCommandFilter(request.Query, isJeyPhraseMatch ? dynamicMatch!.MatchedPhrase : null);
-        Hide();
+        HideToBackground();
         var executionState = new CommandExecutionContext { FilterDescription = filterDescription };
         var previousExecutionState = _commandExecutionContext.Value;
         _commandExecutionContext.Value = executionState;
@@ -5161,23 +5283,17 @@ public partial class MainWindow : Window
             if (System.Windows.Application.Current.Windows.OfType<Window>()
                 .Any(window => !ReferenceEquals(window, this) && ReferenceEquals(window.Owner, this) && window.IsVisible))
                 return;
-            Hide();
-            if (_navigation.IsEditingShortcuts)
-            {
-                RegisterConfiguredShortcuts();
-                RefreshCommandStatuses();
-                RefreshShortcutStatuses();
-            }
+            HideToBackground();
         }));
     }
 
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => HideToBackground();
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         if (_closingForExit) return;
         e.Cancel = true;
-        Hide();
+        HideToBackground();
     }
 
     private void Notify(string title, string message, bool success, long? historyId = null,
@@ -5264,6 +5380,7 @@ public partial class MainWindow : Window
         if (_jmdroidApiServer is not null) _ = _jmdroidApiServer.DisposeAsync();
         _todoReminderTimer.Stop();
         _memoryRefreshTimer.Stop();
+        _hotkeyRecoveryTimer.Stop();
         _benchmarkRecordingTimer.Stop();
         if (_benchmarkRecorder is { } recorder)
         {

@@ -1,6 +1,10 @@
 **/bin/
 **/obj/
 artifacts/
+.ai-jail
+ai-jail_*.deb
+docs/openapi.json
+**/*:Zone.Identifier
 .vs/
 *.user
 *.suo
