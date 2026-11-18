@@ -2252,7 +2252,8 @@ public partial class MainWindow : Window
 
     private async Task CreateTodoTaskAsync()
     {
-        var selectedText = string.Empty;
+        RichClipboardContent? copiedContent = null;
+        IReadOnlyList<string> selectedFiles = [];
         var oldClipboard = _clipboard.TryGetRichContent();
         var modifiersReleased = await _keyboard.WaitForModifiersReleasedAsync();
         if (modifiersReleased && _previousWindow != IntPtr.Zero && _keyboard.GetForegroundWindow() == _previousWindow)
@@ -2262,19 +2263,33 @@ public partial class MainWindow : Window
             {
                 await Task.Delay(180);
                 if (_clipboard.SequenceNumber != clipboardSequenceBeforeCopy)
-                    selectedText = _clipboard.TryGetRichContent()?.Text ?? string.Empty;
+                {
+                    copiedContent = _clipboard.TryGetRichContent();
+                    try
+                    {
+                        if (System.Windows.Clipboard.ContainsFileDropList())
+                            selectedFiles = System.Windows.Clipboard.GetFileDropList().Cast<string>().ToArray();
+                    }
+                    catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException)
+                    {
+                        // Fall back to copied text if the selected files cannot be read from the clipboard.
+                    }
+                }
                 if (oldClipboard is not null) _clipboard.TrySetRichContent(oldClipboard);
             }
         }
-        var dialog = new TodoTaskEditWindow(initialDescription: selectedText);
+        var capture = TodoTaskClipboardCapturePolicy.Resolve(copiedContent?.Text, copiedContent?.Html, selectedFiles);
+        var dialog = new TodoTaskEditWindow(initialDescription: capture.Description, initialUrls: capture.Urls, initialAttachments: capture.Attachments);
         if (!ShowTodoTaskDialog(dialog)) return;
         var task = FromTodoTaskEntry(_todoTaskStore.Create(dialog.TaskTitle, dialog.Description, DateTimeOffset.Now,
             dialog.ReminderIntervalMinutes, dialog.CategoryColor, dialog.Urls, dialog.Attachments));
         task.Checklist = dialog.Checklist.ToList();
+        var attachmentErrors = OrganizeTodoTaskAttachments(task, dialog.Attachments);
         _todoTasks.Add(task);
         SaveTodoTasks();
         RecordTodoTaskChange("criada", task, $"Tarefa criada: {TodoTaskDisplay.Reference(task)} {task.Title}");
         _todoTaskPanel?.Refresh();
+        ShowTodoTaskAttachmentErrors(attachmentErrors);
     }
 
     private void ShowTodoTaskPanel()
@@ -2363,6 +2378,7 @@ public partial class MainWindow : Window
         var dialog = new TodoTaskEditWindow(task);
         if (!ShowTodoTaskDialog(dialog)) return;
         var previousTask = FromTodoTaskEntry(ToTodoTaskEntry(task));
+        var attachmentErrors = OrganizeTodoTaskAttachments(task, dialog.Attachments);
         var newChecklist = dialog.Checklist.ToList();
         var checklistChanged = !task.Checklist.SequenceEqual(newChecklist);
         var changed = task.Title != dialog.TaskTitle || task.Description != dialog.Description || task.Urls != dialog.Urls || task.Attachments != dialog.Attachments || checklistChanged;
@@ -2373,12 +2389,12 @@ public partial class MainWindow : Window
         task.ReminderIntervalMinutes = dialog.ReminderIntervalMinutes;
         task.CategoryColor = dialog.CategoryColor;
         task.Urls = dialog.Urls;
-        task.Attachments = dialog.Attachments;
         task.Checklist = newChecklist;
         if (reminderChanged) task.LastReminderAt = task.ReminderIntervalMinutes is null ? null : DateTimeOffset.Now;
         SaveTodoTasks();
         if (changed) RecordTodoTaskChange("editada", task, DescribeTodoTaskChanges(previousTask, task));
         _todoTaskPanel?.Refresh();
+        ShowTodoTaskAttachmentErrors(attachmentErrors);
     }
 
     public void ShowTodoTaskFromNotification(string taskId)
@@ -2538,6 +2554,27 @@ public partial class MainWindow : Window
     }
 
     private void SaveTodoTasks() => _todoTaskStore.SaveAll(_todoTasks.Select(ToTodoTaskEntry));
+
+    private IReadOnlyList<string> OrganizeTodoTaskAttachments(TodoTask task, string attachments)
+    {
+        var folder = _settings.Businessmap.TaskAttachmentsFolder;
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            task.Attachments = attachments;
+            return [];
+        }
+
+        var result = TodoTaskAttachmentOrganizer.Organize(attachments, folder, task.CreatedAt, task.TaskNumber);
+        task.Attachments = string.Join(Environment.NewLine, result.Paths);
+        return result.Errors;
+    }
+
+    private static void ShowTodoTaskAttachmentErrors(IReadOnlyList<string> errors)
+    {
+        if (errors.Count == 0) return;
+        MessageBox.Show("A tarefa foi salva, mas alguns anexos não puderam ser organizados. Os caminhos originais foram mantidos:\n\n" +
+            string.Join("\n", errors), "Anexos de tarefas", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
 
     private void CheckTodoTaskReminders(object? sender, EventArgs e)
     {

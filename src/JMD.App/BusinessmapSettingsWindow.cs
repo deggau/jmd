@@ -18,6 +18,7 @@ namespace JMD.App;
 internal sealed class BusinessmapIntegrationSettings
 {
     public bool Enabled { get; set; }
+    public string TaskAttachmentsFolder { get; set; } = string.Empty;
     public string AccountUrl { get; set; } = string.Empty;
     public string ProtectedApiKey { get; set; } = string.Empty;
     public List<BusinessmapBoardSettings> Boards { get; set; } = [];
@@ -25,6 +26,7 @@ internal sealed class BusinessmapIntegrationSettings
     public BusinessmapIntegrationSettings Clone() => new()
     {
         Enabled = Enabled,
+        TaskAttachmentsFolder = TaskAttachmentsFolder,
         AccountUrl = AccountUrl,
         ProtectedApiKey = ProtectedApiKey,
         Boards = Boards.Select(board => board.Clone()).ToList()
@@ -57,6 +59,7 @@ internal sealed class BusinessmapSettingsWindow : Window
 {
     private readonly BusinessmapIntegrationSettings _settings;
     private readonly TextBox _accountUrl = new();
+    private readonly TextBox _attachmentsFolder = new() { IsReadOnly = true };
     private readonly PasswordBox _apiKey = new();
     private readonly CheckBox _enabled = new() { Content = "Sincronizar tarefas do Businessmap no painel", Foreground = Brushes.White, FontSize = 13 };
     private readonly TextBlock _status = new() { Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) };
@@ -129,6 +132,29 @@ internal sealed class BusinessmapSettingsWindow : Window
         _enabled.Margin = new Thickness(0, 0, 0, 12);
         _enabled.IsChecked = _settings.Enabled;
         body.Children.Add(_enabled);
+        body.Children.Add(new TextBlock { Text = "Pasta independente para anexos locais", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4) });
+        body.Children.Add(new TextBlock { Text = "Ao salvar uma tarefa, os arquivos anexados serão movidos para subpastas por data e número da tarefa. Links da web e arquivos indisponíveis permanecem como estão.", Foreground = MutedBrush, FontSize = 10, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) });
+        var attachmentsFolderRow = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var chooseFolder = MakeButton("Escolher pasta", false);
+        chooseFolder.Margin = new Thickness(8, 4, 0, 0);
+        chooseFolder.Click += (_, _) =>
+        {
+            var picker = new Microsoft.Win32.OpenFolderDialog { Title = "Pasta dos anexos de tarefas", Multiselect = false };
+            if (!string.IsNullOrWhiteSpace(_attachmentsFolder.Text)) picker.FolderName = _attachmentsFolder.Text;
+            if (picker.ShowDialog(this) == true) _attachmentsFolder.Text = picker.FolderName;
+        };
+        DockPanel.SetDock(chooseFolder, Dock.Right);
+        attachmentsFolderRow.Children.Add(chooseFolder);
+        StyleBox(_attachmentsFolder);
+        _attachmentsFolder.Text = _settings.TaskAttachmentsFolder;
+        _attachmentsFolder.Margin = new Thickness(0, 4, 0, 0);
+        attachmentsFolderRow.Children.Add(_attachmentsFolder);
+        body.Children.Add(attachmentsFolderRow);
+        var clearFolder = MakeButton("Desativar pasta independente", false);
+        clearFolder.HorizontalAlignment = HorizontalAlignment.Left;
+        clearFolder.Margin = new Thickness(0, -8, 0, 12);
+        clearFolder.Click += (_, _) => _attachmentsFolder.Clear();
+        body.Children.Add(clearFolder);
         body.Children.Add(Label("URL da conta Businessmap"));
         StyleBox(_accountUrl);
         _accountUrl.Text = _settings.AccountUrl;
@@ -324,6 +350,7 @@ internal sealed class BusinessmapSettingsWindow : Window
     private void SaveSettings()
     {
         _settings.Enabled = _enabled.IsChecked == true;
+        _settings.TaskAttachmentsFolder = _attachmentsFolder.Text.Trim();
         _settings.AccountUrl = _accountUrl.Text.Trim().TrimEnd('/');
         if (!string.IsNullOrWhiteSpace(_apiKey.Password))
         {

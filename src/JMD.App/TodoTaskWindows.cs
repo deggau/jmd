@@ -283,7 +283,7 @@ internal sealed class TodoTaskEditWindow : Window
             decimal.TryParse(row.Weight.Text, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out var weight) ? weight : -1m,
             row.Completed)).ToList();
 
-    public TodoTaskEditWindow(TodoTask? task = null, string initialDescription = "")
+    public TodoTaskEditWindow(TodoTask? task = null, string initialDescription = "", string initialUrls = "", string initialAttachments = "")
     {
         Title = task is null ? "Nova tarefa" : "Editar tarefa";
         Width = 440; SizeToContent = SizeToContent.Height; WindowStyle = WindowStyle.None;
@@ -315,18 +315,19 @@ internal sealed class TodoTaskEditWindow : Window
         var resources = new Expander
         {
             Header = "Links e anexos (opcional)",
-            IsExpanded = !string.IsNullOrWhiteSpace(task?.Urls) || !string.IsNullOrWhiteSpace(task?.Attachments),
+            IsExpanded = !string.IsNullOrWhiteSpace(task?.Urls) || !string.IsNullOrWhiteSpace(task?.Attachments) ||
+                         !string.IsNullOrWhiteSpace(initialUrls) || !string.IsNullOrWhiteSpace(initialAttachments),
             Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)),
             FontSize = 12
         };
         var resourceFields = new StackPanel { Margin = new Thickness(16, 8, 0, 0) };
         resourceFields.Children.Add(Label("URLs (uma por linha)"));
-        StyleBox(_urls); _urls.Text = task?.Urls ?? ""; _urls.Height = 36; _urls.AcceptsReturn = true; _urls.TextWrapping = TextWrapping.Wrap; _urls.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        StyleBox(_urls); _urls.Text = task?.Urls ?? initialUrls; _urls.Height = 36; _urls.AcceptsReturn = true; _urls.TextWrapping = TextWrapping.Wrap; _urls.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _urls.Margin = new Thickness(0, 4, 0, 8); resourceFields.Children.Add(_urls);
         resourceFields.Children.Add(Label("Anexos"));
         StyleBox(_attachments); _attachments.Height = 32; _attachments.AcceptsReturn = true; _attachments.TextWrapping = TextWrapping.Wrap; _attachments.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _attachments.ToolTip = "Copie arquivos no Explorador e pressione Ctrl+V aqui para adicionar os caminhos.";
-        _attachments.Text = task?.Attachments ?? ""; _attachments.Margin = new Thickness(0, 4, 0, 5); resourceFields.Children.Add(_attachments);
+        _attachments.Text = task?.Attachments ?? initialAttachments; _attachments.Margin = new Thickness(0, 4, 0, 5); resourceFields.Children.Add(_attachments);
         _attachments.PreviewKeyDown += Attachments_PreviewKeyDown;
         var addAttachment = CreateButton("Adicionar arquivo"); addAttachment.Height = 28; addAttachment.Margin = new Thickness(0, 0, 0, 4); addAttachment.HorizontalAlignment = HorizontalAlignment.Left;
         addAttachment.Click += (_, _) =>
@@ -736,7 +737,9 @@ internal sealed class TodoTaskPanelWindow : Window
             body.Children.Add(new TextBlock { Text = TodoTaskDisplay.Reference(task), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, Margin = new Thickness(0, 0, 0, 3) });
             var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
             titleRow.Children.Add(new Border { Width = 10, Height = 10, Background = TodoTaskEditWindow.CategoryBrush(task.CategoryColor), CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 4, 7, 0), ToolTip = $"Prioridade {task.CategoryColor}" });
-            titleRow.Children.Add(new TextBlock { Text = task.Title, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, FontSize = 14, TextWrapping = TextWrapping.Wrap, MaxHeight = 51, TextTrimming = TextTrimming.CharacterEllipsis });
+            var selectableTitle = CreateSelectableTaskText(task.Title, Brushes.White, 14, FontWeights.SemiBold);
+            selectableTitle.MaxWidth = 280;
+            titleRow.Children.Add(selectableTitle);
             body.Children.Add(titleRow);
             if (task.Checklist.Count > 0)
             {
@@ -749,19 +752,31 @@ internal sealed class TodoTaskPanelWindow : Window
                 for (var index = 0; index < task.Checklist.Count; index++)
                 {
                     var entry = task.Checklist[index];
+                    var checklistRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
                     var check = new System.Windows.Controls.CheckBox
                     {
                         IsChecked = entry.IsCompleted,
-                        Content = new TextBlock { Text = $"{entry.Title} ({entry.Weight:0.#}%)", TextWrapping = TextWrapping.Wrap, MaxWidth = 220 },
-                        Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 11, Margin = new Thickness(0, 2, 0, 2),
-                        HorizontalContentAlignment = HorizontalAlignment.Left
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Margin = new Thickness(0, 1, 5, 0)
                     };
+                    var checklistText = CreateSelectableTaskText($"{entry.Title} ({entry.Weight:0.#}%)",
+                        new SolidColorBrush(Color.FromRgb(190, 194, 204)), 11, FontWeights.Normal);
+                    checklistText.MaxWidth = 240;
                     var itemIndex = index;
                     check.Click += (_, _) => RunUndoableAction(() => _toggleChecklist(task, itemIndex));
-                    body.Children.Add(check);
+                    checklistRow.Children.Add(check);
+                    checklistRow.Children.Add(checklistText);
+                    body.Children.Add(checklistRow);
                 }
             }
-            else if (!string.IsNullOrWhiteSpace(task.Description)) body.Children.Add(new TextBlock { Text = task.Description.Length > 100 ? "…" + task.Description[^100..] : task.Description, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 5) });
+            if (!string.IsNullOrWhiteSpace(task.Description))
+            {
+                var description = CreateSelectableTaskText(task.Description, new SolidColorBrush(Color.FromRgb(190, 194, 204)), 12);
+                description.MaxHeight = 130;
+                description.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+                description.Margin = new Thickness(0, 5, 0, 5);
+                body.Children.Add(description);
+            }
             body.Children.Add(new TextBlock { Text = $"Criada {task.CreatedAt.LocalDateTime:g}" + (task.CompletedAt is null ? "" : $" · Concluída {task.CompletedAt.Value.LocalDateTime:g}") + (task.PausedAt is null ? "" : $" · Pausada {task.PausedAt.Value.LocalDateTime:g}"), Foreground = new SolidColorBrush(Color.FromRgb(135, 140, 151)), FontSize = 10 });
             if (task.PausedAt is not null && (!string.IsNullOrWhiteSpace(task.PausedBy) || !string.IsNullOrWhiteSpace(task.PauseReason)))
                 body.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { string.IsNullOrWhiteSpace(task.PausedBy) ? null : $"Responsável: {task.PausedBy}", string.IsNullOrWhiteSpace(task.PauseReason) ? null : $"Motivo: {task.PauseReason}" }.Where(value => value is not null)), Foreground = new SolidColorBrush(Color.FromRgb(255, 204, 0)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
@@ -872,6 +887,26 @@ internal sealed class TodoTaskPanelWindow : Window
     }
 
     private static Button IconButton(string glyph, string hint) => new() { Content = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13, Width = 28, Height = 28, Margin = new Thickness(1), ToolTip = hint, Focusable = true, Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+
+    private static TextBox CreateSelectableTaskText(string text, System.Windows.Media.Brush foreground, double fontSize, FontWeight? fontWeight = null)
+        => new()
+        {
+            Text = text,
+            IsReadOnly = true,
+            IsReadOnlyCaretVisible = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            Foreground = foreground,
+            FontSize = fontSize,
+            FontWeight = fontWeight ?? FontWeights.Normal,
+            VerticalAlignment = VerticalAlignment.Center,
+            CaretBrush = foreground
+        };
 
     private static Button ResourceLinkButton(string label, string target)
     {
