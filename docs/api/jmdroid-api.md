@@ -228,6 +228,29 @@ O corpo de criação e edição contém os mesmos campos editáveis:
 
 `title` é obrigatório (até 300 caracteres); `description` aceita até 100.000 caracteres; `urls` e `attachments` até 20.000 cada; `reminderIntervalMinutes` é nulo ou de 1 a 10.080; a lista aceita até 100 etapas e a soma dos pesos não pode passar de 100. Criação retorna `201 Created`, o objeto criado e o cabeçalho `Location`. Edição retorna `200 OK` com o objeto atualizado. Criar, editar ou alterar uma tarefa é registrado no histórico.
 
+### Enviar anexos do celular
+
+Depois de criar a tarefa, ou para adicionar arquivos a uma tarefa existente, envie um `multipart/form-data` para a mesma rota de anexos. Cada arquivo deve usar o campo `files`; é possível repetir esse campo:
+
+```http
+POST /api/v1/tasks/{taskId}/attachments
+Authorization: Bearer {accessToken}
+Content-Type: multipart/form-data
+```
+
+Exemplo com `curl`:
+
+```bash
+curl -X POST "https://192.168.1.10:47831/api/v1/tasks/ID/attachments" \
+  -H "Authorization: Bearer TOKEN" \
+  -F "files=@/caminho/no/celular/comprovante.pdf" \
+  -F "files=@/caminho/no/celular/foto.jpg"
+```
+
+O cliente Android deve criar a tarefa com `POST /api/v1/tasks`, obter o `id` da resposta e então enviar os arquivos para essa rota. A mesma chamada também aceita tarefas já criadas. Os arquivos são copiados para a pasta configurada em **Configurações > Integrações > Businessmap > Pasta independente para anexos locais**. Se ela estiver vazia, o JMD usa `%LOCALAPPDATA%\\JMD\\TaskAttachments`. Em ambos os casos, os arquivos ficam organizados em subpastas por data e código da tarefa, e os caminhos finais são adicionados à tarefa sem remover anexos anteriores.
+
+Cada envio aceita até 10 arquivos, com no máximo 20 MiB por arquivo e 24 MiB no total. O sucesso retorna `{ "task": {...}, "uploaded": ["caminho final do arquivo"] }`. O envio gera um evento no histórico identificado como `JMDroid` e com o nome do celular. Uma tarefa inexistente retorna `404 task_not_found`; formato inválido retorna `400 invalid_input`; excesso de tamanho retorna `413 attachment_too_large`; falha ao gravar no computador retorna `500 attachment_storage_failed`.
+
 ### Etapas, conclusão e ciclo de vida
 
 ```http
@@ -274,7 +297,7 @@ Todas as respostas de erro usam:
 }
 ```
 
-Códigos esperados: `invalid_pairing_session`, `pairing_expired`, `pairing_denied`, `unauthorized`, `device_revoked`, `command_not_found`, `command_disabled`, `command_unavailable`, `task_not_found`, `task_state_conflict`, `invalid_input`, `duplicate_request`, `rate_limited`.
+Códigos esperados: `invalid_pairing_session`, `pairing_expired`, `pairing_denied`, `unauthorized`, `device_revoked`, `command_not_found`, `command_disabled`, `command_unavailable`, `task_not_found`, `task_state_conflict`, `invalid_input`, `attachment_too_large`, `attachment_storage_failed`, `duplicate_request`, `rate_limited`.
 
 - `400`: pedido ou parâmetros inválidos.
 - `401`: token ausente/inválido ou sessão de pareamento inválida.
@@ -286,6 +309,8 @@ Códigos esperados: `invalid_pairing_session`, `pairing_expired`, `pairing_denie
 - `410`: pareamento expirado.
 - `422`: parâmetros não passam pelo schema do comando.
 - `429`: limite de pedidos excedido.
+- `413`: arquivo ou envio de anexos excede o limite.
+- `500`: falha ao salvar anexos no computador.
 
 ## Regras mínimas de segurança
 

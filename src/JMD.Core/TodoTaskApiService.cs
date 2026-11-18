@@ -85,6 +85,31 @@ public sealed class TodoTaskApiService
         }
     }
 
+    public TodoTaskEntry? AddAttachments(string taskId, IReadOnlyList<string> attachments, string source = "APP", string? deviceName = null)
+    {
+        if (attachments is null || attachments.Count == 0 || attachments.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("Informe ao menos um anexo válido.", nameof(attachments));
+
+        lock (_sync)
+        {
+            var tasks = _tasks.GetAll().ToList();
+            var index = tasks.FindIndex(task => task.Id == taskId);
+            if (index < 0) return null;
+            var previous = tasks[index];
+            var existing = previous.Attachments.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var known = existing.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var added = attachments.Select(path => path.Trim()).Where(path => known.Add(path)).ToArray();
+            if (added.Length == 0) return previous;
+
+            var updated = previous with { Attachments = string.Join(Environment.NewLine, existing.Concat(added)) };
+            tasks[index] = updated;
+            _tasks.SaveAll(tasks);
+            Record("anexos adicionados", updated, previous.Attachments, string.Join(Environment.NewLine, added), source, deviceName);
+            TasksChanged?.Invoke();
+            return updated;
+        }
+    }
+
     public TodoTaskEntry? SetChecklistStep(string taskId, int index, bool isCompleted, string source = "APP", string? deviceName = null)
     {
         lock (_sync)

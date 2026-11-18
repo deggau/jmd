@@ -54,6 +54,21 @@ public sealed class TodoTaskApiServiceTests : IDisposable
     }
 
     [Fact]
+    public void Add_attachments_to_existing_task_preserves_previous_files_and_records_device_origin()
+    {
+        var task = _service.Create(new TodoTaskApiTaskInput("Com comprovantes", Attachments: "C:\\old.pdf"));
+
+        var updated = _service.AddAttachments(task.Id, ["C:\\new.pdf", "C:\\image.jpg"], "JMDroid", "Galaxy S24");
+
+        Assert.Equal(["C:\\old.pdf", "C:\\new.pdf", "C:\\image.jpg"], updated!.Attachments.Split(Environment.NewLine));
+        var history = _service.GetTaskHistory("", 0, 10).Items;
+        Assert.Equal("JMDroid", history[0].Source);
+        Assert.Equal("Galaxy S24", history[0].SourceDeviceName);
+        Assert.Contains("C:\\new.pdf", history[0].AfterValue);
+        Assert.Null(_service.AddAttachments("missing", ["C:\\missing.pdf"]));
+    }
+
+    [Fact]
     public void Completing_all_checklist_weight_completes_task_and_history_shows_app_origin_by_default()
     {
         var task = _service.Create(new TodoTaskApiTaskInput("Finalizar", Checklist:

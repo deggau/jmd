@@ -119,6 +119,7 @@ public partial class MainWindow : Window
 
     public event Action<string, string, bool, NotificationClickTarget, TimeSpan>? TrayNotification;
     public bool IsVoiceWakeWordEnabled => _settings.VoiceWakeWordEnabled;
+    public int PairedJmdroidDeviceCount => _settings.JmdroidDevices.Count;
 
     public void ToggleVoiceWakeWordFromTray()
     {
@@ -4402,7 +4403,7 @@ public partial class MainWindow : Window
         ShowAboutPage();
     }
 
-    private void AndroidMenuItem_Click(object sender, RoutedEventArgs e)
+    private JmdroidApiServer EnsureJmdroidApiServer()
     {
         var taskApi = _todoTaskApiService;
         if (taskApi is null)
@@ -4417,8 +4418,30 @@ public partial class MainWindow : Window
             ExecuteJmdroidCommandAsync,
             _settings.JmdroidDevices,
             () => _settingsStore.Save(_settings),
-            taskApi);
-        _androidSettingsPanel ??= new AndroidSettingsPanel(_jmdroidApiServer, _settings.JmdroidUseHttp, SaveJmdroidTransportPreference);
+            taskApi,
+            () => string.IsNullOrWhiteSpace(_settings.Businessmap.TaskAttachmentsFolder)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JMD", "TaskAttachments")
+                : _settings.Businessmap.TaskAttachmentsFolder);
+        return _jmdroidApiServer;
+    }
+
+    public async Task StartJmdroidApiForPairedDevicesAsync()
+    {
+        if (_settings.JmdroidDevices.Count == 0) return;
+        try
+        {
+            await EnsureJmdroidApiServer().StartForPairedDevicesAsync(_settings.JmdroidUseHttp);
+        }
+        catch (Exception exception)
+        {
+            CriticalErrorLog.Write("Iniciar API JMDroid para aparelhos pareados", exception);
+        }
+    }
+
+    private void AndroidMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var server = EnsureJmdroidApiServer();
+        _androidSettingsPanel ??= new AndroidSettingsPanel(server, _settings.JmdroidUseHttp, SaveJmdroidTransportPreference);
         AndroidSettingsHost.Content = _androidSettingsPanel;
         _navigation.ShowShortcutSettings();
         CommandsList.Visibility = Visibility.Collapsed;

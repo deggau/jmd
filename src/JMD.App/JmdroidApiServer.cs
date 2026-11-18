@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -10,6 +11,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -52,13 +54,19 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan PairingLifetime = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan IdleShutdownDelay = TimeSpan.FromHours(1);
+    private const long MaxAttachmentUploadBytes = 25 * 1024 * 1024;
+    private const int MaxAttachmentUploadFiles = 10;
+    private const long MaxSingleAttachmentBytes = 20 * 1024 * 1024;
     private const int PreferredListeningPort = 47831;
     private readonly Func<IReadOnlyList<JmdroidApiCommand>> _getCommands;
     private readonly Func<string, JsonElement, CancellationToken, Task<JmdroidExecutionResult>> _executeCommand;
     private readonly IList<JmdroidPairedDevice> _devices;
     private readonly Action _saveSettings;
     private readonly TodoTaskApiService _todoTaskApi;
+    private readonly Func<string>? _getTaskAttachmentsFolder;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
+    private readonly object _idleStopLock = new();
     private readonly object _requestLock = new();
     private readonly object _connectionLock = new();
     private readonly ConcurrentDictionary<string, PendingPairing> _pending = new(StringComparer.Ordinal);
@@ -66,6 +74,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, DeviceRateWindow> _deviceRates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, int> _activeConnections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ConcurrentBag<WebSocket>> _deviceSockets = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _idleStopCancellation;
     private WebApplication? _application;
     private X509Certificate2? _certificate;
     private RSA? _certificatePrivateKey;
@@ -87,13 +96,15 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         Func<string, JsonElement, CancellationToken, Task<JmdroidExecutionResult>> executeCommand,
         IList<JmdroidPairedDevice> devices,
         Action saveSettings,
-        TodoTaskApiService todoTaskApi)
+        TodoTaskApiService todoTaskApi,
+        Func<string>? getTaskAttachmentsFolder = null)
     {
         _getCommands = getCommands;
         _executeCommand = executeCommand;
         _devices = devices;
         _saveSettings = saveSettings;
         _todoTaskApi = todoTaskApi;
+        _getTaskAttachmentsFolder = getTaskAttachmentsFolder;
     }
 
     public bool IsRunning => _application is not null;
@@ -119,6 +130,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            CancelIdleShutdown();
             if (preferredAddress is not null && !GetLanAddresses().Any(candidate => candidate.Address.Equals(preferredAddress)))
                 throw new InvalidOperationException("O endereço selecionado não pertence a uma interface IPv4 privada ativa.");
 
@@ -130,7 +142,8 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                     throw new InvalidOperationException("Desconecte os aparelhos antes de trocar a interface de rede.");
                 _pairingScreenOpen = false;
                 _pairingSession = null;
-                await StopIfIdleAsync();
+                CancelIdleShutdown();
+                await StopIfIdleAsync(force: true);
             }
 
             if (_application is null)
@@ -156,6 +169,22 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             var qrPng = new PngByteQRCode(qrData).GetGraphic(8);
             StateChanged?.Invoke();
             return new JmdroidPairingInfo(baseUrl, fingerprint, payload, qrPng, session.ExpiresAt);
+        }
+        finally { _lifecycleLock.Release(); }
+    }
+
+    public async Task StartForPairedDevicesAsync(bool useHttp, CancellationToken cancellationToken = default)
+    {
+        if (PairedDevices.Count == 0) return;
+        await _lifecycleLock.WaitAsync(cancellationToken);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            CancelIdleShutdown();
+            if (_application is null)
+                await StartListenerAsync(GetLanAddress(), useHttp, cancellationToken);
+            _pairingScreenOpen = false;
+            _pairingSession = null;
         }
         finally { _lifecycleLock.Release(); }
     }
@@ -217,6 +246,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             }
         }
         StateChanged?.Invoke();
+        ScheduleStopWhenIdle();
     }
 
     public async Task ClosePairingScreenAsync()
@@ -228,7 +258,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             _pairingSession = null;
             foreach (var request in _pending.Values.Where(item => item.State == "pending")) request.State = "expired";
             _pending.Clear();
-            await StopIfIdleAsync();
+            ScheduleStopWhenIdle();
         }
         finally { _lifecycleLock.Release(); }
     }
@@ -266,6 +296,12 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                 });
                 app = builder.Build();
                 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
+                app.Use(async (context, next) =>
+                {
+                    CancelIdleShutdown();
+                    try { await next(); }
+                    finally { ScheduleStopWhenIdle(); }
+                });
                 MapRoutes(app);
                 await app.StartAsync(cancellationToken);
                 return (app, certificate, privateKey);
@@ -583,6 +619,98 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             }
         });
 
+        app.MapPost("/api/v1/tasks/{taskId}/attachments", async context =>
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            var taskId = Convert.ToString(context.Request.RouteValues["taskId"]);
+            var task = taskId is null ? null : _todoTaskApi.GetTask(taskId);
+            if (task is null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+                return;
+            }
+
+            var requestSizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (requestSizeFeature is { IsReadOnly: false }) requestSizeFeature.MaxRequestBodySize = MaxAttachmentUploadBytes;
+            var contentType = context.Request.ContentType;
+            if (!context.Request.HasFormContentType || contentType is null || !contentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", "Envie os anexos como multipart/form-data no campo files.");
+                return;
+            }
+
+            var savedPaths = new List<string>();
+            var attachmentsPersisted = false;
+            try
+            {
+                var form = await context.Request.ReadFormAsync(context.RequestAborted);
+                var files = form.Files;
+                if (files.Count is < 1 or > MaxAttachmentUploadFiles)
+                {
+                    await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", $"Envie de 1 a {MaxAttachmentUploadFiles} arquivos.");
+                    return;
+                }
+                if (files.Any(file => file.Length <= 0 || file.Length > MaxSingleAttachmentBytes) ||
+                    files.Sum(file => file.Length) > MaxAttachmentUploadBytes - 1024 * 1024)
+                {
+                    await WriteErrorAsync(context, StatusCodes.Status413PayloadTooLarge, "attachment_too_large", "Cada arquivo deve ter até 20 MiB e o envio total até 24 MiB.");
+                    return;
+                }
+
+                var configuredFolder = _getTaskAttachmentsFolder?.Invoke();
+                var rootFolder = string.IsNullOrWhiteSpace(configuredFolder)
+                    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JMD", "TaskAttachments")
+                    : configuredFolder;
+                var taskFolder = Path.Combine(Path.GetFullPath(rootFolder),
+                    task.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+                    $"Task-{Math.Max(0, task.TaskNumber):D6}");
+                Directory.CreateDirectory(taskFolder);
+
+                foreach (var file in files)
+                {
+                    var fileName = SanitizeUploadedFileName(file.FileName);
+                    var destination = GetAvailableAttachmentPath(taskFolder, fileName);
+                    savedPaths.Add(destination);
+                    await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                        bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                    await file.CopyToAsync(output, context.RequestAborted);
+                }
+
+                var updated = _todoTaskApi.AddAttachments(task.Id, savedPaths, "JMDroid", device.Name);
+                if (updated is null)
+                {
+                    foreach (var path in savedPaths) TryDeleteFile(path);
+                    savedPaths.Clear();
+                    await WriteErrorAsync(context, StatusCodes.Status404NotFound, "task_not_found", "Tarefa inexistente.");
+                    return;
+                }
+                attachmentsPersisted = true;
+                await context.Response.WriteAsJsonAsync(new { task = updated, uploaded = savedPaths }, JsonOptions, context.RequestAborted);
+            }
+            catch (Microsoft.AspNetCore.Http.BadHttpRequestException exception)
+            {
+                if (!attachmentsPersisted) foreach (var path in savedPaths) TryDeleteFile(path);
+                await WriteErrorAsync(context, StatusCodes.Status413PayloadTooLarge, "attachment_too_large", exception.Message);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!attachmentsPersisted) foreach (var path in savedPaths) TryDeleteFile(path);
+                throw;
+            }
+            catch (InvalidDataException exception)
+            {
+                if (!attachmentsPersisted) foreach (var path in savedPaths) TryDeleteFile(path);
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", exception.Message);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException)
+            {
+                if (!attachmentsPersisted) foreach (var path in savedPaths) TryDeleteFile(path);
+                CriticalErrorLog.Write("Salvar anexo enviado pelo JMDroid", exception);
+                await WriteErrorAsync(context, StatusCodes.Status500InternalServerError, "attachment_storage_failed", "Não foi possível salvar os anexos neste computador.");
+            }
+        });
+
         app.MapPut("/api/v1/tasks/{taskId}/checklist/{index:int}", async context =>
         {
             var device = await AuthorizeTaskApiAsync(context);
@@ -745,7 +873,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                 catch (WebSocketException) { }
             }
             StateChanged?.Invoke();
-            _ = StopWhenIdleAsync();
+            ScheduleStopWhenIdle();
         }
     }
 
@@ -815,16 +943,90 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         return true;
     }
 
-    private async Task StopWhenIdleAsync()
+    private static string SanitizeUploadedFileName(string fileName)
     {
-        await _lifecycleLock.WaitAsync();
-        try { await StopIfIdleAsync(); }
-        finally { _lifecycleLock.Release(); }
+        var name = Path.GetFileName((fileName ?? string.Empty).Replace('\\', '/')).Trim().Trim('.');
+        var invalid = Path.GetInvalidFileNameChars().ToHashSet();
+        name = new string(name.Select(character => char.IsControl(character) || invalid.Contains(character) ? '_' : character).ToArray());
+        if (string.IsNullOrWhiteSpace(name)) name = "anexo.bin";
+        if (name.Length > 180)
+        {
+            var extension = Path.GetExtension(name);
+            var stemLength = Math.Max(1, 180 - extension.Length);
+            name = Path.GetFileNameWithoutExtension(name)[..Math.Min(stemLength, Path.GetFileNameWithoutExtension(name).Length)] + extension;
+        }
+        return name;
     }
 
-    private async Task StopIfIdleAsync()
+    private static string GetAvailableAttachmentPath(string folder, string fileName)
     {
-        if (_pairingScreenOpen || _activeConnections.Count > 0 || _application is null) return;
+        var candidate = Path.Combine(folder, fileName);
+        if (!File.Exists(candidate)) return candidate;
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        for (var suffix = 2; ; suffix++)
+        {
+            candidate = Path.Combine(folder, $"{stem} ({suffix}){extension}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    private void CancelIdleShutdown()
+    {
+        CancellationTokenSource? pending;
+        lock (_idleStopLock)
+        {
+            pending = _idleStopCancellation;
+            _idleStopCancellation = null;
+        }
+        pending?.Cancel();
+    }
+
+    private void ScheduleStopWhenIdle()
+    {
+        if (_pairingScreenOpen || ConnectedDeviceCount > 0 || PairedDevices.Count > 0 || _application is null) return;
+        var cancellation = new CancellationTokenSource();
+        lock (_idleStopLock)
+        {
+            _idleStopCancellation?.Cancel();
+            _idleStopCancellation = cancellation;
+        }
+        _ = StopWhenIdleAfterGracePeriodAsync(cancellation);
+    }
+
+    private async Task StopWhenIdleAfterGracePeriodAsync(CancellationTokenSource cancellation)
+    {
+        var lockAcquired = false;
+        try
+        {
+            await Task.Delay(IdleShutdownDelay, cancellation.Token);
+            await _lifecycleLock.WaitAsync(cancellation.Token);
+            lockAcquired = true;
+            lock (_idleStopLock)
+            {
+                if (!ReferenceEquals(_idleStopCancellation, cancellation)) return;
+                _idleStopCancellation = null;
+            }
+            await StopIfIdleAsync();
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            if (lockAcquired) _lifecycleLock.Release();
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task StopIfIdleAsync(bool force = false)
+    {
+        if (_pairingScreenOpen || ConnectedDeviceCount > 0 || (!force && PairedDevices.Count > 0) || _application is null) return;
         var app = _application;
         _application = null;
         _baseUrl = null;
@@ -989,6 +1191,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        CancelIdleShutdown();
         await _lifecycleLock.WaitAsync();
         try
         {

@@ -107,6 +107,8 @@ public partial class App : System.Windows.Application
             _mainWindow.Dispatcher.BeginInvoke(new Action(() => DispatchNotificationClick(_mainWindow, activeBalloonClickTarget)));
         StartUpdateSignalListener();
         StartCliServer();
+        if (!updateOnStartup && _mainWindow.PairedJmdroidDeviceCount > 0)
+            _ = _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.StartJmdroidApiForPairedDevicesAsync()));
         if (updateOnStartup)
             _ = _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.UpdateFromCommandLineAsync()));
         else if (openSettingsOnStartup)
