@@ -374,6 +374,7 @@ internal sealed class UserSettings
     public List<SnippetEntry> Snippets { get; set; } = [];
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
     public List<JmdroidPairedDevice> JmdroidDevices { get; set; } = [];
+    public bool JmdroidUseHttp { get; set; }
     public List<WorkflowVariableEntry> WorkflowVariables { get; set; } = [];
     public BusinessmapIntegrationSettings Businessmap { get; set; } = new();
 

@@ -27,6 +27,7 @@ internal sealed class AndroidPairingPanel : UserControl
     private static readonly Color SurfaceColor = Color.FromRgb(23, 25, 31);
     private static readonly Color MutedColor = Color.FromRgb(150, 155, 167);
     private readonly JmdroidApiServer _server;
+    private readonly Func<bool, string?> _saveTransportPreference;
     private readonly ComboBox _networkSelector = new() { Margin = new Thickness(0, 0, 0, 12), Padding = new Thickness(6) };
     private readonly System.Windows.Controls.CheckBox _httpDiagnosticCheckBox = new()
     {
@@ -58,7 +59,7 @@ internal sealed class AndroidPairingPanel : UserControl
         VerticalAlignment = VerticalAlignment.Center
     };
     private readonly TextBlock _httpsHealthText = new() { Text = "HTTPS localhost: OFF", Foreground = Brushes.White };
-    private readonly Image _qrImage = new() { Width = 184, Height = 184, Stretch = Stretch.Uniform };
+    private readonly Image _qrImage = new() { Width = 136, Height = 136, Stretch = Stretch.Uniform };
     private readonly TextBox _addressBox = new()
     {
         IsReadOnly = true,
@@ -80,12 +81,15 @@ internal sealed class AndroidPairingPanel : UserControl
     private readonly HttpClient _httpsHealthCheckClient;
     private string? _httpsHealthCertificateSha256;
     private bool _active;
+    private bool _suppressTransportPreferenceChange;
     private bool _tickHandlerAdded;
     private bool _healthCheckInProgress;
 
-    public AndroidPairingPanel(JmdroidApiServer server)
+    public AndroidPairingPanel(JmdroidApiServer server, bool useHttp, Func<bool, string?> saveTransportPreference)
     {
         _server = server;
+        _saveTransportPreference = saveTransportPreference;
+        _httpPairingCheckBox.IsChecked = useHttp;
         _httpsHealthCheckClient = new HttpClient(new HttpClientHandler
         {
             UseProxy = false,
@@ -117,8 +121,8 @@ internal sealed class AndroidPairingPanel : UserControl
             BorderBrush = new SolidColorBrush(Color.FromRgb(58, 62, 72)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(10),
-            Margin = new Thickness(0, 0, 0, 8)
+            Padding = new Thickness(8),
+            Margin = new Thickness(0, 0, 0, 5)
         };
         var connection = new Grid();
         connection.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -133,17 +137,17 @@ internal sealed class AndroidPairingPanel : UserControl
         };
         Grid.SetColumn(qrBorder, 0);
         connection.Children.Add(qrBorder);
-        var details = new StackPanel { Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        var details = new StackPanel { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         details.Children.Add(new TextBlock
         {
             Text = "No JMDroid, toque em Conectar e leia o QR code.",
             Foreground = Brushes.White,
             FontWeight = FontWeights.SemiBold,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, 0, 0, 5)
         });
         details.Children.Add(new TextBlock { Text = "Interface de rede", Foreground = new SolidColorBrush(MutedColor), FontSize = 11 });
-        _networkSelector.Margin = new Thickness(0, 3, 0, 8);
+        _networkSelector.Margin = new Thickness(0, 3, 0, 5);
         _networkSelector.Padding = new Thickness(6);
         details.Children.Add(_networkSelector);
         details.Children.Add(new TextBlock
@@ -151,7 +155,7 @@ internal sealed class AndroidPairingPanel : UserControl
             Text = "Endereço da API",
             Foreground = new SolidColorBrush(MutedColor),
             FontSize = 11,
-            Margin = new Thickness(0, 0, 0, 3)
+            Margin = new Thickness(0, 0, 0, 2)
         });
         var addressRow = new DockPanel();
         var openBrowserButton = new Button
@@ -172,20 +176,20 @@ internal sealed class AndroidPairingPanel : UserControl
         details.Children.Add(addressRow);
         details.Children.Add(_httpDiagnosticCheckBox);
         details.Children.Add(_httpPairingCheckBox);
-        var healthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 0) };
+        var healthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
         healthStatus.Children.Add(_httpHealthIndicator);
         healthStatus.Children.Add(new TextBlock { Text = " ", Width = 5 });
         healthStatus.Children.Add(_httpHealthText);
         details.Children.Add(healthStatus);
-        var httpsHealthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
+        var httpsHealthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 0) };
         httpsHealthStatus.Children.Add(_httpsHealthIndicator);
         httpsHealthStatus.Children.Add(new TextBlock { Text = " ", Width = 5 });
         httpsHealthStatus.Children.Add(_httpsHealthText);
         details.Children.Add(httpsHealthStatus);
         _status.TextAlignment = TextAlignment.Left;
-        _status.Margin = new Thickness(0, 7, 0, 0);
+        _status.Margin = new Thickness(0, 4, 0, 0);
         details.Children.Add(_status);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 0) };
         var firewallButton = new Button
         {
             Content = "Configurar Firewall",
@@ -239,14 +243,8 @@ internal sealed class AndroidPairingPanel : UserControl
         {
             if (_active) await RefreshQrAsync();
         };
-        _httpPairingCheckBox.Checked += async (_, _) =>
-        {
-            if (_active) await RefreshQrAsync();
-        };
-        _httpPairingCheckBox.Unchecked += async (_, _) =>
-        {
-            if (_active) await RefreshQrAsync();
-        };
+        _httpPairingCheckBox.Checked += async (_, _) => await PairingTransportChangedAsync(true);
+        _httpPairingCheckBox.Unchecked += async (_, _) => await PairingTransportChangedAsync(false);
         Content = root;
 
     }
@@ -286,11 +284,11 @@ internal sealed class AndroidPairingPanel : UserControl
 
     private async Task RefreshQrAsync()
     {
-        _status.Text = "Iniciando conexão HTTPS local…";
+        var useHttp = _httpPairingCheckBox.IsChecked == true;
+        _status.Text = useHttp ? "Iniciando conexão HTTP local…" : "Iniciando conexão HTTPS local…";
         try
         {
             var selectedAddress = (_networkSelector.SelectedItem as JmdroidNetworkAddress)?.Address;
-            var useHttp = _httpPairingCheckBox.IsChecked == true;
             var pairing = await _server.OpenPairingScreenAsync(selectedAddress, useHttp);
             var bitmap = new BitmapImage();
             using (var stream = new MemoryStream(pairing.QrPng))
@@ -309,10 +307,7 @@ internal sealed class AndroidPairingPanel : UserControl
             _httpDiagnosticCheckBox.IsEnabled = _server.HttpDiagnosticPort > 0;
             var transportName = useHttp ? "HTTP sem criptografia" : "HTTPS";
             _status.Text = $"Listener {transportName} iniciado · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
-                           (useHttp
-                               ? "Use somente na sua rede doméstica confiável. No Android, leia este QR pelo JMDroid. "
-                               : "No navegador, avance pelo aviso do certificado local. No Android, use o QR pelo JMDroid. ") +
-                           "Para celular/VPN, permita acesso à LAN nas opções da VPN.";
+                           (useHttp ? "Use em uma rede local confiável." : "No navegador, aceite o certificado local.");
             RefreshLists();
         }
         catch (Exception exception)
@@ -322,6 +317,21 @@ internal sealed class AndroidPairingPanel : UserControl
             _addressBox.Clear();
             _status.Text = $"Não foi possível iniciar a API: {exception.GetBaseException().Message}";
         }
+    }
+
+    private async Task PairingTransportChangedAsync(bool useHttp)
+    {
+        if (_suppressTransportPreferenceChange) return;
+        var error = _saveTransportPreference(useHttp);
+        if (error is not null)
+        {
+            _status.Text = $"Não foi possível salvar a preferência de transporte: {error}";
+            _suppressTransportPreferenceChange = true;
+            _httpPairingCheckBox.IsChecked = !useHttp;
+            _suppressTransportPreferenceChange = false;
+            return;
+        }
+        if (_active) await RefreshQrAsync();
     }
 
     private void OpenApiAddress()

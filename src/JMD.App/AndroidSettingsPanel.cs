@@ -22,9 +22,9 @@ internal sealed class AndroidSettingsPanel : UserControl
     private readonly Button _connectButton;
     private bool _connectSelected;
 
-    public AndroidSettingsPanel(JmdroidApiServer server)
+    public AndroidSettingsPanel(JmdroidApiServer server, bool useHttp, Func<bool, string?> saveTransportPreference)
     {
-        _pairingPanel = new AndroidPairingPanel(server);
+        _pairingPanel = new AndroidPairingPanel(server, useHttp, saveTransportPreference);
         _installScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -32,18 +32,18 @@ internal sealed class AndroidSettingsPanel : UserControl
         };
         Foreground = Brushes.White;
 
-        var root = new DockPanel { Margin = new Thickness(12, 8, 12, 12) };
+        var root = new DockPanel { Margin = new Thickness(10, 5, 10, 8) };
         var heading = new TextBlock
         {
             Text = "Instale o JMDroid ou conecte um aparelho ao JMD.",
             Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
             FontSize = 12,
-            Margin = new Thickness(2, 0, 2, 12)
+            Margin = new Thickness(2, 0, 2, 7)
         };
         DockPanel.SetDock(heading, Dock.Top);
         root.Children.Add(heading);
 
-        var choices = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+        var choices = new Grid { Margin = new Thickness(0, 0, 0, 4) };
         choices.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         choices.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _installButton = CreateChoiceButton("Instalar app", "Baixar o APK no celular");

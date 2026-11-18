@@ -4418,7 +4418,7 @@ public partial class MainWindow : Window
             _settings.JmdroidDevices,
             () => _settingsStore.Save(_settings),
             taskApi);
-        _androidSettingsPanel ??= new AndroidSettingsPanel(_jmdroidApiServer);
+        _androidSettingsPanel ??= new AndroidSettingsPanel(_jmdroidApiServer, _settings.JmdroidUseHttp, SaveJmdroidTransportPreference);
         AndroidSettingsHost.Content = _androidSettingsPanel;
         _navigation.ShowShortcutSettings();
         CommandsList.Visibility = Visibility.Collapsed;
@@ -4455,6 +4455,23 @@ public partial class MainWindow : Window
         foreach (var task in _todoTaskStore.GetAll()) _todoTasks.Add(FromTodoTaskEntry(task));
         _todoTaskPanel?.Refresh();
         if (HistoryPage.Visibility == Visibility.Visible) RefreshHistory();
+    }
+
+    private string? SaveJmdroidTransportPreference(bool useHttp)
+    {
+        var previous = _settings.JmdroidUseHttp;
+        _settings.JmdroidUseHttp = useHttp;
+        try
+        {
+            _settingsStore.Save(_settings);
+            return null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _settings.JmdroidUseHttp = previous;
+            CriticalErrorLog.Write("Salvar preferência HTTP do JMDroid", exception);
+            return exception.Message;
+        }
     }
 
     private IReadOnlyList<JmdroidApiCommand> GetJmdroidApiCommands()
