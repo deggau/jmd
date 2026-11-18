@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using JMD.Core;
 using Button = System.Windows.Controls.Button;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
@@ -28,6 +29,8 @@ internal sealed class AndroidPairingPanel : UserControl
     private static readonly Color MutedColor = Color.FromRgb(150, 155, 167);
     private readonly JmdroidApiServer _server;
     private readonly Func<bool, string?> _saveTransportPreference;
+    private readonly Func<int, string?> _saveScreenShareFpsPreference;
+    private readonly ComboBox _screenShareFpsSelector = new() { Width = 90, Padding = new Thickness(5), Margin = new Thickness(0, 3, 0, 3) };
     private readonly ComboBox _networkSelector = new() { Margin = new Thickness(0, 0, 0, 12), Padding = new Thickness(6) };
     private readonly System.Windows.Controls.CheckBox _httpDiagnosticCheckBox = new()
     {
@@ -85,10 +88,11 @@ internal sealed class AndroidPairingPanel : UserControl
     private bool _tickHandlerAdded;
     private bool _healthCheckInProgress;
 
-    public AndroidPairingPanel(JmdroidApiServer server, bool useHttp, Func<bool, string?> saveTransportPreference)
+    public AndroidPairingPanel(JmdroidApiServer server, bool useHttp, int screenShareMaxFps, Func<bool, string?> saveTransportPreference, Func<int, string?> saveScreenShareFpsPreference)
     {
         _server = server;
         _saveTransportPreference = saveTransportPreference;
+        _saveScreenShareFpsPreference = saveScreenShareFpsPreference;
         _httpPairingCheckBox.IsChecked = useHttp;
         _httpsHealthCheckClient = new HttpClient(new HttpClientHandler
         {
@@ -176,6 +180,11 @@ internal sealed class AndroidPairingPanel : UserControl
         details.Children.Add(addressRow);
         details.Children.Add(_httpDiagnosticCheckBox);
         details.Children.Add(_httpPairingCheckBox);
+        details.Children.Add(new TextBlock { Text = "Limite da transmissão de tela", Foreground = new SolidColorBrush(MutedColor), FontSize = 11, Margin = new Thickness(0, 5, 0, 0) });
+        _screenShareFpsSelector.ItemsSource = Enumerable.Range(JmdroidScreenSharePolicy.DefaultMaxFramesPerSecond, JmdroidScreenSharePolicy.MaxFramesPerSecond - JmdroidScreenSharePolicy.DefaultMaxFramesPerSecond + 1);
+        _screenShareFpsSelector.SelectedItem = JmdroidScreenSharePolicy.NormalizeFramesPerSecond(screenShareMaxFps);
+        _screenShareFpsSelector.ToolTip = "Limite máximo de quadros por segundo enviado ao Android; a alteração vale para a próxima transmissão.";
+        details.Children.Add(_screenShareFpsSelector);
         var healthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
         healthStatus.Children.Add(_httpHealthIndicator);
         healthStatus.Children.Add(new TextBlock { Text = " ", Width = 5 });
@@ -245,6 +254,13 @@ internal sealed class AndroidPairingPanel : UserControl
         };
         _httpPairingCheckBox.Checked += async (_, _) => await PairingTransportChangedAsync(true);
         _httpPairingCheckBox.Unchecked += async (_, _) => await PairingTransportChangedAsync(false);
+        _screenShareFpsSelector.SelectionChanged += (_, _) =>
+        {
+            if (_screenShareFpsSelector.SelectedItem is not int fps) return;
+            var error = _saveScreenShareFpsPreference(fps);
+            if (error is null) _server.ScreenShareMaxFps = fps;
+            else _status.Text = $"Não foi possível salvar o limite de FPS: {error}";
+        };
         Content = root;
 
     }

@@ -377,6 +377,7 @@ internal sealed class UserSettings
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
     public List<JmdroidPairedDevice> JmdroidDevices { get; set; } = [];
     public bool JmdroidUseHttp { get; set; }
+    public int JmdroidScreenShareMaxFps { get; set; } = JmdroidScreenSharePolicy.DefaultMaxFramesPerSecond;
     public bool JmdroidWorkflowPermissionsMigrated { get; set; } = true;
     public List<WorkflowVariableEntry> WorkflowVariables { get; set; } = [];
     public BusinessmapIntegrationSettings Businessmap { get; set; } = new();
@@ -489,6 +490,7 @@ internal sealed class SettingsStore
                     loaded.Snippets ??= [];
                     loaded.CustomShortcuts ??= [];
                     loaded.JmdroidDevices ??= [];
+                    loaded.JmdroidScreenShareMaxFps = JmdroidScreenSharePolicy.NormalizeFramesPerSecond(loaded.JmdroidScreenShareMaxFps);
                     loaded.WorkflowVariables ??= [];
                     loaded.Businessmap ??= new BusinessmapIntegrationSettings();
                     loaded.Businessmap.Boards ??= [];

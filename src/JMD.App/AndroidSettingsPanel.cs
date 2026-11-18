@@ -22,9 +22,9 @@ internal sealed class AndroidSettingsPanel : UserControl
     private readonly Button _connectButton;
     private bool _connectSelected;
 
-    public AndroidSettingsPanel(JmdroidApiServer server, bool useHttp, Func<bool, string?> saveTransportPreference)
+    public AndroidSettingsPanel(JmdroidApiServer server, bool useHttp, int screenShareMaxFps, Func<bool, string?> saveTransportPreference, Func<int, string?> saveScreenShareFpsPreference)
     {
-        _pairingPanel = new AndroidPairingPanel(server, useHttp, saveTransportPreference);
+        _pairingPanel = new AndroidPairingPanel(server, useHttp, screenShareMaxFps, saveTransportPreference, saveScreenShareFpsPreference);
         _installScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,

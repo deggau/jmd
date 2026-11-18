@@ -9,8 +9,7 @@ Este documento define como o JMDroid pode parear com uma instância do JMD na me
 - O computador precisa estar ligado, com o JMD aberto e acessível pela rede local. O app não executa comandos do computador quando ele está desligado.
 - A primeira versão aceita conexão na mesma rede local. Não se deve publicar a porta do JMD diretamente na internet.
 - A API usa HTTPS por padrão. Opcionalmente, o usuário pode selecionar HTTP para uma rede local confiável; nesse modo, todo o tráfego fica sem criptografia e `certificateSha256` fica vazio. Não exponha a porta fora da rede privada.
-- A API só abre o listener enquanto a tela de pareamento por QR estiver aberta ou enquanto existir pelo menos uma sessão WebSocket autenticada. Fechar a tela encerra o listener quando não houver sessão conectada; terminar a última sessão também o encerra.
-- Se o listener tiver sido encerrado após uma desconexão, o usuário precisa abrir novamente **Configurações > Android > Conectar** no JMD desktop para permitir uma nova conexão. Reconexão automática com o listener fechado não é possível.
+- Com pelo menos um aparelho pareado, o JMD mantém o listener ativo enquanto o aplicativo desktop estiver aberto e inicia o serviço novamente ao abrir o JMD. Isso permite que o celular reconecte sem reabrir a tela do QR. Sem aparelhos pareados, o serviço encerra após uma hora sem atividade, salvo enquanto a tela de pareamento estiver aberta.
 
 ## Pareamento e autenticação
 
@@ -93,7 +92,7 @@ Authorization: Bearer {accessToken}
 Upgrade: websocket
 ```
 
-O JMDroid mantém uma sessão WebSocket (`wss://` em HTTPS ou `ws://` em HTTP) enquanto estiver conectado. A sessão conta para o ciclo de vida do listener e permite ao desktop exibir o aparelho como conectado. O servidor fecha a sessão e a API ao revogar o aparelho ou encerrar a última conexão quando a tela de pareamento estiver fechada.
+O JMDroid mantém uma sessão WebSocket (`wss://` em HTTPS ou `ws://` em HTTP) enquanto estiver conectado. A sessão conta para o ciclo de vida do listener e permite ao desktop exibir o aparelho como conectado. Ao revogar o aparelho, o servidor invalida o token e fecha suas sessões. Uma desconexão normal encerra aquela sessão; se o aparelho continuar pareado, o listener permanece ativo para permitir reconexão.
 
 Mensagem inicial do servidor:
 
@@ -106,6 +105,143 @@ Mensagem inicial do servidor:
 ```
 
 O servidor envia pings WebSocket de protocolo para manter a sessão e detectar desconexões; clientes WebSocket Android respondem automaticamente no protocolo. O token deve ser enviado apenas em HTTPS/WSS no modo HTTPS. Em HTTP, ele trafega sem criptografia na rede local e nunca deve aparecer em logs.
+
+## Compartilhar a tela do Android
+
+### Visão geral e início pelos dois lados
+
+A transmissão usa a sessão WebSocket autenticada já aberta em `GET /api/v1/session`. **Não abra outro socket para as imagens.** O JMD desktop recebe os quadros e os mostra em uma janela; o protocolo envia somente imagem, sem áudio, comandos de toque ou teclado remoto.
+
+A mesma ação pode iniciar o fluxo pelo computador ou pelo celular:
+
+1. **Computador → celular:** no JMD, o usuário escolhe **Ver tela do celular**. Se houver mais de um Android conectado, escolhe o aparelho. O JMD envia `screen_share.start` pelo WebSocket. O app Android precisa estar conectado para receber o pedido.
+2. **Celular → computador:** no catálogo de comandos retornado por `GET /api/v1/commands`, o app mostra `screenShare` como **Ver tela do celular**. Ao selecionar, o app chama `POST /api/v1/commands/screenShare/execute`. O JMD responde à chamada HTTP e, em paralelo, envia o mesmo `screen_share.start` pelo WebSocket daquela sessão.
+
+Nos dois casos, quem inicia é apenas o pedido. O Android sempre apresenta o consentimento de captura do sistema, e só começa a transmitir depois da autorização. O comando remoto não contorna a confirmação do Android.
+
+O fluxo de estados esperado no cliente é `ocioso → pedido recebido → aguardando consentimento → transmitindo → encerrando → ocioso`. O Android pode também encerrar a transmissão a qualquer momento, por exemplo, quando o usuário a interromper pela interface do sistema.
+
+### Iniciar pelo catálogo de comandos
+
+O item `screenShare` aparece no catálogo com schema de entrada vazio. Execute-o como qualquer outro comando:
+
+```http
+POST /api/v1/commands/screenShare/execute
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+```
+
+```json
+{
+  "requestId": "uuid-unico-por-acao",
+  "input": {}
+}
+```
+
+Resposta quando o pedido foi enviado ao WebSocket:
+
+```json
+{
+  "requestId": "uuid-unico-por-acao",
+  "commandId": "screenShare",
+  "status": "succeeded",
+  "result": {
+    "text": "Solicitação enviada. Autorize a captura de tela no Android para iniciar a transmissão."
+  },
+  "error": null
+}
+```
+
+`succeeded` significa somente que o JMD conseguiu enviar o pedido; **não** confirma consentimento nem que o primeiro quadro chegou. O app deve acompanhar o WebSocket para observar o início, a falha e o encerramento. Um aparelho desconectado resulta em `status: "failed"`. Gere um `requestId` novo para cada ação deliberada. Repetir o mesmo ID devolve o resultado já armazenado pelo JMD, evitando iniciar a mesma ação duas vezes.
+
+### Pedido de início enviado pelo JMD
+
+O Android deve estar preparado para receber o controle `screen_share.start` a qualquer momento após `session.ready`, independente de qual lado iniciou a ação:
+
+```json
+{
+  "type": "screen_share.start",
+  "shareId": "id-opaco-da-transmissao",
+  "maxFps": 30,
+  "maxDimension": 2400,
+  "maxFrameBytes": 2097152,
+  "format": "jpeg",
+  "quality": 65
+}
+```
+
+Todos os campos são definidos pelo JMD. `shareId` identifica essa transmissão e deve ser copiado sem alterações para todas as respostas de controle. `maxFps` é o limite de envio configurado no desktop (12–60 FPS; o padrão é 12); respeite-o mesmo se o codificador conseguir produzir mais quadros. `maxDimension` limita o maior lado da imagem a 2400 pixels. `maxFrameBytes` limita cada JPEG a 2.097.152 bytes (2 MiB). `format` define JPEG e `quality` é a qualidade JPEG solicitada (0–100; o valor atual do JMD é 65).
+
+Se já houver um pedido ativo com o mesmo `shareId`, trate-o como duplicado: não abra uma segunda captura nem peça consentimento novamente. Deve haver no máximo uma transmissão ativa por aparelho.
+
+### Consentimento e confirmação de início
+
+Ao receber um novo `screen_share.start`, solicite a captura pelo mecanismo oficial do Android. Depois do consentimento, inicie a captura e envie **uma** mensagem de texto:
+
+```json
+{
+  "type": "screen_share.started",
+  "shareId": "id-opaco-da-transmissao",
+  "width": 1080,
+  "height": 2400,
+  "rotation": 0,
+  "format": "jpeg"
+}
+```
+
+`width` e `height` são as dimensões do quadro JPEG que será enviado; `rotation` é a rotação atual em graus (`0`, `90`, `180` ou `270`). Envie `started` antes do primeiro quadro. Se o usuário negar a permissão ou a captura não puder começar, envie `screen_share.error` com o mesmo `shareId` e uma mensagem curta para exibição:
+
+```json
+{
+  "type": "screen_share.error",
+  "shareId": "id-opaco-da-transmissao",
+  "message": "permissão negada"
+}
+```
+
+Após `error`, libere recursos locais e volte ao estado ocioso. O JMD encerra o pedido e mostra essa mensagem na janela do aparelho.
+
+### Envio de quadros
+
+Depois de `screen_share.started`, envie cada quadro como **uma mensagem WebSocket binária completa**, cujo payload é somente um JPEG (sem JSON, cabeçalho próprio, tamanho ou prefixo). Não divida um JPEG em mensagens WebSocket separadas. Exemplo conceitual:
+
+```text
+WebSocket TEXT:   {"type":"screen_share.started", ...}
+WebSocket BINARY: FF D8 ... FF D9   (um JPEG completo)
+WebSocket BINARY: FF D8 ... FF D9   (quadro seguinte)
+```
+
+O cliente deve:
+
+- manter o aspecto da imagem e nunca exceder `maxDimension` no maior lado;
+- codificar em JPEG usando `quality` como referência e manter cada mensagem até `maxFrameBytes`;
+- enviar no máximo `maxFps` quadros por segundo. Pode enviar menos para reduzir CPU, aquecimento e tráfego;
+- enviar somente o quadro mais recente disponível, descartando quadros atrasados em vez de acumular uma fila crescente;
+- enviar quadros apenas para o `shareId` atualmente ativo e pela mesma sessão autenticada que recebeu o pedido.
+
+O JMD confere os marcadores de início/fim JPEG, rejeita quadros acima de 2 MiB e aplica o limite de FPS selecionado no desktop. Quadros que ultrapassam a taxa são descartados. O JMD **não decodifica nem valida as dimensões declaradas**; cabe ao cliente respeitar `maxDimension`. Uma mensagem binária maior que 2 MiB encerra o WebSocket com `MessageTooBig`; por isso, dimensione/reduza a qualidade antes de enviar.
+
+### Parada e limpeza
+
+Se o usuário fechar a janela do compartilhamento no desktop, o JMD envia:
+
+```json
+{ "type": "screen_share.stop", "shareId": "id-opaco-da-transmissao" }
+```
+
+Ao receber esse controle, pare a produção e o envio de quadros, encerre a sessão `MediaProjection`, libere `VirtualDisplay`, `Surface` e demais recursos e responda uma vez:
+
+```json
+{ "type": "screen_share.stopped", "shareId": "id-opaco-da-transmissao" }
+```
+
+Se o Android encerrar primeiro (usuário parou pelo sistema, bloqueio de tela, projeção revogada ou erro após iniciar), faça a mesma limpeza local e envie `screen_share.stopped`. `screen_share.error` é para falha ao iniciar; para uma sessão que já iniciou, use `screen_share.stopped`. Ao perder o WebSocket, pare a captura e libere recursos sem esperar reconexão. Ignore controles cujo `shareId` não corresponda à transmissão ativa. Não envie `screen_share.stop` em resposta a `screen_share.stop`.
+
+### Requisitos Android e privacidade
+
+Use `MediaProjection` e mantenha a captura em um serviço de primeiro plano pelo tempo em que ela estiver ativa, com o tipo de serviço e permissões exigidos pelo nível de API alvo. Para apps que **target Android 14 (API 34) ou superior**, a documentação exige declarar `FOREGROUND_SERVICE` e `FOREGROUND_SERVICE_MEDIA_PROJECTION`, além de um serviço com `android:foregroundServiceType="mediaProjection"`. Solicite consentimento antes de cada sessão e use o token de projeção apenas uma vez; não reutilize o token para reiniciar a captura. Registre `MediaProjection.Callback.onStop()` para limpar os recursos quando o sistema ou o usuário encerrar a projeção. Em Android 15 QPR1 ou posterior, o indicador de projeção do sistema também permite que o usuário interrompa o compartilhamento.
+
+Consulte a documentação oficial de [MediaProjection](https://developer.android.com/media/grow/media-projection) para o fluxo de consentimento, configuração do serviço, mudanças de tamanho/rotação e limpeza. A janela local do app pode ser iniciada por uma ação do usuário; quando o pedido veio do desktop e o Android restringir abrir a tela de consentimento em segundo plano, mostre uma notificação tocável para o usuário continuar. Nunca inicie ou retome a captura silenciosamente.
 
 ## Listar e filtrar comandos
 

@@ -113,6 +113,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<TodoTask> _todoTasks;
     private TodoTaskPanelWindow? _todoTaskPanel;
     private JmdroidApiServer? _jmdroidApiServer;
+    private readonly Dictionary<string, AndroidScreenShareWindow> _androidScreenShareWindows = new(StringComparer.Ordinal);
     private TodoTaskApiService? _todoTaskApiService;
     private AndroidSettingsPanel? _androidSettingsPanel;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
@@ -339,6 +340,8 @@ public partial class MainWindow : Window
         {
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("todoPanelClose")
         });
+        _commands.Add(new CommandRow("screenShare", "Ver tela do celular",
+            "Abre a tela de um Android conectado e solicita autorização para transmitir.", "Sem atalho"));
         _commands.Add(new CommandRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.", "Sem atalho")
         {
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("about")
@@ -1629,6 +1632,9 @@ public partial class MainWindow : Window
                     break;
                 case "todoPanelClose":
                     _todoTaskPanel?.Hide();
+                    break;
+                case "screenShare":
+                    await StartAndroidScreenShareFromDesktopAsync();
                     break;
                 case "palette":
                     ShowPalette();
@@ -2999,6 +3005,7 @@ public partial class MainWindow : Window
         else if (id == "todoCreate") await CreateTodoTaskAsync();
         else if (id == "todoPanel") ShowTodoTaskPanel();
         else if (id == "todoPanelClose") _todoTaskPanel?.Hide();
+        else if (id == "screenShare") await StartAndroidScreenShareFromDesktopAsync();
         else if (id == "about") AboutMenuItem_Click(this, new RoutedEventArgs());
         else if (id == "checkUpdates")
         {
@@ -4413,16 +4420,73 @@ public partial class MainWindow : Window
             taskApi.TasksChanged += RefreshTodoTasksFromApi;
             _todoTaskApiService = taskApi;
         }
-        _jmdroidApiServer ??= new JmdroidApiServer(
-            GetJmdroidApiCommands,
-            ExecuteJmdroidCommandAsync,
-            _settings.JmdroidDevices,
-            () => _settingsStore.Save(_settings),
-            taskApi,
-            () => string.IsNullOrWhiteSpace(_settings.Businessmap.TaskAttachmentsFolder)
-                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JMD", "TaskAttachments")
-                : _settings.Businessmap.TaskAttachmentsFolder);
+        if (_jmdroidApiServer is null)
+        {
+            _jmdroidApiServer = new JmdroidApiServer(
+                GetJmdroidApiCommands,
+                ExecuteJmdroidCommandAsync,
+                _settings.JmdroidDevices,
+                () => _settingsStore.Save(_settings),
+                taskApi,
+                () => string.IsNullOrWhiteSpace(_settings.Businessmap.TaskAttachmentsFolder)
+                    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JMD", "TaskAttachments")
+                    : _settings.Businessmap.TaskAttachmentsFolder)
+            {
+                ScreenShareMaxFps = _settings.JmdroidScreenShareMaxFps
+            };
+            _jmdroidApiServer.ScreenShareRequested += ShowAndroidScreenShareWindow;
+            _jmdroidApiServer.ScreenShareFrameReceived += UpdateAndroidScreenShareFrame;
+            _jmdroidApiServer.ScreenShareStatusChanged += UpdateAndroidScreenShareStatus;
+            _jmdroidApiServer.ScreenShareEnded += UpdateAndroidScreenShareStatus;
+        }
         return _jmdroidApiServer;
+    }
+
+    private void ShowAndroidScreenShareWindow(string deviceId, string deviceName, string shareId)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => ShowAndroidScreenShareWindow(deviceId, deviceName, shareId)));
+            return;
+        }
+        if (!_androidScreenShareWindows.TryGetValue(deviceId, out var window))
+        {
+            window = new AndroidScreenShareWindow(deviceId, deviceName);
+            _androidScreenShareWindows[deviceId] = window;
+            window.ClosedByUser += () =>
+            {
+                if (_androidScreenShareWindows.TryGetValue(deviceId, out var current) && ReferenceEquals(current, window))
+                {
+                    _androidScreenShareWindows.Remove(deviceId);
+                    _ = _jmdroidApiServer?.StopScreenShareAsync(deviceId);
+                }
+            };
+            window.Show();
+        }
+        else if (!window.IsVisible)
+            window.Show();
+        window.PrepareForShare();
+        window.Activate();
+    }
+
+    private void UpdateAndroidScreenShareFrame(string deviceId, ReadOnlyMemory<byte> frame)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => UpdateAndroidScreenShareFrame(deviceId, frame)));
+            return;
+        }
+        if (_androidScreenShareWindows.TryGetValue(deviceId, out var window)) window.ShowFrame(frame);
+    }
+
+    private void UpdateAndroidScreenShareStatus(string deviceId, string status)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => UpdateAndroidScreenShareStatus(deviceId, status)));
+            return;
+        }
+        if (_androidScreenShareWindows.TryGetValue(deviceId, out var window)) window.SetStatus(status);
     }
 
     public async Task StartJmdroidApiForPairedDevicesAsync()
@@ -4441,7 +4505,7 @@ public partial class MainWindow : Window
     private void AndroidMenuItem_Click(object sender, RoutedEventArgs e)
     {
         var server = EnsureJmdroidApiServer();
-        _androidSettingsPanel ??= new AndroidSettingsPanel(server, _settings.JmdroidUseHttp, SaveJmdroidTransportPreference);
+        _androidSettingsPanel ??= new AndroidSettingsPanel(server, _settings.JmdroidUseHttp, _settings.JmdroidScreenShareMaxFps, SaveJmdroidTransportPreference, SaveJmdroidScreenShareFpsPreference);
         AndroidSettingsHost.Content = _androidSettingsPanel;
         _navigation.ShowShortcutSettings();
         CommandsList.Visibility = Visibility.Collapsed;
@@ -4497,15 +4561,34 @@ public partial class MainWindow : Window
         }
     }
 
+    private string? SaveJmdroidScreenShareFpsPreference(int framesPerSecond)
+    {
+        var previous = _settings.JmdroidScreenShareMaxFps;
+        _settings.JmdroidScreenShareMaxFps = JmdroidScreenSharePolicy.NormalizeFramesPerSecond(framesPerSecond);
+        try
+        {
+            _settingsStore.Save(_settings);
+            return null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _settings.JmdroidScreenShareMaxFps = previous;
+            CriticalErrorLog.Write("Salvar limite de FPS da transmissão JMDroid", exception);
+            return exception.Message;
+        }
+    }
+
     private IReadOnlyList<JmdroidApiCommand> GetJmdroidApiCommands()
     {
         if (!Dispatcher.CheckAccess()) return Dispatcher.Invoke(GetJmdroidApiCommands);
-        var remoteIds = new HashSet<string>(["clipboard", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact"], StringComparer.Ordinal);
-        return _commands.Select(command =>
+        var remoteIds = new HashSet<string>(["clipboard", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact", "screenShare"], StringComparer.Ordinal);
+        var commands = _commands.Select(command =>
         {
-            var searchTerms = command.VoicePhrasesDisplay
-                .Replace("Jey:", string.Empty, StringComparison.CurrentCultureIgnoreCase)
-                .Split('·', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var searchTerms = command.Id == "screenShare"
+                ? new[] { "compartilhar tela", "espelhar tela", "streaming", "screen share" }
+                : command.VoicePhrasesDisplay
+                    .Replace("Jey:", string.Empty, StringComparison.CurrentCultureIgnoreCase)
+                    .Split('·', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             var enabled = !_settings.DisabledCommands.Contains(command.Id);
             var custom = _settings.CustomShortcuts.FirstOrDefault(item => item.Id == command.Id);
             var available = enabled && (remoteIds.Contains(command.Id) || custom?.AllowJmdroidExecution == true);
@@ -4518,7 +4601,12 @@ public partial class MainWindow : Window
                     .Select(match => match.Groups[1].Value))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            object? inputSchema = custom is null ? null : new
+            object? inputSchema = command.Id == "screenShare" ? new
+            {
+                type = "object",
+                properties = new { },
+                additionalProperties = false
+            } : custom is null ? null : new
             {
                 type = "object",
                 properties = new
@@ -4533,7 +4621,34 @@ public partial class MainWindow : Window
             };
             return new JmdroidApiCommand(command.Id, command.Name, command.Description, command.Shortcut,
                 available, reason, searchTerms, custom is not null, inputSchema);
-        }).ToArray();
+        }).ToList();
+        return commands;
+    }
+
+    private async Task StartAndroidScreenShareFromDesktopAsync()
+    {
+        var server = EnsureJmdroidApiServer();
+        var connectedDevices = server.PairedDevices.Where(device => server.IsDeviceConnected(device.Id)).ToArray();
+        if (connectedDevices.Length == 0)
+        {
+            Notify("JMDroid", "Nenhum celular pareado está conectado. Abra o app no Android e tente novamente.", false);
+            return;
+        }
+
+        JmdroidPairedDevice? selectedDevice = connectedDevices[0];
+        if (connectedDevices.Length > 1)
+        {
+            var picker = new AndroidScreenShareDevicePickerWindow(connectedDevices);
+            if (picker.ShowDialog() != true) return;
+            selectedDevice = picker.SelectedDevice;
+        }
+        if (selectedDevice is null) return;
+
+        var result = await server.StartScreenShareAsync(selectedDevice);
+        if (result.Status == "succeeded")
+            Notify("JMDroid", $"{result.Text} Confirme a solicitação no Android.", true);
+        else
+            Notify("JMDroid", result.Error ?? "Não foi possível iniciar o compartilhamento.", false);
     }
 
     private async Task<JmdroidExecutionResult> ExecuteJmdroidCommandAsync(
@@ -5083,6 +5198,7 @@ public partial class MainWindow : Window
                 await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
             if (id == "snippets") await InsertSavedSnippetAsync();
             if (id == "saveSnippet") await CaptureSnippetAsync();
+            if (id == "screenShare") await StartAndroidScreenShareFromDesktopAsync();
             if (SystemPowerCommandCatalog.TryGet(id, out _) && !ExecuteSystemPowerCommand(id))
             {
                 executionContext.Failed = true;
