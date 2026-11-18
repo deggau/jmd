@@ -24,7 +24,7 @@ internal sealed class CustomShortcutEditorWindow : Window
     private readonly TextBox _shortcut = CreateBox(36);
     private readonly TextBox _phrases = CreateBox(64, multiline: true);
     private readonly CheckBox _focusIfAlreadyOpen = new() { Content = "Se já estiver aberto, trazer para frente", Foreground = Brushes.White, FontSize = 12, Margin = new Thickness(2, 8, 0, 0) };
-    private readonly CheckBox _allowJmdroidExecution = new() { Content = "Permitir execução pelo JMDroid (Android)", Foreground = Brushes.White, FontSize = 12, Margin = new Thickness(2, 8, 0, 0) };
+    private readonly CheckBox _blockJmdroidExecution = new() { Content = "Bloquear execução pelo JMDroid (Android)", Foreground = Brushes.White, FontSize = 12, Margin = new Thickness(2, 8, 0, 0) };
     private readonly StackPanel _stepsPanel = new();
     private readonly List<StepDraft> _steps = [];
     private readonly Func<CustomShortcutEditorWindow, string?>? _validate;
@@ -45,7 +45,7 @@ internal sealed class CustomShortcutEditorWindow : Window
     public string Shortcut => _shortcut.Text.Trim();
     public string[] VoicePhrases => _phrases.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     public bool FocusIfAlreadyOpen => _focusIfAlreadyOpen.IsChecked == true;
-    public bool AllowJmdroidExecution => _allowJmdroidExecution.IsChecked == true;
+    public bool BlockJmdroidExecution => _blockJmdroidExecution.IsChecked == true;
     public bool ShowEditorDialog()
     {
         _accepted = false;
@@ -87,7 +87,7 @@ internal sealed class CustomShortcutEditorWindow : Window
             _name.Text = existing.Name;
             _shortcut.Text = existing.Shortcut;
             _focusIfAlreadyOpen.IsChecked = existing.FocusIfAlreadyOpen;
-            _allowJmdroidExecution.IsChecked = existing.AllowJmdroidExecution;
+            _blockJmdroidExecution.IsChecked = !existing.AllowJmdroidExecution;
             _phrases.Text = string.Join(Environment.NewLine, existingPhrases ?? []);
             if (existing.Steps.Count > 0)
                 _steps.AddRange(existing.Steps.Select(step => new StepDraft(step.Action, step.Value,
@@ -272,7 +272,7 @@ internal sealed class CustomShortcutEditorWindow : Window
         form.Children.Add(addStep);
         _focusIfAlreadyOpen.IsChecked = existing?.FocusIfAlreadyOpen == true;
         form.Children.Add(_focusIfAlreadyOpen);
-        form.Children.Add(_allowJmdroidExecution);
+        form.Children.Add(_blockJmdroidExecution);
         form.Children.Add(new TextBlock
         {
             Text = "O JMDroid poderá executar este workflow neste computador. As etapas podem abrir programas, digitar ou interagir com janelas. Ative somente para comandos que você quer controlar pelo celular.",

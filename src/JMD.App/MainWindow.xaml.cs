@@ -1067,7 +1067,7 @@ public partial class MainWindow : Window
         var target = steps.FirstOrDefault(step => step.Action == "Open")?.Value ?? string.Empty;
         var shortcutText = dialog.Shortcut;
         var focusIfAlreadyOpen = dialog.FocusIfAlreadyOpen;
-        var allowJmdroidExecution = dialog.AllowJmdroidExecution;
+        var allowJmdroidExecution = !dialog.BlockJmdroidExecution;
         var phrases = dialog.VoicePhrases.ToList();
         var error = ValidateCustomWorkflowDraft(dialog, existing?.Id);
         if (error is not null)
@@ -4488,7 +4488,7 @@ public partial class MainWindow : Window
             var available = enabled && (remoteIds.Contains(command.Id) || custom?.AllowJmdroidExecution == true);
             var reason = !enabled ? "Este comando está desativado nas configurações do JMD."
                 : available ? null : custom is not null
-                    ? "A execução remota está desativada. Habilite ‘Permitir execução pelo JMDroid (Android)’ ao editar este comando."
+                    ? "A execução pelo JMDroid está bloqueada. Desmarque ‘Bloquear execução pelo JMDroid (Android)’ ao editar este workflow."
                     : "Este comando depende de interação com o computador e não pode ser executado remotamente.";
             var variables = custom is null ? [] : custom.Steps
                 .SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}")

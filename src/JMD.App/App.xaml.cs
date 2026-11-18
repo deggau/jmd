@@ -375,6 +375,7 @@ internal sealed class UserSettings
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
     public List<JmdroidPairedDevice> JmdroidDevices { get; set; } = [];
     public bool JmdroidUseHttp { get; set; }
+    public bool JmdroidWorkflowPermissionsMigrated { get; set; } = true;
     public List<WorkflowVariableEntry> WorkflowVariables { get; set; } = [];
     public BusinessmapIntegrationSettings Businessmap { get; set; } = new();
 
@@ -426,7 +427,7 @@ internal sealed class CustomShortcutEntry
     public string Target { get; set; } = string.Empty;
     public string Shortcut { get; set; } = string.Empty;
     public bool FocusIfAlreadyOpen { get; set; }
-    public bool AllowJmdroidExecution { get; set; }
+    public bool AllowJmdroidExecution { get; set; } = true;
     public List<CustomWorkflowStep> Steps { get; set; } = [];
 }
 
@@ -462,9 +463,18 @@ internal sealed class SettingsStore
         {
             if (File.Exists(_path))
             {
-                var loaded = JsonSerializer.Deserialize<UserSettings>(File.ReadAllText(_path));
+                var settingsJson = File.ReadAllText(_path);
+                var loaded = JsonSerializer.Deserialize<UserSettings>(settingsJson);
                 if (loaded is not null)
                 {
+                    using var settingsDocument = JsonDocument.Parse(settingsJson);
+                    if (!settingsDocument.RootElement.TryGetProperty(nameof(UserSettings.JmdroidWorkflowPermissionsMigrated), out var migrationMarker) ||
+                        migrationMarker.ValueKind != JsonValueKind.True)
+                    {
+                        foreach (var workflow in loaded.CustomShortcuts ?? [])
+                            workflow.AllowJmdroidExecution = true;
+                        loaded.JmdroidWorkflowPermissionsMigrated = true;
+                    }
                     loaded.Shortcuts ??= new Dictionary<string, string>(StringComparer.Ordinal);
                     loaded.Shortcuts.TryAdd("todoCreate", "Ctrl+Alt+T");
                     loaded.Shortcuts.TryAdd("todoPanel", "Ctrl+Alt+Left");
