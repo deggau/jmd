@@ -77,6 +77,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, ConcurrentBag<WebSocket>> _deviceSockets = new(StringComparer.Ordinal);
     private readonly ConditionalWeakTable<WebSocket, SemaphoreSlim> _socketSendLocks = new();
     private readonly ConcurrentDictionary<string, ActiveScreenShare> _screenShares = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ActiveDesktopScreenShare> _desktopScreenShares = new(StringComparer.Ordinal);
     private CancellationTokenSource? _idleStopCancellation;
     private WebApplication? _application;
     private X509Certificate2? _certificate;
@@ -98,6 +99,8 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     public event Action<string, ReadOnlyMemory<byte>>? ScreenShareFrameReceived;
     public event Action<string, string>? ScreenShareEnded;
     public event Action<string, string>? ScreenShareStatusChanged;
+    public event Action<string, string, string, int, int, int>? DesktopScreenShareReady;
+    public event Action<string, string>? DesktopScreenShareEnded;
 
     public int ScreenShareMaxFps
     {
@@ -187,6 +190,108 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         }
         catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or OperationCanceledException) { }
         ScreenShareEnded?.Invoke(deviceId, "Compartilhamento encerrado.");
+    }
+
+    public bool IsDesktopScreenShareActive(string deviceId) => _desktopScreenShares.ContainsKey(deviceId);
+
+    public async Task<JmdroidExecutionResult> StartDesktopScreenShareAsync(JmdroidPairedDevice device, CancellationToken cancellationToken = default)
+    {
+        if (!_deviceSockets.TryGetValue(device.Id, out var sockets))
+            return new JmdroidExecutionResult("failed", Error: "O celular não está conectado ao JMD. Abra o app e tente novamente.");
+        var socket = sockets.FirstOrDefault(candidate => candidate.State == WebSocketState.Open);
+        if (socket is null)
+            return new JmdroidExecutionResult("failed", Error: "O celular não está conectado ao JMD. Abra o app e tente novamente.");
+
+        if (_desktopScreenShares.TryGetValue(device.Id, out var existing))
+        {
+            if (existing.Socket == socket)
+            {
+                try
+                {
+                    await SendDesktopScreenShareStartAsync(existing, cancellationToken);
+                    return new JmdroidExecutionResult("succeeded", "O pedido para mostrar a tela do computador foi reenviado ao celular.");
+                }
+                catch (Exception exception) when (exception is WebSocketException or OperationCanceledException or ObjectDisposedException)
+                {
+                    _desktopScreenShares.TryRemove(device.Id, out _);
+                    DesktopScreenShareEnded?.Invoke(device.Id, "A conexão com o Android foi encerrada.");
+                    return new JmdroidExecutionResult("failed", Error: "A conexão com o Android foi encerrada.");
+                }
+            }
+            await StopDesktopScreenShareAsync(device.Id);
+        }
+
+        var share = new ActiveDesktopScreenShare(Guid.NewGuid().ToString("N"), device.Name, socket, ScreenShareMaxFps);
+        if (!_desktopScreenShares.TryAdd(device.Id, share))
+            return await StartDesktopScreenShareAsync(device, cancellationToken);
+
+        try
+        {
+            await SendDesktopScreenShareStartAsync(share, cancellationToken);
+            return new JmdroidExecutionResult("succeeded", "Pedido enviado. O celular abrirá a visualização e informará a resolução para otimizar a transmissão.");
+        }
+        catch (Exception exception) when (exception is WebSocketException or OperationCanceledException or ObjectDisposedException)
+        {
+            _desktopScreenShares.TryRemove(device.Id, out _);
+            DesktopScreenShareEnded?.Invoke(device.Id, "Não foi possível solicitar a visualização da tela do computador.");
+            return new JmdroidExecutionResult("failed", Error: "Não foi possível solicitar a visualização da tela do computador.");
+        }
+    }
+
+    private Task SendDesktopScreenShareStartAsync(ActiveDesktopScreenShare share, CancellationToken cancellationToken)
+        => SendSessionMessageAsync(share.Socket, new
+        {
+            type = "desktop_screen_share.start",
+            shareId = share.ShareId,
+            maxFps = share.MaxFps,
+            maxDimension = JmdroidScreenSharePolicy.DesktopToAndroidMaxDimension,
+            maxFrameBytes = JmdroidScreenSharePolicy.DesktopToAndroidMaxFrameBytes,
+            format = "jpeg",
+            quality = JmdroidScreenSharePolicy.DesktopToAndroidJpegQuality
+        }, cancellationToken);
+
+    public async Task StopDesktopScreenShareAsync(string deviceId)
+    {
+        if (!_desktopScreenShares.TryRemove(deviceId, out var share)) return;
+        try
+        {
+            if (share.Socket.State == WebSocketState.Open)
+                await SendSessionMessageAsync(share.Socket, new { type = "desktop_screen_share.stop", shareId = share.ShareId }, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or OperationCanceledException) { }
+        DesktopScreenShareEnded?.Invoke(deviceId, "Compartilhamento encerrado.");
+    }
+
+    public async Task SendDesktopScreenShareFrameAsync(string deviceId, string shareId, byte[] jpeg, CancellationToken cancellationToken)
+    {
+        if (jpeg.Length > JmdroidScreenSharePolicy.DesktopToAndroidMaxFrameBytes || !JmdroidScreenSharePolicy.IsValidJpegFrame(jpeg))
+            throw new InvalidDataException("O quadro JPEG excede o limite de tamanho ou não é válido.");
+        if (!_desktopScreenShares.TryGetValue(deviceId, out var share) || share.ShareId != shareId || !share.IsReady) return;
+        if (share.Socket.State != WebSocketState.Open)
+            throw new WebSocketException("A sessão do celular foi desconectada.");
+
+        var sendLock = _socketSendLocks.GetValue(share.Socket, _ => new SemaphoreSlim(1, 1));
+        await sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (share.Socket.State != WebSocketState.Open)
+                throw new WebSocketException("A sessão do celular foi desconectada.");
+            await share.Socket.SendAsync(new ArraySegment<byte>(jpeg), WebSocketMessageType.Binary, true, cancellationToken);
+        }
+        finally { sendLock.Release(); }
+    }
+
+    public async Task FailDesktopScreenShareAsync(string deviceId, string shareId, string message)
+    {
+        if (!_desktopScreenShares.TryGetValue(deviceId, out var share) || share.ShareId != shareId) return;
+        try
+        {
+            if (share.Socket.State == WebSocketState.Open)
+                await SendSessionMessageAsync(share.Socket, new { type = "desktop_screen_share.error", shareId, message }, CancellationToken.None);
+        }
+        catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or OperationCanceledException) { }
+        _desktopScreenShares.TryRemove(deviceId, out _);
+        DesktopScreenShareEnded?.Invoke(deviceId, message);
     }
 
     public async Task<JmdroidPairingInfo> OpenPairingScreenAsync(
@@ -306,6 +411,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             _saveSettings();
         }
         await StopScreenShareAsync(deviceId);
+        await StopDesktopScreenShareAsync(deviceId);
         if (_deviceSockets.TryRemove(deviceId, out var sockets))
         {
             foreach (var socket in sockets)
@@ -579,9 +685,12 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             }
             var cacheKey = $"{device!.Id}:{body.RequestId}";
             var execution = _executions.GetOrAdd(cacheKey, _ => new Lazy<Task<JmdroidExecutionResult>>(
-                () => commandId == "screenShare"
-                    ? StartScreenShareAsync(device, CancellationToken.None)
-                    : _executeCommand(commandId, body.Input.Clone(), CancellationToken.None),
+                () => commandId switch
+                {
+                    "screenShare" => StartScreenShareAsync(device, CancellationToken.None),
+                    "desktopScreenShare" => StartDesktopScreenShareAsync(device, CancellationToken.None),
+                    _ => _executeCommand(commandId, body.Input.Clone(), CancellationToken.None)
+                },
                 LazyThreadSafetyMode.ExecutionAndPublication));
             JmdroidExecutionResult result;
             try { result = await execution.Value; }
@@ -964,6 +1073,11 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                 _screenShares.TryRemove(device.Id, out _);
                 ScreenShareEnded?.Invoke(device.Id, "A conexão com o Android foi encerrada.");
             }
+            if (_desktopScreenShares.TryGetValue(device.Id, out var desktopShare) && ReferenceEquals(desktopShare.Socket, socket))
+            {
+                _desktopScreenShares.TryRemove(device.Id, out _);
+                DesktopScreenShareEnded?.Invoke(device.Id, "A conexão com o Android foi encerrada.");
+            }
             lock (_connectionLock)
             {
                 if (_activeConnections.TryGetValue(device.Id, out var count))
@@ -989,9 +1103,40 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             using var document = JsonDocument.Parse(message);
             var root = document.RootElement;
             if (!root.TryGetProperty("type", out var typeValue) || typeValue.ValueKind != JsonValueKind.String ||
-                !root.TryGetProperty("shareId", out var idValue) || idValue.ValueKind != JsonValueKind.String ||
-                !_screenShares.TryGetValue(deviceId, out var share) || !ReferenceEquals(share.Socket, socket)) return;
+                !root.TryGetProperty("shareId", out var idValue) || idValue.ValueKind != JsonValueKind.String) return;
             var type = typeValue.GetString();
+
+            if (_desktopScreenShares.TryGetValue(deviceId, out var desktopShare) && ReferenceEquals(desktopShare.Socket, socket) && idValue.GetString() == desktopShare.ShareId)
+            {
+                if (type == "desktop_screen_share.ready" &&
+                    root.TryGetProperty("width", out var widthValue) && widthValue.TryGetInt32(out var width) &&
+                    root.TryGetProperty("height", out var heightValue) && heightValue.TryGetInt32(out var height) &&
+                    width > 0 && height > 0)
+                {
+                    var target = JmdroidScreenSharePolicy.FitDimensions(width, height, JmdroidScreenSharePolicy.DesktopToAndroidMaxDimension);
+                    desktopShare.MarkReady();
+                    DesktopScreenShareReady?.Invoke(deviceId, desktopShare.DeviceName, desktopShare.ShareId, target.Width, target.Height, desktopShare.MaxFps);
+                }
+                else if (type == "desktop_screen_share.stop")
+                {
+                    _desktopScreenShares.TryRemove(deviceId, out _);
+                    _ = SendDesktopScreenShareStoppedSafelyAsync(socket, desktopShare.ShareId);
+                    DesktopScreenShareEnded?.Invoke(deviceId, "O compartilhamento foi encerrado no Android.");
+                }
+                else if (type is "desktop_screen_share.stopped" or "desktop_screen_share.error")
+                {
+                    var reason = root.TryGetProperty("message", out var messageValue) && messageValue.ValueKind == JsonValueKind.String
+                        ? messageValue.GetString()
+                        : null;
+                    _desktopScreenShares.TryRemove(deviceId, out _);
+                    DesktopScreenShareEnded?.Invoke(deviceId, string.IsNullOrWhiteSpace(reason)
+                        ? "O compartilhamento da tela do computador foi encerrado no Android."
+                        : reason);
+                }
+                return;
+            }
+
+            if (!_screenShares.TryGetValue(deviceId, out var share) || !ReferenceEquals(share.Socket, socket)) return;
             if (idValue.GetString() != share.ShareId) return;
 
             if (type == "screen_share.started")
@@ -1022,6 +1167,12 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 
     private async Task SendSessionMessageAsync(WebSocket socket, object message, CancellationToken cancellationToken)
         => await SendSessionBytesAsync(socket, JsonSerializer.SerializeToUtf8Bytes(message, JsonOptions), cancellationToken);
+
+    private async Task SendDesktopScreenShareStoppedSafelyAsync(WebSocket socket, string shareId)
+    {
+        try { await SendSessionMessageAsync(socket, new { type = "desktop_screen_share.stopped", shareId }, CancellationToken.None); }
+        catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or OperationCanceledException) { }
+    }
 
     private async Task SendSessionBytesAsync(WebSocket socket, byte[] message, CancellationToken cancellationToken)
     {
@@ -1353,6 +1504,8 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         CancelIdleShutdown();
         foreach (var deviceId in _screenShares.Keys.ToArray())
             await StopScreenShareAsync(deviceId);
+        foreach (var deviceId in _desktopScreenShares.Keys.ToArray())
+            await StopDesktopScreenShareAsync(deviceId);
         await _lifecycleLock.WaitAsync();
         try
         {
@@ -1386,6 +1539,17 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         public WebSocket Socket { get; } = socket;
 
         public bool TryAcceptFrame(DateTimeOffset now) => _frameThrottle.TryAccept(now);
+    }
+    private sealed class ActiveDesktopScreenShare(string shareId, string deviceName, WebSocket socket, int maxFps)
+    {
+        private int _isReady;
+
+        public string ShareId { get; } = shareId;
+        public string DeviceName { get; } = deviceName;
+        public WebSocket Socket { get; } = socket;
+        public int MaxFps { get; } = maxFps;
+        public bool IsReady => Volatile.Read(ref _isReady) == 1;
+        public void MarkReady() => Volatile.Write(ref _isReady, 1);
     }
     private sealed class PairingSession(string id, string secret, DateTimeOffset expiresAt)
     {

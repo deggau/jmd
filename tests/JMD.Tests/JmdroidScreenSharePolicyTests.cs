@@ -24,6 +24,33 @@ public sealed class JmdroidScreenSharePolicyTests
         Assert.Equal(12, JmdroidScreenSharePolicy.DefaultMaxFramesPerSecond);
         Assert.Equal(60, JmdroidScreenSharePolicy.MaxFramesPerSecond);
         Assert.Equal(2400, JmdroidScreenSharePolicy.MaxDimension);
+        Assert.Equal(512 * 1024, JmdroidScreenSharePolicy.DesktopToAndroidMaxFrameBytes);
+        Assert.Equal(1440, JmdroidScreenSharePolicy.DesktopToAndroidMaxDimension);
+    }
+
+    [Theory]
+    [InlineData(1080, 2400, 1440, 648, 1440)]
+    [InlineData(1920, 1080, 1440, 1440, 810)]
+    [InlineData(640, 480, 1440, 640, 480)]
+    public void Fits_capture_to_mobile_target_without_distorting_aspect_ratio(
+        int width, int height, int maxDimension, int expectedWidth, int expectedHeight)
+    {
+        var result = JmdroidScreenSharePolicy.FitDimensions(width, height, maxDimension);
+        Assert.Equal((expectedWidth, expectedHeight), result);
+    }
+
+    [Theory]
+    [InlineData(1920, 1080, 1080, 2400, 1440, 1080, 608)]
+    [InlineData(2560, 1440, 1080, 2400, 1440, 1080, 608)]
+    [InlineData(1920, 1080, 400, 400, 1440, 400, 225)]
+    [InlineData(640, 480, 1200, 1200, 1440, 640, 480)]
+    public void Fits_desktop_capture_inside_phone_viewport_without_upscaling_or_distortion(
+        int screenWidth, int screenHeight, int viewportWidth, int viewportHeight, int maxDimension,
+        int expectedWidth, int expectedHeight)
+    {
+        var result = JmdroidScreenSharePolicy.FitScreenToViewport(
+            screenWidth, screenHeight, viewportWidth, viewportHeight, maxDimension);
+        Assert.Equal((expectedWidth, expectedHeight), result);
     }
 
     [Theory]

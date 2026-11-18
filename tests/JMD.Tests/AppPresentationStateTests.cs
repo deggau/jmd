@@ -284,6 +284,14 @@ public sealed class AppPresentationStateTests
     }
 
     [Fact]
+    public void Desktop_screen_share_has_a_configurable_default_shortcut()
+    {
+        var shortcut = ShortcutDefaults.ForCommand("desktopScreenShare");
+        Assert.Equal("Ctrl+Alt+Shift+D", shortcut);
+        Assert.True(ShortcutParser.TryParse(shortcut, out _, out _));
+    }
+
+    [Fact]
     public void Voice_phrase_policy_detects_duplicate_phrases_across_commands()
     {
         Assert.True(VoicePhrasePolicy.ConflictsWith(["formatar json"], ["Formatar, JSON!"]));

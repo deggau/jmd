@@ -180,10 +180,10 @@ internal sealed class AndroidPairingPanel : UserControl
         details.Children.Add(addressRow);
         details.Children.Add(_httpDiagnosticCheckBox);
         details.Children.Add(_httpPairingCheckBox);
-        details.Children.Add(new TextBlock { Text = "Limite da transmissão de tela", Foreground = new SolidColorBrush(MutedColor), FontSize = 11, Margin = new Thickness(0, 5, 0, 0) });
+        details.Children.Add(new TextBlock { Text = "FPS máximo das transmissões de tela", Foreground = new SolidColorBrush(MutedColor), FontSize = 11, Margin = new Thickness(0, 5, 0, 0) });
         _screenShareFpsSelector.ItemsSource = Enumerable.Range(JmdroidScreenSharePolicy.DefaultMaxFramesPerSecond, JmdroidScreenSharePolicy.MaxFramesPerSecond - JmdroidScreenSharePolicy.DefaultMaxFramesPerSecond + 1);
         _screenShareFpsSelector.SelectedItem = JmdroidScreenSharePolicy.NormalizeFramesPerSecond(screenShareMaxFps);
-        _screenShareFpsSelector.ToolTip = "Limite máximo de quadros por segundo enviado ao Android; a alteração vale para a próxima transmissão.";
+        _screenShareFpsSelector.ToolTip = "Limite máximo de quadros por segundo nas transmissões iniciadas pelo JMDroid ou pelo computador.";
         details.Children.Add(_screenShareFpsSelector);
         var healthStatus = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
         healthStatus.Children.Add(_httpHealthIndicator);

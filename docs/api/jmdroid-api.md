@@ -243,6 +243,100 @@ Use `MediaProjection` e mantenha a captura em um serviço de primeiro plano pelo
 
 Consulte a documentação oficial de [MediaProjection](https://developer.android.com/media/grow/media-projection) para o fluxo de consentimento, configuração do serviço, mudanças de tamanho/rotação e limpeza. A janela local do app pode ser iniciada por uma ação do usuário; quando o pedido veio do desktop e o Android restringir abrir a tela de consentimento em segundo plano, mostre uma notificação tocável para o usuário continuar. Nunca inicie ou retome a captura silenciosamente.
 
+## Ver a tela do computador no Android
+
+Neste fluxo a direção da imagem é inversa: o JMD captura a **tela principal do computador**, reduz os quadros ao tamanho de visualização informado pelo Android e envia JPEGs ao celular. O JMDroid não precisa usar `MediaProjection`; ele precisa abrir uma tela/visualizador e consumir mensagens binárias do WebSocket autenticado.
+
+O usuário pode iniciar a visualização nos dois lados:
+
+- **No computador:** escolha **Ver tela do computador no celular** na paleta, use o atalho padrão `Ctrl+Alt+Shift+D` ou diga uma das frases de voz configuradas para o comando (por padrão: “ver tela do computador”, “ver tela do desktop” e “compartilhar tela do computador”). O atalho e as frases podem ser alterados em **Configurações > Atalhos**. Se houver mais de um aparelho conectado, o JMD pede para escolher o celular. Executar o comando de novo para o mesmo aparelho encerra o compartilhamento ativo.
+- **No celular:** selecione `desktopScreenShare` no catálogo remoto. A ação chama o endpoint padrão de execução e o JMD envia o pedido de início pelo WebSocket.
+
+### Iniciar pelo catálogo remoto
+
+`GET /api/v1/commands` inclui `desktopScreenShare` com o nome **Ver tela do computador no celular**, `available: true` quando o comando não está desativado e schema de entrada vazio. Execute:
+
+```http
+POST /api/v1/commands/desktopScreenShare/execute
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+```
+
+```json
+{
+  "requestId": "uuid-unico-por-acao",
+  "input": {}
+}
+```
+
+A resposta `status: "succeeded"` confirma que o pedido foi enviado à sessão conectada do Android; ainda não confirma que o visualizador está pronto ou que um quadro chegou. Use a sessão WebSocket para receber o controle de início e os quadros. O JMD mantém no máximo uma transmissão ativa por aparelho. Repetir o mesmo `requestId` devolve o resultado anterior; uma nova ação precisa de um ID novo.
+
+### Pedido e resolução de destino
+
+Tanto o atalho do computador quanto a ação do catálogo enviam a mesma mensagem de texto pela sessão:
+
+```json
+{
+  "type": "desktop_screen_share.start",
+  "shareId": "id-opaco-da-transmissao",
+  "maxFps": 12,
+  "maxDimension": 1440,
+  "maxFrameBytes": 524288,
+  "format": "jpeg",
+  "quality": 55
+}
+```
+
+O JMDroid deve abrir o visualizador e responder pela **mesma sessão WebSocket** com uma mensagem de texto `desktop_screen_share.ready`. `width` e `height` indicam a resolução em pixels que o visualizador consegue mostrar; o JMD reduz e mantém a proporção dentro desse tamanho e de `maxDimension`:
+
+```json
+{
+  "type": "desktop_screen_share.ready",
+  "shareId": "id-opaco-da-transmissao",
+  "width": 1080,
+  "height": 2400
+}
+```
+
+Envie dimensões positivas correspondentes ao espaço disponível no visualizador, após considerar orientação e barras do sistema. O JMD limita o maior lado do quadro a 1440 px. `shareId` deve ser ecoado sem alterações. Se receber novamente o mesmo `shareId`, reutilize o visualizador atual e reenvie `ready`; não crie telas ou sessões duplicadas. O Android pode enviar `ready` novamente ao mudar a orientação/resolução para o JMD ajustar a captura.
+
+`maxFps` é o teto configurado no JMD para ambas as direções (12–60 FPS; padrão 12). `maxFrameBytes` é o máximo por mensagem binária (512 KiB). `quality` é a qualidade JPEG solicitada; o codificador pode reduzir a qualidade e, se necessário, a resolução até caber no limite de tamanho.
+
+### Receber quadros
+
+Depois do `desktop_screen_share.ready`, o JMD envia cada imagem como uma mensagem WebSocket **binária completa** contendo somente os bytes de um JPEG. O visualizador do Android deve ler mensagens de texto e binárias no mesmo loop do WebSocket: mensagens de texto são controles JSON; cada mensagem binária é um quadro JPEG independente. Não aguarde um envelope JSON em torno da imagem nem abra outro WebSocket.
+
+```text
+WebSocket TEXT:   {"type":"desktop_screen_share.start", ...}
+WebSocket TEXT:   {"type":"desktop_screen_share.ready", ...}  (Android → JMD)
+WebSocket BINARY: FF D8 ... FF D9   (JMD → Android; um JPEG)
+WebSocket BINARY: FF D8 ... FF D9   (próximo quadro)
+```
+
+O JMD ajusta a tela principal para caber no espaço informado pelo Android, sem ampliar a captura e sem distorcer sua proporção (em uma tela de celular retrato, uma tela desktop paisagem terá faixas vazias acima/abaixo). O maior lado fica limitado a 1440 px. O JMD tenta manter cada JPEG abaixo de 512 KiB e aplica o limite de FPS. O servidor pode enviar menos quadros por segundo para respeitar o teto ou acompanhar o desempenho. Exiba sempre o quadro mais recente e descarte imagens atrasadas para não formar fila. Preserve a proporção; não estique a imagem para preencher a tela.
+
+### Encerrar e falhas
+
+Para encerrar, o JMD envia `desktop_screen_share.stop` quando o usuário executa novamente o atalho/comando no computador. O Android também pode encerrar pelo botão **Parar** no visualizador. Em ambos os casos, a mensagem de parada vai pelo WebSocket:
+
+```json
+{ "type": "desktop_screen_share.stop", "shareId": "id-opaco-da-transmissao" }
+```
+
+Quando o Android enviar `desktop_screen_share.stop`, o JMD para imediatamente a captura e responde `desktop_screen_share.stopped`. Quando o JMD enviar `stop`, o Android deve fechar o visualizador, descartar o quadro atual e responder uma vez com:
+
+```json
+{ "type": "desktop_screen_share.stopped", "shareId": "id-opaco-da-transmissao" }
+```
+
+Se o JMD não conseguir capturar ou codificar a tela, envia `desktop_screen_share.error` com `shareId` e uma mensagem curta:
+
+```json
+{ "type": "desktop_screen_share.error", "shareId": "id-opaco-da-transmissao", "message": "Não foi possível capturar a tela principal." }
+```
+
+Ignore controles com outro `shareId`. Ao desconectar o WebSocket, feche o visualizador e descarte os quadros. A captura é somente da tela principal; não transmite áudio e não recebe toque, teclado nem comandos para controlar o computador.
+
 ## Listar e filtrar comandos
 
 ```http

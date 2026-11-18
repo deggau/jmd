@@ -114,6 +114,7 @@ public partial class MainWindow : Window
     private TodoTaskPanelWindow? _todoTaskPanel;
     private JmdroidApiServer? _jmdroidApiServer;
     private readonly Dictionary<string, AndroidScreenShareWindow> _androidScreenShareWindows = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string ShareId, CancellationTokenSource Cancellation)> _desktopScreenCaptures = new(StringComparer.Ordinal);
     private TodoTaskApiService? _todoTaskApiService;
     private AndroidSettingsPanel? _androidSettingsPanel;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
@@ -342,6 +343,11 @@ public partial class MainWindow : Window
         });
         _commands.Add(new CommandRow("screenShare", "Ver tela do celular",
             "Abre a tela de um Android conectado e solicita autorização para transmitir.", "Sem atalho"));
+        _commands.Add(new CommandRow("desktopScreenShare", "Ver tela do computador no celular",
+            "Transmite a tela principal do computador para um Android conectado.", GetShortcut("desktopScreenShare"))
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("desktopScreenShare")
+        });
         _commands.Add(new CommandRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.", "Sem atalho")
         {
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("about")
@@ -491,6 +497,7 @@ public partial class MainWindow : Window
             ("todoCreate", "Criar tarefa", "Abre o cadastro de uma tarefa; a seleção atual vira a descrição."),
             ("todoPanel", "Abrir painel de tarefas", "Mostra as tarefas em aberto no painel lateral."),
             ("todoPanelClose", "Fechar painel de tarefas", "Fecha o painel lateral de tarefas."),
+            ("desktopScreenShare", "Ver tela do computador no celular", "Transmite a tela principal para um Android conectado."),
             ("transcribe", "Transcrever", "Digita o que você disser após o comando; pausa de 3 segundos encerra."),
             ("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.")
         ];
@@ -724,7 +731,8 @@ public partial class MainWindow : Window
             ["transcribe"] = ["transcrever"],
             ["todoCreate"] = ["criar tarefa"],
             ["todoPanel"] = ["abrir tarefas", "abrir painel de tarefas"],
-            ["todoPanelClose"] = ["fechar tarefas", "fechar painel de tarefas"]
+            ["todoPanelClose"] = ["fechar tarefas", "fechar painel de tarefas"],
+            ["desktopScreenShare"] = ["ver tela do computador", "ver tela do desktop", "compartilhar tela do computador"]
         };
         foreach (var command in SystemPowerCommandCatalog.All)
             defaults[command.Id] = command.VoicePhrases.ToArray();
@@ -1487,7 +1495,7 @@ public partial class MainWindow : Window
     private static readonly string[] ShortcutIds =
     [
         "palette", "clipboard", "selection", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact",
-        "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "about",
+        "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "desktopScreenShare", "about",
         "checkUpdates", "transcribe", "createCustomShortcut",
         .. SystemPowerCommandCatalog.All.Select(command => command.Id)
     ];
@@ -1635,6 +1643,9 @@ public partial class MainWindow : Window
                     break;
                 case "screenShare":
                     await StartAndroidScreenShareFromDesktopAsync();
+                    break;
+                case "desktopScreenShare":
+                    await ToggleDesktopScreenShareFromDesktopAsync();
                     break;
                 case "palette":
                     ShowPalette();
@@ -3006,6 +3017,7 @@ public partial class MainWindow : Window
         else if (id == "todoPanel") ShowTodoTaskPanel();
         else if (id == "todoPanelClose") _todoTaskPanel?.Hide();
         else if (id == "screenShare") await StartAndroidScreenShareFromDesktopAsync();
+        else if (id == "desktopScreenShare") await ToggleDesktopScreenShareFromDesktopAsync();
         else if (id == "about") AboutMenuItem_Click(this, new RoutedEventArgs());
         else if (id == "checkUpdates")
         {
@@ -4438,6 +4450,8 @@ public partial class MainWindow : Window
             _jmdroidApiServer.ScreenShareFrameReceived += UpdateAndroidScreenShareFrame;
             _jmdroidApiServer.ScreenShareStatusChanged += UpdateAndroidScreenShareStatus;
             _jmdroidApiServer.ScreenShareEnded += UpdateAndroidScreenShareStatus;
+            _jmdroidApiServer.DesktopScreenShareReady += StartDesktopScreenCapture;
+            _jmdroidApiServer.DesktopScreenShareEnded += StopDesktopScreenCapture;
         }
         return _jmdroidApiServer;
     }
@@ -4581,11 +4595,13 @@ public partial class MainWindow : Window
     private IReadOnlyList<JmdroidApiCommand> GetJmdroidApiCommands()
     {
         if (!Dispatcher.CheckAccess()) return Dispatcher.Invoke(GetJmdroidApiCommands);
-        var remoteIds = new HashSet<string>(["clipboard", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact", "screenShare"], StringComparer.Ordinal);
+        var remoteIds = new HashSet<string>(["clipboard", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact", "screenShare", "desktopScreenShare"], StringComparer.Ordinal);
         var commands = _commands.Select(command =>
         {
-            var searchTerms = command.Id == "screenShare"
-                ? new[] { "compartilhar tela", "espelhar tela", "streaming", "screen share" }
+            var searchTerms = command.Id is "screenShare" or "desktopScreenShare"
+                ? command.Id == "screenShare"
+                    ? new[] { "compartilhar tela", "espelhar tela", "streaming", "screen share" }
+                    : new[] { "compartilhar desktop", "tela do computador", "ver computador no celular", "desktop screen share" }
                 : command.VoicePhrasesDisplay
                     .Replace("Jey:", string.Empty, StringComparison.CurrentCultureIgnoreCase)
                     .Split('·', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
@@ -4601,7 +4617,7 @@ public partial class MainWindow : Window
                     .Select(match => match.Groups[1].Value))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            object? inputSchema = command.Id == "screenShare" ? new
+            object? inputSchema = command.Id is "screenShare" or "desktopScreenShare" ? new
             {
                 type = "object",
                 properties = new { },
@@ -4649,6 +4665,91 @@ public partial class MainWindow : Window
             Notify("JMDroid", $"{result.Text} Confirme a solicitação no Android.", true);
         else
             Notify("JMDroid", result.Error ?? "Não foi possível iniciar o compartilhamento.", false);
+    }
+
+    private async Task ToggleDesktopScreenShareFromDesktopAsync()
+    {
+        var server = EnsureJmdroidApiServer();
+        var connectedDevices = server.PairedDevices.Where(device => server.IsDeviceConnected(device.Id)).ToArray();
+        if (connectedDevices.Length == 0)
+        {
+            Notify("JMDroid", "Nenhum celular pareado está conectado. Abra o app no Android e tente novamente.", false);
+            return;
+        }
+
+        JmdroidPairedDevice? selectedDevice = connectedDevices[0];
+        if (connectedDevices.Length > 1)
+        {
+            var picker = new AndroidScreenShareDevicePickerWindow(connectedDevices);
+            if (picker.ShowDialog() != true) return;
+            selectedDevice = picker.SelectedDevice;
+        }
+        if (selectedDevice is null) return;
+
+        if (server.IsDesktopScreenShareActive(selectedDevice.Id))
+        {
+            await server.StopDesktopScreenShareAsync(selectedDevice.Id);
+            Notify("JMDroid", $"Visualização da tela do computador encerrada em {selectedDevice.Name}.", true);
+            return;
+        }
+
+        var result = await server.StartDesktopScreenShareAsync(selectedDevice);
+        if (result.Status == "succeeded") Notify("JMDroid", result.Text ?? "Pedido enviado ao celular.", true);
+        else Notify("JMDroid", result.Error ?? "Não foi possível iniciar o compartilhamento.", false);
+    }
+
+    private void StartDesktopScreenCapture(string deviceId, string deviceName, string shareId, int width, int height, int framesPerSecond)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => StartDesktopScreenCapture(deviceId, deviceName, shareId, width, height, framesPerSecond)));
+            return;
+        }
+
+        if (_desktopScreenCaptures.TryGetValue(deviceId, out var previous)) previous.Cancellation.Cancel();
+        var cancellation = new CancellationTokenSource();
+        _desktopScreenCaptures[deviceId] = (shareId, cancellation);
+        _ = StreamDesktopScreenCaptureAsync(deviceId, deviceName, shareId, width, height, framesPerSecond, cancellation);
+    }
+
+    private async Task StreamDesktopScreenCaptureAsync(
+        string deviceId, string deviceName, string shareId, int width, int height, int framesPerSecond,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            var server = _jmdroidApiServer;
+            if (server is null) return;
+            await DesktopScreenCaptureStreamer.StreamAsync(width, height, framesPerSecond,
+                (frame, token) => server.SendDesktopScreenShareFrameAsync(deviceId, shareId, frame, token), cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            if (_jmdroidApiServer is { } server)
+                await server.FailDesktopScreenShareAsync(deviceId, shareId,
+                    $"Falha ao capturar a tela do computador: {exception.GetBaseException().Message}");
+            CriticalErrorLog.Write($"Transmitir tela do computador para {deviceName}", exception);
+        }
+        finally
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (_desktopScreenCaptures.TryGetValue(deviceId, out var current) && ReferenceEquals(current.Cancellation, cancellation))
+                    _desktopScreenCaptures.Remove(deviceId);
+            });
+            cancellation.Dispose();
+        }
+    }
+
+    private void StopDesktopScreenCapture(string deviceId, string status)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(() => StopDesktopScreenCapture(deviceId, status)));
+            return;
+        }
+        if (_desktopScreenCaptures.TryGetValue(deviceId, out var current)) current.Cancellation.Cancel();
     }
 
     private async Task<JmdroidExecutionResult> ExecuteJmdroidCommandAsync(
@@ -5570,6 +5671,7 @@ public partial class MainWindow : Window
 
     public void DisposeServices()
     {
+        foreach (var capture in _desktopScreenCaptures.Values) capture.Cancellation.Cancel();
         if (_jmdroidApiServer is not null) _ = _jmdroidApiServer.DisposeAsync();
         _todoReminderTimer.Stop();
         _memoryRefreshTimer.Stop();
