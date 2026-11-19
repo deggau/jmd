@@ -110,7 +110,7 @@ O servidor envia pings WebSocket de protocolo para manter a sessão e detectar d
 
 ### Visão geral e início pelos dois lados
 
-A transmissão usa a sessão WebSocket autenticada já aberta em `GET /api/v1/session`. **Não abra outro socket para as imagens.** O JMD desktop recebe os quadros e os mostra em uma janela; o protocolo envia somente imagem, sem áudio, comandos de toque ou teclado remoto.
+A transmissão usa a sessão WebSocket autenticada já aberta em `GET /api/v1/session`. **Não abra outro socket para as imagens.** O JMD desktop recebe os quadros e os mostra em uma janela. O visualizador também pode enviar toque e rolagem para o Android; não há envio de teclado.
 
 A mesma ação pode iniciar o fluxo pelo computador ou pelo celular:
 
@@ -220,6 +220,48 @@ O cliente deve:
 - enviar quadros apenas para o `shareId` atualmente ativo e pela mesma sessão autenticada que recebeu o pedido.
 
 O JMD confere os marcadores de início/fim JPEG, rejeita quadros acima de 2 MiB e aplica o limite de FPS selecionado no desktop. Quadros que ultrapassam a taxa são descartados. O JMD **não decodifica nem valida as dimensões declaradas**; cabe ao cliente respeitar `maxDimension`. Uma mensagem binária maior que 2 MiB encerra o WebSocket com `MessageTooBig`; por isso, dimensione/reduza a qualidade antes de enviar.
+
+### Gestos enviados pelo visualizador do computador
+
+Enquanto a transmissão estiver ativa, o JMD envia os gestos pela **mesma sessão WebSocket autenticada** que recebe os quadros. Um clique esquerdo no quadro vira toque; a roda do mouse vira rolagem. O desktop envia JSON de texto com o mesmo `shareId`:
+
+```json
+{
+  "type": "screen_share.input",
+  "shareId": "id-opaco-da-transmissao",
+  "action": "tap",
+  "x": 0.5,
+  "y": 0.4,
+  "deltaX": 0,
+  "deltaY": 0
+}
+```
+
+```json
+{
+  "type": "screen_share.input",
+  "shareId": "id-opaco-da-transmissao",
+  "action": "scroll",
+  "x": 0.5,
+  "y": 0.7,
+  "deltaX": 0,
+  "deltaY": 120
+}
+```
+
+`x` e `y` são coordenadas normalizadas entre `0.0` e `1.0`, relativas ao quadro Android original (origem no canto superior esquerdo). O Android deve convertê-las para pixels da tela atual, considerando orientação e resolução. `tap` representa um toque simples no ponto. Em `scroll`, `deltaX` e `deltaY` seguem unidades de roda do Windows: `120` representa um passo para cima, `-120` um passo para baixo; o JMD envia atualmente `deltaX: 0`. Converta a rolagem em um gesto de arrastar/swipe na região indicada, com direção e distância coerentes com o delta. Os eventos são limitados a no máximo 50 por segundo pelo JMD.
+
+Para reproduzir gestos em outras aplicações, o cliente Android precisa de um `AccessibilityService` habilitado explicitamente pelo usuário e pode usar `dispatchGesture` (API 24+). Declare os metadados e capacidades de gesto exigidos pelo Android. A captura por `MediaProjection` **não** concede permissão para controlar a tela. Se o serviço não estiver habilitado, o Android deve ignorar o gesto ou responder pela mesma sessão com:
+
+```json
+{
+  "type": "screen_share.input_error",
+  "shareId": "id-opaco-da-transmissao",
+  "message": "Acessibilidade para controle remoto não está habilitada."
+}
+```
+
+O JMD mostra essa mensagem na janela de transmissão. Aceite gestos somente quando `shareId` for a transmissão ativa e descarte coordenadas fora do intervalo, controles de sessões antigas e eventos recebidos após a parada. O usuário precisa habilitar a acessibilidade nas configurações do Android; não habilite nem contorne essa confirmação programaticamente.
 
 ### Parada e limpeza
 
@@ -358,6 +400,8 @@ Resposta:
       "shortcut": "Sem atalho",
       "available": true,
       "unavailableReason": null,
+      "icon": null,
+      "voicePhrases": [],
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -372,9 +416,11 @@ Resposta:
 }
 ```
 
+`icon` é `null` para comandos nativos sem ícone configurado. Em workflows, pode conter uma imagem PNG como data URL (`data:image/png;base64,...`), preparada em 64 × 64 pixels a partir do ícone do programa aberto ou do favicon do site. O Android pode decodificar a parte Base64 depois da vírgula e usar a imagem na lista. `voicePhrases` contém as frases configuradas para aquele workflow, ou uma lista vazia quando não há frases.
+
 Por padrão, são retornados os comandos disponíveis e os comandos personalizados, mesmo quando a execução remota ainda está desativada. `includeUnavailable=true` também retorna os demais comandos locais que dependem de clipboard, seleção/janela em foco, diálogos ou outra interação exclusiva do desktop. Itens indisponíveis incluem `available: false` e um motivo legível. Comandos desativados nas configurações do JMD não podem ser executados remotamente.
 
-Comandos personalizados aparecem com o mesmo `id` salvo no JMD (prefixo `custom:`) e permitem execução pelo JMDroid por padrão. Para bloquear um workflow, edite-o no JMD e marque **Bloquear execução pelo JMDroid (Android)**. Workflows podem abrir programas, digitar e interagir com janelas deste computador; bloqueie individualmente os comandos que não deseja controlar pelo celular. `inputSchema` descreve as variáveis `{{nome}}` usadas pelas etapas. Envie os valores em `input.variables`; variáveis omitidas ainda podem ser resolvidas pelas variáveis globais cadastradas no JMD.
+Comandos personalizados aparecem com o mesmo `id` salvo no JMD (prefixo `custom:`) e permitem execução pelo JMDroid por padrão. Para bloquear um workflow, edite-o no JMD e marque **Bloquear execução pelo JMDroid (Android)**. Workflows podem abrir programas, digitar e interagir com janelas deste computador; bloqueie individualmente os comandos que não deseja controlar pelo celular. `inputSchema` descreve as variáveis `{{nome}}` usadas pelas etapas. Envie os valores em `input.variables`; variáveis omitidas ainda podem ser resolvidas pelas variáveis globais cadastradas no JMD. O catálogo retorna também as frases do Jey em `voicePhrases`, para exibição no Android.
 
 As rotas autenticadas de comandos aceitam até 120 chamadas por minuto por aparelho. Ao exceder o limite, a API responde `429` e inclui `Retry-After`.
 
@@ -414,7 +460,7 @@ O app valida `commandId` contra o catálogo remoto e valida os campos conforme `
 
 Quando aplicável, o objeto `result` também contém `inputItemCount` e `outputItemCount` (por exemplo, no comando SQL IN). Uma falha de validação/execução retorna `status: "failed"` e o objeto `error` no formato documentado abaixo.
 
-Workflows personalizados habilitados são executados no computador como se fossem acionados no JMD. Os demais comandos que dependem de interação com o desktop permanecem indisponíveis para execução remota.
+Workflows personalizados habilitados são executados no computador como se fossem acionados no JMD. Os comandos nativos `todoCreate`, `todoPanel`, `todoPanelClose`, `about`, `lock`, `suspend` e `hibernate` também ficam disponíveis, desde que não estejam desativados nas configurações do JMD. Eles abrem a criação de tarefa, abrem/fecham o painel, abrem a tela Sobre ou executam a ação de energia no computador conectado. Envie `"input": {}` para executá-los. Outros comandos que dependem de interação exclusiva com o desktop continuam indisponíveis.
 
 ## Tarefas
 

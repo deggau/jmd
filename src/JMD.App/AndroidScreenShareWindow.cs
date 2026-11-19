@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Input;
 
 namespace JMD.App;
 
@@ -10,13 +11,17 @@ internal sealed class AndroidScreenShareWindow : Window
 {
     private readonly System.Windows.Controls.Image _image;
     private readonly TextBlock _status;
+    private bool _hasReceivedFrame;
 
     public string DeviceId { get; }
+    public string ShareId { get; private set; }
     public event Action? ClosedByUser;
+    public event Action<string, string, double, double, int, int>? InputRequested;
 
-    public AndroidScreenShareWindow(string deviceId, string deviceName)
+    public AndroidScreenShareWindow(string deviceId, string deviceName, string shareId)
     {
         DeviceId = deviceId;
+        ShareId = shareId;
         Title = $"Tela do Android · {deviceName}";
         Width = 460;
         Height = 900;
@@ -34,6 +39,9 @@ internal sealed class AndroidScreenShareWindow : Window
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             VerticalAlignment = System.Windows.VerticalAlignment.Center
         };
+        _image.PreviewMouseLeftButtonDown += OnMouseLeftButtonDown;
+        _image.PreviewMouseLeftButtonUp += OnMouseLeftButtonUp;
+        _image.PreviewMouseWheel += OnMouseWheel;
         _status = new TextBlock
         {
             Text = "Aguardando a autorização de captura no Android…",
@@ -69,8 +77,12 @@ internal sealed class AndroidScreenShareWindow : Window
             bitmap.Freeze();
             ResizeToScreenAspect(bitmap.PixelWidth, bitmap.PixelHeight);
             _image.Source = bitmap;
-            _status.Text = "Ao vivo · compartilhe novamente pelo Android para iniciar outra transmissão.";
-            _status.Visibility = Visibility.Collapsed;
+            if (!_hasReceivedFrame)
+            {
+                _hasReceivedFrame = true;
+                _status.Text = "Ao vivo · clique para tocar · role para percorrer a tela.";
+                _status.Visibility = Visibility.Visible;
+            }
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or NotSupportedException or FormatException)
         {
@@ -89,7 +101,50 @@ internal sealed class AndroidScreenShareWindow : Window
     {
         _image.Source = null;
         _lastAspectRatio = null;
+        _hasReceivedFrame = false;
         SetStatus("Solicitação enviada · autorize a captura de tela no Android…");
+    }
+
+    public void SetShareId(string shareId) => ShareId = shareId;
+
+    private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (TryGetNormalizedPoint(e.GetPosition(_image), out _, out _))
+        {
+            _image.CaptureMouse();
+            e.Handled = true;
+        }
+    }
+
+    private void OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_image.IsMouseCaptured) return;
+        _image.ReleaseMouseCapture();
+        if (TryGetNormalizedPoint(e.GetPosition(_image), out var x, out var y))
+            InputRequested?.Invoke(ShareId, "tap", x, y, 0, 0);
+        e.Handled = true;
+    }
+
+    private void OnMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!TryGetNormalizedPoint(e.GetPosition(_image), out var x, out var y)) return;
+        InputRequested?.Invoke(ShareId, "scroll", x, y, 0, e.Delta);
+        e.Handled = true;
+    }
+
+    private bool TryGetNormalizedPoint(System.Windows.Point point, out double x, out double y)
+    {
+        x = y = 0;
+        if (_image.Source is not BitmapSource bitmap || _image.ActualWidth <= 0 || _image.ActualHeight <= 0) return false;
+        var scale = Math.Min(_image.ActualWidth / bitmap.PixelWidth, _image.ActualHeight / bitmap.PixelHeight);
+        var width = bitmap.PixelWidth * scale;
+        var height = bitmap.PixelHeight * scale;
+        var left = (_image.ActualWidth - width) / 2;
+        var top = (_image.ActualHeight - height) / 2;
+        if (point.X < left || point.Y < top || point.X > left + width || point.Y > top + height) return false;
+        x = Math.Clamp((point.X - left) / width, 0, 1);
+        y = Math.Clamp((point.Y - top) / height, 0, 1);
+        return true;
     }
 
     private void ResizeToScreenAspect(int pixelWidth, int pixelHeight)

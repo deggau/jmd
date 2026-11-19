@@ -156,6 +156,7 @@ public static class ShortcutDefaults
         "saveSnippet" => "Ctrl+Alt+Shift+Y",
         "draftSave" => "Ctrl+Shift+Up",
         "draftRestore" => "Ctrl+Shift+Down",
+        "screenShare" => "Ctrl+Alt+Shift+V",
         "desktopScreenShare" => "Ctrl+Alt+Shift+D",
         "hibernate" => "Ctrl+Alt+Shift+H",
         "suspend" => "Ctrl+Alt+Shift+S",

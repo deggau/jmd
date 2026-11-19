@@ -142,13 +142,22 @@
               <Grid Margin="0,0,0,9">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <Border Grid.ColumnSpan="2" Background="{StaticResource CardBrush}" BorderBrush="#FF31343D" BorderThickness="1" CornerRadius="10" />
-                <Button Tag="{Binding Id}" Click="CommandButton_Click" Padding="16"
+                  <Button Tag="{Binding Id}" Click="CommandButton_Click" Padding="16"
                         Background="Transparent" BorderThickness="0"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Cursor="Hand"
                         FocusVisualStyle="{StaticResource AccentFocusCue}">
                   <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <StackPanel>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Image Grid.Column="0" Source="{Binding IconImage}" Width="42" Height="42" Stretch="Uniform"
+                           Margin="0,0,12,0" VerticalAlignment="Center">
+                      <Image.Style>
+                        <Style TargetType="Image">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                          <Style.Triggers><DataTrigger Binding="{Binding HasIcon}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                        </Style>
+                      </Image.Style>
+                    </Image>
+                    <StackPanel Grid.Column="1">
                       <DockPanel LastChildFill="False">
                         <TextBlock Text="{Binding Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" />
                         <Border Background="#FF30343E" CornerRadius="5" Padding="6,2" Margin="8,0,0,0">
@@ -173,7 +182,7 @@
                         </TextBlock.Style>
                       </TextBlock>
                     </StackPanel>
-                    <Border Grid.Column="1" Background="#FF30343E" CornerRadius="6" Padding="9,5" VerticalAlignment="Center">
+                    <Border Grid.Column="2" Background="#FF30343E" CornerRadius="6" Padding="9,5" VerticalAlignment="Center">
                       <TextBlock Text="{Binding Shortcut}" Foreground="#FFE4E7EC" FontSize="11" />
                     </Border>
                   </Grid>

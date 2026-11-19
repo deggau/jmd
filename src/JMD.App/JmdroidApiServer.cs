@@ -33,7 +33,9 @@ internal sealed record JmdroidApiCommand(
     string? UnavailableReason,
     IReadOnlyList<string> SearchTerms,
     bool ShowWhenUnavailable = false,
-    object? InputSchema = null);
+    object? InputSchema = null,
+    string? Icon = null,
+    IReadOnlyList<string>? VoicePhrases = null);
 internal sealed record JmdroidCommandInfo(
     string Id,
     string Name,
@@ -41,7 +43,9 @@ internal sealed record JmdroidCommandInfo(
     string Shortcut,
     bool Available,
     string? UnavailableReason,
-    object? InputSchema);
+    object? InputSchema,
+    string? Icon,
+    IReadOnlyList<string> VoicePhrases);
 
 internal sealed record JmdroidPairingInfo(string BaseUrl, string CertificateSha256, string QrPayload, byte[] QrPng, DateTimeOffset ExpiresAt);
 internal sealed record JmdroidNetworkAddress(string InterfaceName, IPAddress Address)
@@ -190,6 +194,30 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         }
         catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or OperationCanceledException) { }
         ScreenShareEnded?.Invoke(deviceId, "Compartilhamento encerrado.");
+    }
+
+    public async Task<bool> SendScreenShareInputAsync(string deviceId, string shareId, string action, double x, double y, int deltaX, int deltaY)
+    {
+        if (!JmdroidScreenShareInputPolicy.IsValid(action, x, y, deltaX, deltaY)) return false;
+        if (!_screenShares.TryGetValue(deviceId, out var share) || share.ShareId != shareId || !share.TryAcceptInput(DateTimeOffset.UtcNow)) return false;
+        try
+        {
+            await SendSessionMessageAsync(share.Socket, new
+            {
+                type = "screen_share.input",
+                shareId,
+                action,
+                x,
+                y,
+                deltaX,
+                deltaY
+            }, CancellationToken.None);
+            return true;
+        }
+        catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or OperationCanceledException)
+        {
+            return false;
+        }
     }
 
     public bool IsDesktopScreenShareActive(string deviceId) => _desktopScreenShares.ContainsKey(deviceId);
@@ -1156,6 +1184,15 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                     ? "O Android não conseguiu iniciar o compartilhamento de tela."
                     : $"O Android não conseguiu iniciar o compartilhamento: {reason}");
             }
+            else if (type == "screen_share.input_error")
+            {
+                var reason = root.TryGetProperty("message", out var messageValue) && messageValue.ValueKind == JsonValueKind.String
+                    ? messageValue.GetString()
+                    : null;
+                ScreenShareStatusChanged?.Invoke(deviceId, string.IsNullOrWhiteSpace(reason)
+                    ? "O Android não conseguiu executar o gesto remoto."
+                    : $"O Android não conseguiu executar o gesto remoto: {reason}");
+            }
             else if (type == "screen_share.stop")
             {
                 _screenShares.TryRemove(deviceId, out _);
@@ -1217,7 +1254,9 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                 type = "object",
                 properties = new { text = new { type = "string", maxLength = 1_000_000 } },
                 required = new[] { "text" }
-            } : null)).ToArray();
+            } : null,
+            command.Icon,
+            command.VoicePhrases ?? [])).ToArray();
     }
 
     private bool TryAuthenticate(HttpContext context, out JmdroidPairedDevice? device)
@@ -1533,12 +1572,23 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private sealed class ActiveScreenShare(string shareId, string deviceName, WebSocket socket, int maxFps)
     {
         private readonly JmdroidScreenShareFrameThrottle _frameThrottle = new(maxFps);
+        private readonly object _inputLock = new();
+        private DateTimeOffset _lastInput = DateTimeOffset.MinValue;
 
         public string ShareId { get; } = shareId;
         public string DeviceName { get; } = deviceName;
         public WebSocket Socket { get; } = socket;
 
         public bool TryAcceptFrame(DateTimeOffset now) => _frameThrottle.TryAccept(now);
+        public bool TryAcceptInput(DateTimeOffset now)
+        {
+            lock (_inputLock)
+            {
+                if (now - _lastInput < JmdroidScreenShareInputPolicy.MinimumInputInterval) return false;
+                _lastInput = now;
+                return true;
+            }
+        }
     }
     private sealed class ActiveDesktopScreenShare(string shareId, string deviceName, WebSocket socket, int maxFps)
     {

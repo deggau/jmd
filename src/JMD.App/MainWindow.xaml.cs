@@ -266,7 +266,51 @@ public partial class MainWindow : Window
         RefreshMemoryStatus();
         _benchmarkRecordingTimer.Tick += BenchmarkRecordingTimer_Tick;
         Closing += MainWindow_Closing;
+        Loaded += MainWindow_Loaded;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
+    }
+
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        Loaded -= MainWindow_Loaded;
+        _ = BackfillWorkflowIconsAsync();
+    }
+
+    private async Task BackfillWorkflowIconsAsync()
+    {
+        var workflows = _settings.CustomShortcuts
+            .Where(item => string.IsNullOrWhiteSpace(item.IconDataUrl) && string.IsNullOrWhiteSpace(item.IconTarget))
+            .ToArray();
+        if (workflows.Length == 0) return;
+
+        using var concurrency = new SemaphoreSlim(3);
+        var resolved = await Task.WhenAll(workflows.Select(async workflow =>
+        {
+            await concurrency.WaitAsync();
+            try
+            {
+                var icon = await WorkflowIconService.ResolveAsync(workflow.Steps);
+                return (Workflow: workflow, Icon: icon);
+            }
+            finally { concurrency.Release(); }
+        }));
+
+        var changed = false;
+        foreach (var result in resolved)
+        {
+            if (!_settings.CustomShortcuts.Contains(result.Workflow) || result.Icon is null) continue;
+            result.Workflow.IconTarget = result.Icon.Target;
+            result.Workflow.IconDataUrl = result.Icon.DataUrl;
+            var row = _commands.FirstOrDefault(command => command.Id == result.Workflow.Id);
+            if (row is not null) row.IconDataUrl = result.Icon.DataUrl;
+            changed = true;
+        }
+        if (!changed) return;
+        try { _settingsStore.Save(_settings); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            CriticalErrorLog.Write("Salvar ícones dos workflows", exception);
+        }
     }
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -342,7 +386,10 @@ public partial class MainWindow : Window
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("todoPanelClose")
         });
         _commands.Add(new CommandRow("screenShare", "Ver tela do celular",
-            "Abre a tela de um Android conectado e solicita autorização para transmitir.", "Sem atalho"));
+            "Abre a tela de um Android conectado e solicita autorização para transmitir.", GetShortcut("screenShare"))
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("screenShare")
+        });
         _commands.Add(new CommandRow("desktopScreenShare", "Ver tela do computador no celular",
             "Transmite a tela principal do computador para um Android conectado.", GetShortcut("desktopScreenShare"))
         {
@@ -375,6 +422,7 @@ public partial class MainWindow : Window
                 string.IsNullOrWhiteSpace(shortcut.Shortcut) ? "Sem atalho" : shortcut.Shortcut)
             {
                 IsCustomShortcut = true,
+                IconDataUrl = shortcut.IconDataUrl,
                 VoicePhrasesDisplay = GetVoicePhrasesDisplay(shortcut.Id)
             };
             _commands.Add(row);
@@ -497,6 +545,7 @@ public partial class MainWindow : Window
             ("todoCreate", "Criar tarefa", "Abre o cadastro de uma tarefa; a seleção atual vira a descrição."),
             ("todoPanel", "Abrir painel de tarefas", "Mostra as tarefas em aberto no painel lateral."),
             ("todoPanelClose", "Fechar painel de tarefas", "Fecha o painel lateral de tarefas."),
+            ("screenShare", "Ver tela do celular", "Abre a tela de um Android conectado e solicita autorização para transmitir."),
             ("desktopScreenShare", "Ver tela do computador no celular", "Transmite a tela principal para um Android conectado."),
             ("transcribe", "Transcrever", "Digita o que você disser após o comando; pausa de 3 segundos encerra."),
             ("checkUpdates", "Verificar atualizações JMD", "Abre Sobre e consulta uma nova versão.")
@@ -590,8 +639,19 @@ public partial class MainWindow : Window
                 Margin = new Thickness(0, 0, 0, 6)
             };
             var customRow = new Grid();
+            customRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             customRow.ColumnDefinitions.Add(new ColumnDefinition());
             customRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var icon = new System.Windows.Controls.Image
+            {
+                Source = WorkflowIconService.ToImageSource(customShortcut.IconDataUrl),
+                Width = 44,
+                Height = 44,
+                Stretch = System.Windows.Media.Stretch.Uniform,
+                Margin = new Thickness(0, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            customRow.Children.Add(icon);
             var customDetails = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             customDetails.Children.Add(new TextBlock
             {
@@ -608,6 +668,7 @@ public partial class MainWindow : Window
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 ToolTip = DescribeCustomWorkflow(customShortcut)
             });
+            Grid.SetColumn(customDetails, 1);
             customRow.Children.Add(customDetails);
             var customActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             customActions.Children.Add(new Border
@@ -650,7 +711,7 @@ public partial class MainWindow : Window
             removeCustomShortcut.Click += RemoveCustomShortcut_Click;
             customActions.Children.Add(editCustomShortcut);
             customActions.Children.Add(removeCustomShortcut);
-            Grid.SetColumn(customActions, 1);
+            Grid.SetColumn(customActions, 2);
             customRow.Children.Add(customActions);
             customCard.Child = customRow;
             WorkflowSettingsPanel.Children.Add(customCard);
@@ -732,6 +793,7 @@ public partial class MainWindow : Window
             ["todoCreate"] = ["criar tarefa"],
             ["todoPanel"] = ["abrir tarefas", "abrir painel de tarefas"],
             ["todoPanelClose"] = ["fechar tarefas", "fechar painel de tarefas"],
+            ["screenShare"] = ["ver tela do celular", "compartilhar tela do celular", "espelhar tela do celular"],
             ["desktopScreenShare"] = ["ver tela do computador", "ver tela do desktop", "compartilhar tela do computador"]
         };
         foreach (var command in SystemPowerCommandCatalog.All)
@@ -1040,11 +1102,12 @@ public partial class MainWindow : Window
         editor.Text = new ShortcutBinding(modifiers, KeyInterop.VirtualKeyFromKey(key)).ToString();
     }
 
-    private void CreateCustomShortcutFromDialog(CustomShortcutEntry? existing = null)
+    private async void CreateCustomShortcutFromDialog(CustomShortcutEntry? existing = null)
     {
-        (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen, bool AllowJmdroidExecution, List<CustomWorkflowStep> Steps)? previous = existing is null
+        (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen, bool AllowJmdroidExecution, string? IconTarget, string? IconDataUrl, List<CustomWorkflowStep> Steps)? previous = existing is null
             ? null : (existing.Name, existing.Target, existing.Shortcut, existing.FocusIfAlreadyOpen,
                 existing.AllowJmdroidExecution,
+                existing.IconTarget, existing.IconDataUrl,
                 existing.Steps.Select(step => new CustomWorkflowStep
                 {
                     Action = step.Action, Value = step.Value, DelayMilliseconds = step.DelayMilliseconds,
@@ -1088,6 +1151,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        var resolvedIcon = await WorkflowIconService.ResolveAsync(steps,
+            existing?.IconTarget, existing?.IconDataUrl);
+
         var entry = existing ?? new CustomShortcutEntry();
         entry.Name = name;
         entry.Target = target;
@@ -1095,6 +1161,8 @@ public partial class MainWindow : Window
         entry.Shortcut = shortcutText;
         entry.FocusIfAlreadyOpen = focusIfAlreadyOpen;
         entry.AllowJmdroidExecution = allowJmdroidExecution;
+        entry.IconTarget = resolvedIcon?.Target;
+        entry.IconDataUrl = resolvedIcon?.DataUrl;
         if (existing is null) _settings.CustomShortcuts.Add(entry);
         _settings.VoicePhrases[entry.Id] = phrases;
         var settingsPersisted = false;
@@ -1108,6 +1176,7 @@ public partial class MainWindow : Window
                 string.IsNullOrWhiteSpace(entry.Shortcut) ? "Sem atalho" : entry.Shortcut)
             {
                 IsCustomShortcut = true,
+                IconDataUrl = entry.IconDataUrl,
                 VoicePhrasesDisplay = GetVoicePhrasesDisplay(entry.Id)
             });
             if (_hotkeys is not null)
@@ -1135,6 +1204,8 @@ public partial class MainWindow : Window
                 entry.Shortcut = previous.Value.Shortcut;
                 entry.FocusIfAlreadyOpen = previous.Value.FocusIfAlreadyOpen;
                 entry.AllowJmdroidExecution = previous.Value.AllowJmdroidExecution;
+                entry.IconTarget = previous.Value.IconTarget;
+                entry.IconDataUrl = previous.Value.IconDataUrl;
                 entry.Steps = previous.Value.Steps;
                 _settings.VoicePhrases[entry.Id] = previousPhrases;
             }
@@ -1495,7 +1566,7 @@ public partial class MainWindow : Window
     private static readonly string[] ShortcutIds =
     [
         "palette", "clipboard", "selection", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact",
-        "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "desktopScreenShare", "about",
+        "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "screenShare", "desktopScreenShare", "about",
         "checkUpdates", "transcribe", "createCustomShortcut",
         .. SystemPowerCommandCatalog.All.Select(command => command.Id)
     ];
@@ -2268,37 +2339,40 @@ public partial class MainWindow : Window
         Keyboard.Focus(SearchBox);
     }
 
-    private async Task CreateTodoTaskAsync()
+    private async Task<bool> CreateTodoTaskAsync(bool captureForegroundSelection = true)
     {
         RichClipboardContent? copiedContent = null;
         IReadOnlyList<string> selectedFiles = [];
-        var oldClipboard = _clipboard.TryGetRichContent();
-        var modifiersReleased = await _keyboard.WaitForModifiersReleasedAsync();
-        if (modifiersReleased && _previousWindow != IntPtr.Zero && _keyboard.GetForegroundWindow() == _previousWindow)
+        if (captureForegroundSelection)
         {
-            var clipboardSequenceBeforeCopy = _clipboard.SequenceNumber;
-            if (_keyboard.SendCopy())
+            var oldClipboard = _clipboard.TryGetRichContent();
+            var modifiersReleased = await _keyboard.WaitForModifiersReleasedAsync();
+            if (modifiersReleased && _previousWindow != IntPtr.Zero && _keyboard.GetForegroundWindow() == _previousWindow)
             {
-                await Task.Delay(180);
-                if (_clipboard.SequenceNumber != clipboardSequenceBeforeCopy)
+                var clipboardSequenceBeforeCopy = _clipboard.SequenceNumber;
+                if (_keyboard.SendCopy())
                 {
-                    copiedContent = _clipboard.TryGetRichContent();
-                    try
+                    await Task.Delay(180);
+                    if (_clipboard.SequenceNumber != clipboardSequenceBeforeCopy)
                     {
-                        if (System.Windows.Clipboard.ContainsFileDropList())
-                            selectedFiles = System.Windows.Clipboard.GetFileDropList().Cast<string>().ToArray();
+                        copiedContent = _clipboard.TryGetRichContent();
+                        try
+                        {
+                            if (System.Windows.Clipboard.ContainsFileDropList())
+                                selectedFiles = System.Windows.Clipboard.GetFileDropList().Cast<string>().ToArray();
+                        }
+                        catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException)
+                        {
+                            // Fall back to copied text if the selected files cannot be read from the clipboard.
+                        }
                     }
-                    catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException)
-                    {
-                        // Fall back to copied text if the selected files cannot be read from the clipboard.
-                    }
+                    if (oldClipboard is not null) _clipboard.TrySetRichContent(oldClipboard);
                 }
-                if (oldClipboard is not null) _clipboard.TrySetRichContent(oldClipboard);
             }
         }
         var capture = TodoTaskClipboardCapturePolicy.Resolve(copiedContent?.Text, copiedContent?.Html, selectedFiles);
         var dialog = new TodoTaskEditWindow(initialDescription: capture.Description, initialUrls: capture.Urls, initialAttachments: capture.Attachments);
-        if (!ShowTodoTaskDialog(dialog)) return;
+        if (!ShowTodoTaskDialog(dialog)) return false;
         var task = FromTodoTaskEntry(_todoTaskStore.Create(dialog.TaskTitle, dialog.Description, DateTimeOffset.Now,
             dialog.ReminderIntervalMinutes, dialog.CategoryColor, dialog.Urls, dialog.Attachments));
         task.Checklist = dialog.Checklist.ToList();
@@ -2308,13 +2382,14 @@ public partial class MainWindow : Window
         RecordTodoTaskChange("criada", task, $"Tarefa criada: {TodoTaskDisplay.Reference(task)} {task.Title}");
         _todoTaskPanel?.Refresh();
         ShowTodoTaskAttachmentErrors(attachmentErrors);
+        return true;
     }
 
     private void ShowTodoTaskPanel()
     {
         _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask,
             ReopenTodoTask, PauseTodoTask, UnpauseTodoTask, ToggleTodoTaskChecklist,
-            CreateTodoTaskAsync, ShowTodoTaskReport, UndoTodoTaskActions, LoadBusinessmapTasksAsync, _settings.Businessmap.Enabled);
+            async () => { await CreateTodoTaskAsync(); }, ShowTodoTaskReport, UndoTodoTaskActions, LoadBusinessmapTasksAsync, _settings.Businessmap.Enabled);
         _todoTaskPanel.ShowOpenTasks();
         _todoTaskPanel.Show();
         _todoTaskPanel.Activate();
@@ -4465,8 +4540,10 @@ public partial class MainWindow : Window
         }
         if (!_androidScreenShareWindows.TryGetValue(deviceId, out var window))
         {
-            window = new AndroidScreenShareWindow(deviceId, deviceName);
+            window = new AndroidScreenShareWindow(deviceId, deviceName, shareId);
             _androidScreenShareWindows[deviceId] = window;
+            window.InputRequested += (activeShareId, action, x, y, deltaX, deltaY) =>
+                _ = SendAndroidScreenShareInputAsync(deviceId, window, activeShareId, action, x, y, deltaX, deltaY);
             window.ClosedByUser += () =>
             {
                 if (_androidScreenShareWindows.TryGetValue(deviceId, out var current) && ReferenceEquals(current, window))
@@ -4479,8 +4556,18 @@ public partial class MainWindow : Window
         }
         else if (!window.IsVisible)
             window.Show();
+        window.SetShareId(shareId);
         window.PrepareForShare();
         window.Activate();
+    }
+
+    private async Task SendAndroidScreenShareInputAsync(string deviceId, AndroidScreenShareWindow window, string shareId, string action, double x, double y, int deltaX, int deltaY)
+    {
+        var server = _jmdroidApiServer;
+        if (server is null) return;
+        var sent = await server.SendScreenShareInputAsync(deviceId, shareId, action, x, y, deltaX, deltaY);
+        if (!sent && window.IsVisible && window.ShareId == shareId)
+            window.SetStatus("O celular não recebeu o gesto. Confirme se a transmissão continua ativa e se o Android implementa controle remoto.");
     }
 
     private void UpdateAndroidScreenShareFrame(string deviceId, ReadOnlyMemory<byte> frame)
@@ -4595,7 +4682,6 @@ public partial class MainWindow : Window
     private IReadOnlyList<JmdroidApiCommand> GetJmdroidApiCommands()
     {
         if (!Dispatcher.CheckAccess()) return Dispatcher.Invoke(GetJmdroidApiCommands);
-        var remoteIds = new HashSet<string>(["clipboard", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact", "screenShare", "desktopScreenShare"], StringComparer.Ordinal);
         var commands = _commands.Select(command =>
         {
             var searchTerms = command.Id is "screenShare" or "desktopScreenShare"
@@ -4607,7 +4693,7 @@ public partial class MainWindow : Window
                     .Split('·', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             var enabled = !_settings.DisabledCommands.Contains(command.Id);
             var custom = _settings.CustomShortcuts.FirstOrDefault(item => item.Id == command.Id);
-            var available = enabled && (remoteIds.Contains(command.Id) || custom?.AllowJmdroidExecution == true);
+            var available = enabled && (JmdroidRemoteCommandPolicy.IsRemoteCommand(command.Id) || custom?.AllowJmdroidExecution == true);
             var reason = !enabled ? "Este comando está desativado nas configurações do JMD."
                 : available ? null : custom is not null
                     ? "A execução pelo JMDroid está bloqueada. Desmarque ‘Bloquear execução pelo JMDroid (Android)’ ao editar este workflow."
@@ -4617,7 +4703,7 @@ public partial class MainWindow : Window
                     .Select(match => match.Groups[1].Value))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            object? inputSchema = command.Id is "screenShare" or "desktopScreenShare" ? new
+            object? inputSchema = JmdroidRemoteCommandPolicy.RequiresEmptyInput(command.Id) ? new
             {
                 type = "object",
                 properties = new { },
@@ -4636,7 +4722,8 @@ public partial class MainWindow : Window
                 }
             };
             return new JmdroidApiCommand(command.Id, command.Name, command.Description, command.Shortcut,
-                available, reason, searchTerms, custom is not null, inputSchema);
+                available, reason, searchTerms, custom is not null, inputSchema, custom?.IconDataUrl,
+                custom is not null && _settings.VoicePhrases.TryGetValue(custom.Id, out var phrases) ? phrases.ToArray() : []);
         }).ToList();
         return commands;
     }
@@ -4783,6 +4870,46 @@ public partial class MainWindow : Window
                 return succeeded
                     ? new JmdroidExecutionResult("succeeded", $"Workflow concluído: {custom.Name}.")
                     : new JmdroidExecutionResult("failed", Error: $"O workflow {custom.Name} falhou. Consulte o Histórico do JMD.");
+            }
+            catch (OperationCanceledException)
+            {
+                return new JmdroidExecutionResult("failed", Error: "A execução foi cancelada.");
+            }
+        }
+        if (JmdroidRemoteCommandPolicy.RequiresEmptyInput(commandId))
+        {
+            try
+            {
+                return await Dispatcher.InvokeAsync(async () =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (_settings.DisabledCommands.Contains(commandId))
+                        return new JmdroidExecutionResult("failed", Error: "Este comando está desativado nas configurações do JMD.");
+                    switch (commandId)
+                    {
+                        case "todoCreate":
+                            return await CreateTodoTaskAsync(captureForegroundSelection: false)
+                                ? new JmdroidExecutionResult("succeeded", "Janela de criação de tarefa concluída.")
+                                : new JmdroidExecutionResult("failed", Error: "A criação da tarefa foi cancelada no computador.");
+                        case "todoPanel":
+                            ShowTodoTaskPanel();
+                            return new JmdroidExecutionResult("succeeded", "Painel de tarefas aberto no computador.");
+                        case "todoPanelClose":
+                            _todoTaskPanel?.Hide();
+                            return new JmdroidExecutionResult("succeeded", "Painel de tarefas fechado no computador.");
+                        case "about":
+                            ShowAboutPage();
+                            return new JmdroidExecutionResult("succeeded", "Tela Sobre aberta no computador.");
+                        case "hibernate":
+                        case "suspend":
+                        case "lock":
+                            return ExecuteSystemPowerCommand(commandId)
+                                ? new JmdroidExecutionResult("succeeded", "Comando de energia enviado ao computador.")
+                                : new JmdroidExecutionResult("failed", Error: "Não foi possível executar o comando de energia.");
+                        default:
+                            return new JmdroidExecutionResult("failed", Error: "Este comando não está disponível para execução remota.");
+                    }
+                }).Task.Unwrap();
             }
             catch (OperationCanceledException)
             {
@@ -5774,7 +5901,23 @@ internal sealed class CommandRow(string id, string name, string description, str
     private bool _visible = true;
     private string _voicePhrasesDisplay = string.Empty;
     private bool _isCustomShortcut;
+    private string? _iconDataUrl;
+    private System.Windows.Media.ImageSource? _iconImage;
     public bool IsCustomShortcut { get => _isCustomShortcut; set { _isCustomShortcut = value; Changed(nameof(IsCustomShortcut)); } }
+    public string? IconDataUrl
+    {
+        get => _iconDataUrl;
+        set
+        {
+            _iconDataUrl = value;
+            _iconImage = WorkflowIconService.ToImageSource(value);
+            Changed(nameof(IconDataUrl));
+            Changed(nameof(IconImage));
+            Changed(nameof(HasIcon));
+        }
+    }
+    public System.Windows.Media.ImageSource? IconImage => _iconImage;
+    public bool HasIcon => _iconImage is not null;
     public string Shortcut { get => _shortcut; set { _shortcut = value; Changed(nameof(Shortcut)); } }
     public string Status { get => _status; set { _status = value; Changed(nameof(Status)); } }
     public Brush StatusBrush { get => _statusBrush; set { _statusBrush = value; Changed(nameof(StatusBrush)); } }

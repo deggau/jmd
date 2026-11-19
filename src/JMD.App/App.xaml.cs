@@ -396,6 +396,7 @@ internal sealed class UserSettings
         ["saveSnippet"] = ShortcutDefaults.ForCommand("saveSnippet"),
         ["draftSave"] = ShortcutDefaults.ForCommand("draftSave"),
         ["draftRestore"] = ShortcutDefaults.ForCommand("draftRestore"),
+        ["screenShare"] = ShortcutDefaults.ForCommand("screenShare"),
         ["todoCreate"] = "Ctrl+Alt+T",
         ["todoPanel"] = "Ctrl+Alt+Left",
         ["todoPanelClose"] = "Ctrl+Alt+Right",
@@ -431,6 +432,8 @@ internal sealed class CustomShortcutEntry
     public string Shortcut { get; set; } = string.Empty;
     public bool FocusIfAlreadyOpen { get; set; }
     public bool AllowJmdroidExecution { get; set; } = true;
+    public string? IconTarget { get; set; }
+    public string? IconDataUrl { get; set; }
     public List<CustomWorkflowStep> Steps { get; set; } = [];
 }
 
@@ -485,6 +488,7 @@ internal sealed class SettingsStore
                     loaded.Shortcuts.TryAdd("upperCase", ShortcutDefaults.ForCommand("upperCase"));
                     loaded.Shortcuts.TryAdd("lowerCase", ShortcutDefaults.ForCommand("lowerCase"));
                     loaded.Shortcuts.TryAdd("titleCase", ShortcutDefaults.ForCommand("titleCase"));
+                    loaded.Shortcuts.TryAdd("screenShare", ShortcutDefaults.ForCommand("screenShare"));
                     loaded.VoicePhrases ??= new Dictionary<string, List<string>>(StringComparer.Ordinal);
                     loaded.DisabledCommands ??= new HashSet<string>(StringComparer.Ordinal);
                     loaded.Snippets ??= [];

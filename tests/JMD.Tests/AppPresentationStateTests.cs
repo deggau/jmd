@@ -108,6 +108,7 @@ public sealed class AppPresentationStateTests
         Assert.Equal("Alt+Shift+B", ShortcutDefaults.ForCommand("jsonCompact"));
         Assert.Equal("Ctrl+Shift+Up", ShortcutDefaults.ForCommand("draftSave"));
         Assert.Equal("Ctrl+Shift+Down", ShortcutDefaults.ForCommand("draftRestore"));
+        Assert.Equal("Ctrl+Alt+Shift+V", ShortcutDefaults.ForCommand("screenShare"));
         Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("jsonPretty"), out _, out _));
         Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("jsonCompact"), out _, out _));
         Assert.True(ShortcutParser.TryParse(ShortcutDefaults.ForCommand("draftSave"), out var saveBinding, out _));
