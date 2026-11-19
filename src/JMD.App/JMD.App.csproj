@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Assets\JMD.ico</ApplicationIcon>
-    <Version>0.1.119</Version>
+    <Version>0.1.120</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\JMD.Core\JMD.Core.csproj" />
@@ -20,6 +20,7 @@
     <PackageReference Include="Vosk" Version="0.3.38" />
     <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.8" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
+    <PackageReference Include="System.Speech" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

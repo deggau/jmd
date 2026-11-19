@@ -65,6 +65,30 @@ public sealed class WorkflowCommandLinePolicyTests
         Assert.Equal(arguments, parsedArguments);
     }
 
+    [Fact]
+    public void Quoted_executable_accepts_a_vscode_uri_as_an_argument()
+    {
+        const string executable = @"C:\Program Files\Microsoft VS Code\Code.exe";
+        var commandLine = $"\"{executable}\" --folder-uri \"vscode://file/C:/projects/demo\"";
+
+        Assert.True(WorkflowCommandLinePolicy.IsValidTarget(commandLine));
+    }
+
+    [Fact]
+    public void Quoted_executable_accepts_a_path_argument_with_spaces()
+    {
+        const string executable = @"C:\Program Files\Microsoft VS Code\Code.exe";
+        var commandLine = $"\"{executable}\" --new-window \"C:\\Users\\user\\source code\\demo\"";
+
+        Assert.True(WorkflowCommandLinePolicy.IsValidTarget(commandLine));
+    }
+
+    [Theory]
+    [InlineData("https://example.com", true)]
+    [InlineData("ftp://example.com", false)]
+    public void Validates_a_url_target_by_its_executable_token(string target, bool expected)
+        => Assert.Equal(expected, WorkflowCommandLinePolicy.IsValidTarget(target));
+
     [Theory]
     [InlineData("\"C:\\Program Files\\Program.exe")]
     [InlineData("C:\\Program Files\\Program.exe \"unterminated argument")]

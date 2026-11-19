@@ -164,7 +164,7 @@ internal sealed class CustomShortcutEditorWindow : Window
         AddField(form, "Frases do Jey (opcional)", _phrases, "Uma frase por linha");
         form.Children.Add(new TextBlock
         {
-            Text = "Use {{nome}} para capturar um trecho da frase, por exemplo: Abra a tarefa {{tarefaId}}. Você pode falar a frase ao Jey ou digitá-la na busca e pressionar Enter. Use o mesmo marcador na URL ou nos parâmetros do programa; coloque o parâmetro entre aspas se puder conter espaços.",
+            Text = "Use {{nome}} para capturar um trecho da frase, por exemplo: Abra a tarefa {{tarefaId}}. Na etapa Falar, use {{hora}} ou {{data}} para dizer os valores atuais automaticamente. A voz é sintetizada localmente pelo Windows.",
             Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(2, -4, 2, 8)
         });
@@ -323,10 +323,10 @@ internal sealed class CustomShortcutEditorWindow : Window
             var type = new ComboBox { Margin = new Thickness(0, 8, 0, 5), Padding = new Thickness(6, 4, 6, 4), ItemsSource = new[]
             {
                 "Abrir programa ou URL", "Pressionar tecla", "Digitar texto", "Aguardar", "Focar campo ou botão",
-                "Aguardar janela", "Aguardar controle", "Se controle corresponder", "Clique na janela", "Reposicionar janela"
+                "Aguardar janela", "Aguardar controle", "Se controle corresponder", "Clique na janela", "Reposicionar janela", "Falar texto em voz alta"
             } };
             type.SelectedIndex = step.Action switch { "Open" => 0, "Key" => 1, "Type" => 2, "Wait" => 3, "Focus" => 4,
-                "WaitWindow" => 5, "WaitControl" => 6, "IfControl" => 7, "Click" => 8, "PositionWindow" => 9, _ => 2 };
+                "WaitWindow" => 5, "WaitControl" => 6, "IfControl" => 7, "Click" => 8, "PositionWindow" => 9, "Speak" => 10, _ => 2 };
             body.Children.Add(type);
             var value = CreateBox(step.Action == "Type" ? 68 : 36, multiline: step.Action == "Type");
             value.Text = step.Value;
@@ -446,6 +446,13 @@ internal sealed class CustomShortcutEditorWindow : Window
                         value.Height = 36; value.AcceptsReturn = false; value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Pausa após clicar (ms, opcional)";
                         break;
+                    case 10:
+                        valueLabel.Text = "Texto que o Jey vai falar";
+                        value.ToolTip = "Use {{hora}} e {{data}} para inserir os valores atuais quando o workflow executar.";
+                        value.Height = 68; value.AcceptsReturn = true;
+                        value.TextWrapping = TextWrapping.Wrap;
+                        delayLabel.Text = "Pausa após falar (ms, opcional)";
+                        break;
                     default:
                         valueLabel.Text = "Título da janela ou process:nome-do-processo (vazio = janela ativa)";
                         value.ToolTip = "Move e centraliza a janela no monitor selecionado, mantendo seu tamanho.";
@@ -501,7 +508,7 @@ internal sealed class CustomShortcutEditorWindow : Window
                 step.Action = step.TypeBox.SelectedIndex switch
                 {
                     0 => "Open", 1 => "Key", 2 => "Type", 3 => "Wait", 4 => "Focus", 5 => "WaitWindow",
-                    6 => "WaitControl", 7 => "IfControl", 8 => "Click", 9 => "PositionWindow", _ => "Type"
+                    6 => "WaitControl", 7 => "IfControl", 8 => "Click", 9 => "PositionWindow", 10 => "Speak", _ => "Type"
                 };
             if (step.ValueBox is not null) step.Value = step.ValueBox.Text;
             if (step.DelayBox is not null)

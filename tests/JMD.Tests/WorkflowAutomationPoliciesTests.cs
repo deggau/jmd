@@ -17,6 +17,7 @@ public sealed class WorkflowAutomationPoliciesTests
     [InlineData("IfControl")]
     [InlineData("Click")]
     [InlineData("PositionWindow")]
+    [InlineData("Speak")]
     public void Workflow_step_action_policy_preserves_old_actions_and_accepts_new_actions(string action)
         => Assert.True(WorkflowStepActionPolicy.IsSupported(action));
 

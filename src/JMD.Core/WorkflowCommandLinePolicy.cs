@@ -8,6 +8,14 @@ public static class WorkflowCommandLinePolicy
     private static readonly Regex ExecutableExtension = new(@"\.(?:exe|com|bat|cmd|lnk)(?=\s|$)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    public static bool IsValidTarget(string? commandLine)
+    {
+        if (!TryParse(commandLine, out var executable, out var arguments)) return false;
+        if (!executable.Contains("://", StringComparison.Ordinal)) return true;
+        return arguments.Count == 0 && !executable.Any(char.IsWhiteSpace) &&
+               Uri.TryCreate(executable, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+    }
+
     public static bool TryParse(string? commandLine, out string executable, out IReadOnlyList<string> arguments,
         Func<string, bool>? fileExists = null)
     {

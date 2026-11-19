@@ -57,10 +57,41 @@ public static class WorkflowStepActionPolicy
 {
     private static readonly HashSet<string> SupportedActions = new(StringComparer.Ordinal)
     {
-        "Open", "Key", "Type", "Wait", "Focus", "WaitWindow", "WaitControl", "IfControl", "Click", "PositionWindow"
+        "Open", "Key", "Type", "Wait", "Focus", "WaitWindow", "WaitControl", "IfControl", "Click", "PositionWindow", "Speak"
     };
 
     public static bool IsSupported(string? action) => action is not null && SupportedActions.Contains(action);
+}
+
+public static class WorkflowSpeechTemplatePolicy
+{
+    public static bool IsBuiltInVariable(string? variableName)
+        => variableName is not null && (variableName.Equals("hora", StringComparison.OrdinalIgnoreCase) ||
+                                        variableName.Equals("data", StringComparison.OrdinalIgnoreCase));
+
+    public static bool TryResolve(string? variableName, DateTimeOffset now, CultureInfo culture, out string value)
+    {
+        value = variableName?.ToLowerInvariant() switch
+        {
+            "hora" => FormatTime(now),
+            "data" => now.ToString("dddd, d 'de' MMMM 'de' yyyy", culture),
+            _ => string.Empty
+        };
+        return IsBuiltInVariable(variableName);
+    }
+
+    private static string FormatTime(DateTimeOffset now)
+    {
+        if (now.Hour == 0 && now.Minute == 0) return "meia-noite";
+        if (now.Hour == 12 && now.Minute == 0) return "meio-dia";
+        var hour = now.Hour switch
+        {
+            0 => "meia-noite",
+            12 => "meio-dia",
+            _ => $"{now.Hour} {(now.Hour == 1 ? "hora" : "horas")}"
+        };
+        return now.Minute == 0 ? hour : $"{hour} e {now.Minute} {(now.Minute == 1 ? "minuto" : "minutos")}";
+    }
 }
 
 public static class WorkflowTimeoutPolicy

@@ -1063,12 +1063,7 @@ public partial class MainWindow : Window
             .Where(phrase => !string.IsNullOrWhiteSpace(phrase)).ToList();
 
     private static bool IsValidCustomTarget(string target)
-    {
-        if (target.Contains("://", StringComparison.Ordinal))
-            return Uri.TryCreate(target, UriKind.Absolute, out var uri) &&
-                   (uri.Scheme is "http" or "https") && !target.Any(char.IsWhiteSpace);
-        return WorkflowCommandLinePolicy.TryParse(target, out _, out _);
-    }
+        => WorkflowCommandLinePolicy.IsValidTarget(target);
 
     private bool HasShortcutConflict(string shortcutText, string? exceptId)
     {
@@ -1233,6 +1228,7 @@ public partial class MainWindow : Window
         if (steps.Any(step => step.Action == "Key" && !TryGetWorkflowKey(step.Value, out _))) return "Informe uma tecla válida, como Tab, Enter, Escape ou F1.";
         if (steps.Any(step => step.Action == "Key" && !WorkflowRepeatPolicy.IsValidCount(step.RepeatCount))) return $"A repetição da tecla deve ficar entre {WorkflowRepeatPolicy.MinimumCount} e {WorkflowRepeatPolicy.MaximumCount} vezes.";
         if (steps.Any(step => step.Action == "Type" && string.IsNullOrEmpty(step.Value))) return "Informe o texto a digitar em cada etapa de texto.";
+        if (steps.Any(step => step.Action == "Speak" && string.IsNullOrWhiteSpace(step.Value))) return "Informe o texto que o Jey deve falar.";
         if (steps.Any(step => step.Action == "Wait" && (!int.TryParse(step.Value, out var milliseconds) || milliseconds is < 1 or > 60000))) return "A etapa de espera deve ter entre 1 e 60000 ms.";
         if (steps.Any(step => step.Action is "Focus" or "WaitControl" or "IfControl" && !WorkflowControlIdentifierPolicy.TryParse(step.Value, out _)))
             return "Informe um controle usando id:AutomationId ou name:nome acessível.";
@@ -1252,10 +1248,11 @@ public partial class MainWindow : Window
         var dynamicNames = dialog.VoicePhrases
             .SelectMany(phrase => Regex.Matches(phrase, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var token in steps.Where(step => step.Action is "Open" or "Type" or "Focus" or "WaitWindow" or "WaitControl" or "IfControl" or "PositionWindow")
+        foreach (var token in steps.Where(step => step.Action is "Open" or "Type" or "Focus" or "WaitWindow" or "WaitControl" or "IfControl" or "PositionWindow" or "Speak")
                      .SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value)))
         {
-            if (!_settings.WorkflowVariables.Any(variable => variable.Name.Equals(token, StringComparison.OrdinalIgnoreCase)) && !dynamicNames.Contains(token))
+            if (!WorkflowSpeechTemplatePolicy.IsBuiltInVariable(token) &&
+                !_settings.WorkflowVariables.Any(variable => variable.Name.Equals(token, StringComparison.OrdinalIgnoreCase)) && !dynamicNames.Contains(token))
                 return $"A variável {{{{{token}}}}} não está cadastrada nem definida como trecho variável em uma frase de voz.";
         }
         if (shortcutText.Length > 0 && !ShortcutParser.TryParse(shortcutText, out _, out var shortcutError)) return shortcutError ?? "Atalho inválido.";
@@ -1866,6 +1863,7 @@ public partial class MainWindow : Window
                 currentStepDescription = step.Action switch
                 {
                     "Open" => "Abrir programa ou URL",
+                    "Speak" => "Falar texto em voz alta",
                     "Key" => "Pressionar tecla",
                     "Type" => "Digitar texto",
                     "Focus" => "Focar controle",
@@ -1992,6 +1990,10 @@ public partial class MainWindow : Window
                         var textToType = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
                         if (string.IsNullOrEmpty(textToType) || !_keyboard.SendUnicodeText(textToType))
                             throw new InvalidOperationException("Não foi possível digitar o texto da etapa.");
+                        break;
+                    case "Speak":
+                        var textToSpeak = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
+                        await WorkflowSpeechService.SpeakAsync(textToSpeak);
                         break;
                     case "Focus":
                         var controlName = ExpandWorkflowVariables(step.Value, voiceCommand?.Variables ?? dynamicVariables);
@@ -2140,17 +2142,24 @@ public partial class MainWindow : Window
 
     private string ExpandWorkflowVariables(string text, IReadOnlyDictionary<string, string>? commandVariables = null,
         bool urlEncodeValues = false)
-        => Regex.Replace(text, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}", match =>
+    {
+        var now = DateTimeOffset.Now;
+        var portuguese = CultureInfo.GetCultureInfo("pt-BR");
+        return Regex.Replace(text, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}", match =>
         {
-            var value = commandVariables is not null && commandVariables.TryGetValue(match.Groups[1].Value, out var captured)
+            var variableName = match.Groups[1].Value;
+            var value = WorkflowSpeechTemplatePolicy.TryResolve(variableName, now, portuguese, out var builtIn)
+                ? builtIn
+                : commandVariables is not null && commandVariables.TryGetValue(variableName, out var captured)
                 ? captured
                 : null;
-            var variable = _settings.WorkflowVariables.FirstOrDefault(item => item.Name.Equals(match.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
+            var variable = _settings.WorkflowVariables.FirstOrDefault(item => item.Name.Equals(variableName, StringComparison.OrdinalIgnoreCase));
             if (value is null && variable is null)
-                throw new InvalidOperationException($"O valor {{{{{match.Groups[1].Value}}}}} não foi capturado pela frase de voz e não está cadastrado como variável global.");
+                throw new InvalidOperationException($"O valor {{{{{variableName}}}}} não foi capturado pela frase de voz e não está cadastrado como variável global.");
             value ??= variable!.IsSecret ? WorkflowVariableProtection.Unprotect(variable.ProtectedValue) : variable.Value;
             return urlEncodeValues ? Uri.EscapeDataString(value) : value;
         });
+    }
 
     private static string DescribeCustomWorkflow(CustomShortcutEntry shortcut)
     {

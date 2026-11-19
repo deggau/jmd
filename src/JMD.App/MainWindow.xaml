@@ -147,16 +147,19 @@
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Cursor="Hand"
                         FocusVisualStyle="{StaticResource AccentFocusCue}">
                   <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <Image Grid.Column="0" Source="{Binding IconImage}" Width="42" Height="42" Stretch="Uniform"
-                           Margin="0,0,12,0" VerticalAlignment="Center">
-                      <Image.Style>
-                        <Style TargetType="Image">
-                          <Setter Property="Visibility" Value="Collapsed" />
-                          <Style.Triggers><DataTrigger Binding="{Binding HasIcon}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
-                        </Style>
-                      </Image.Style>
-                    </Image>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="54"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Grid Grid.Column="0" Width="42" Height="42" Margin="0,0,12,0" VerticalAlignment="Center">
+                      <Border Background="#FF30343E" CornerRadius="8">
+                        <Border.Style>
+                          <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers><DataTrigger Binding="{Binding HasIcon}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+                          </Style>
+                        </Border.Style>
+                        <TextBlock Text="◇" Foreground="{StaticResource MutedBrush}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      </Border>
+                      <Image Source="{Binding IconImage}" Stretch="Uniform" />
+                    </Grid>
                     <StackPanel Grid.Column="1">
                       <DockPanel LastChildFill="False">
                         <TextBlock Text="{Binding Name}" Foreground="White" FontSize="14" FontWeight="SemiBold" />
