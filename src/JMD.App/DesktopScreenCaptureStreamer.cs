@@ -16,20 +16,35 @@ internal static class DesktopScreenCaptureStreamer
         int targetWidth,
         int targetHeight,
         int framesPerSecond,
+        Func<JmdroidScreenShareViewport> getViewport,
         Func<byte[], CancellationToken, Task> sendFrame,
         CancellationToken cancellationToken)
     {
         var bounds = Screen.PrimaryScreen?.Bounds ?? throw new InvalidOperationException("Não foi possível localizar a tela principal do computador.");
-        var target = JmdroidScreenSharePolicy.FitScreenToViewport(
-            bounds.Width, bounds.Height, targetWidth, targetHeight, JmdroidScreenSharePolicy.DesktopToAndroidMaxDimension);
         var fps = JmdroidScreenSharePolicy.NormalizeFramesPerSecond(framesPerSecond);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1d / fps));
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var frame = await Task.Run(() => CaptureJpeg(bounds, target.Width, target.Height), cancellationToken);
+            var viewport = getViewport();
+            var source = GetSourceBounds(bounds, viewport);
+            var target = viewport.IsFullScreen
+                ? JmdroidScreenSharePolicy.FitScreenToViewport(
+                    source.Width, source.Height, targetWidth, targetHeight, JmdroidScreenSharePolicy.DesktopToAndroidMaxDimension)
+                : JmdroidScreenSharePolicy.FitDimensions(
+                    source.Width, source.Height, JmdroidScreenSharePolicy.DesktopToAndroidZoomMaxDimension);
+            var frame = await Task.Run(() => CaptureJpeg(source, target.Width, target.Height), cancellationToken);
             await sendFrame(frame, cancellationToken);
         }
+    }
+
+    private static Rectangle GetSourceBounds(Rectangle screenBounds, JmdroidScreenShareViewport viewport)
+    {
+        var left = screenBounds.Left + (int)Math.Round(viewport.X * screenBounds.Width);
+        var top = screenBounds.Top + (int)Math.Round(viewport.Y * screenBounds.Height);
+        var right = screenBounds.Left + (int)Math.Round((viewport.X + viewport.Width) * screenBounds.Width);
+        var bottom = screenBounds.Top + (int)Math.Round((viewport.Y + viewport.Height) * screenBounds.Height);
+        return Rectangle.FromLTRB(left, top, Math.Max(left + 1, right), Math.Max(top + 1, bottom));
     }
 
     private static byte[] CaptureJpeg(Rectangle bounds, int width, int height)

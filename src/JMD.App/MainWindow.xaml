@@ -156,7 +156,7 @@
                             <Style.Triggers><DataTrigger Binding="{Binding HasIcon}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
                           </Style>
                         </Border.Style>
-                        <TextBlock Text="◇" Foreground="{StaticResource MutedBrush}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding IconGlyph}" FontFamily="Segoe UI Emoji" Foreground="{StaticResource MutedBrush}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
                       </Border>
                       <Image Source="{Binding IconImage}" Stretch="Uniform" />
                     </Grid>

@@ -57,11 +57,12 @@ Resposta enquanto aguarda confirmação no desktop:
 {
   "requestId": "pedido-aleatorio",
   "state": "pending",
-  "pollAfterMs": 1500
+  "pollAfterMs": 1500,
+  "computerName": "JMD-DESKTOP-01"
 }
 ```
 
-O JMD desktop mostra o nome do aparelho e os botões **Aprovar** e **Negar**. O pedido expira junto com a sessão de pareamento. O QR, por si só, nunca autoriza um aparelho.
+`computerName` identifica o computador que está oferecendo o pareamento. O JMDroid deve mostrá-lo e associá-lo à conexão salva, pois um celular pode parear com mais de um computador. Esse campo também aparece nas respostas de consulta abaixo, tanto enquanto o pedido está pendente quanto depois da aprovação. O JMD desktop mostra o nome do aparelho e os botões **Aprovar** e **Negar**. O pedido expira junto com a sessão de pareamento. O QR, por si só, nunca autoriza um aparelho.
 
 ### 3. Consultar a aprovação
 
@@ -76,11 +77,22 @@ Resposta após aprovação:
 {
   "state": "approved",
   "deviceId": "device-aleatorio",
-  "accessToken": "token-opaco-aleatorio-com-pelo-menos-256-bits"
+  "accessToken": "token-opaco-aleatorio-com-pelo-menos-256-bits",
+  "computerName": "JMD-DESKTOP-01"
 }
 ```
 
-O JMDroid grava o token no armazenamento protegido pelo Android Keystore e descarta o segredo de pareamento. O desktop persiste somente o hash do token, associado ao aparelho. O token é exclusivo daquele aparelho e revogável no JMD.
+Enquanto aguarda a decisão, a resposta `202 Accepted` também inclui `computerName`:
+
+```json
+{
+  "state": "pending",
+  "pollAfterMs": 1500,
+  "computerName": "JMD-DESKTOP-01"
+}
+```
+
+`computerName` é o nome do computador no sistema operacional. O JMDroid deve armazená-lo junto de `deviceId` e `accessToken` como identificação da conexão. O JMDroid grava o token no armazenamento protegido pelo Android Keystore e descarta o segredo de pareamento. O desktop persiste somente o hash do token, associado ao aparelho. O token é exclusivo daquele aparelho e revogável no JMD.
 
 Estados possíveis: `pending`, `approved`, `denied`, `expired`.
 
@@ -110,7 +122,7 @@ O servidor envia pings WebSocket de protocolo para manter a sessão e detectar d
 
 ### Visão geral e início pelos dois lados
 
-A transmissão usa a sessão WebSocket autenticada já aberta em `GET /api/v1/session`. **Não abra outro socket para as imagens.** O JMD desktop recebe os quadros e os mostra em uma janela. O visualizador também pode enviar toque e rolagem para o Android; não há envio de teclado.
+A transmissão usa a sessão WebSocket autenticada já aberta em `GET /api/v1/session`. **Não abra outro socket para as imagens.** O JMD desktop recebe os quadros e os mostra em uma janela. O visualizador também pode enviar toque, rolagem, arraste e texto digitado ao Android; não há encaminhamento de teclas físicas individuais.
 
 A mesma ação pode iniciar o fluxo pelo computador ou pelo celular:
 
@@ -232,6 +244,8 @@ Enquanto a transmissão estiver ativa, o JMD envia os gestos pela **mesma sessã
   "action": "tap",
   "x": 0.5,
   "y": 0.4,
+  "frameWidth": 1080,
+  "frameHeight": 2400,
   "deltaX": 0,
   "deltaY": 0
 }
@@ -244,12 +258,49 @@ Enquanto a transmissão estiver ativa, o JMD envia os gestos pela **mesma sessã
   "action": "scroll",
   "x": 0.5,
   "y": 0.7,
+  "frameWidth": 1080,
+  "frameHeight": 2400,
   "deltaX": 0,
   "deltaY": 120
 }
 ```
 
-`x` e `y` são coordenadas normalizadas entre `0.0` e `1.0`, relativas ao quadro Android original (origem no canto superior esquerdo). O Android deve convertê-las para pixels da tela atual, considerando orientação e resolução. `tap` representa um toque simples no ponto. Em `scroll`, `deltaX` e `deltaY` seguem unidades de roda do Windows: `120` representa um passo para cima, `-120` um passo para baixo; o JMD envia atualmente `deltaX: 0`. Converta a rolagem em um gesto de arrastar/swipe na região indicada, com direção e distância coerentes com o delta. Os eventos são limitados a no máximo 50 por segundo pelo JMD.
+`x` e `y` são coordenadas normalizadas entre `0.0` e `1.0` no quadro JPEG exato. `frameWidth` e `frameHeight` são os pixels desse quadro. Para mapear, calcule `frameX = round(x * (frameWidth - 1))` e `frameY = round(y * (frameHeight - 1))`; depois converta o pixel do quadro para coordenadas físicas da tela usando a região de conteúdo realmente capturada pelo `MediaProjection`. Não some nem remova a altura da barra de status/nav por suposição: se o quadro inclui essas barras, o retângulo capturado começa em `(0,0)`; se o Android removeu algum inset, some o deslocamento real do recorte. Não use dimensões em dp como se fossem pixels. Isso evita erro de posição causado por densidade, orientação ou insets.
+
+`tap` representa um toque simples no ponto. Em `scroll`, `deltaX` e `deltaY` seguem unidades de roda do Windows: `120` representa um passo para cima, `-120` um passo para baixo; o JMD envia atualmente `deltaX: 0`. Converta a rolagem em um gesto de arrastar/swipe na região indicada, com direção e distância coerentes com o delta.
+
+Ao pressionar e mover o botão esquerdo, o JMD envia `action: "drag"` ao soltar. `x`/`y` indicam o início; `endX`/`endY`, o destino (também normalizados no quadro); `durationMilliseconds` informa a duração estimada entre 50 e 5000 ms. Exemplo:
+
+```json
+{
+  "type": "screen_share.input",
+  "shareId": "id-opaco-da-transmissao",
+  "action": "drag",
+  "x": 0.5,
+  "y": 0.03,
+  "endX": 0.5,
+  "endY": 0.65,
+  "durationMilliseconds": 420,
+  "frameWidth": 1080,
+  "frameHeight": 2400,
+  "deltaX": 0,
+  "deltaY": 0
+}
+```
+
+O cliente Android deve executar o arraste como uma única trajetória entre início e destino, usando `AccessibilityService.dispatchGesture` e a duração indicada. Isso permite gestos como abrir a barra de notificações e arrastar um item.
+
+Para digitar no campo atualmente focado no Android, o JMD envia o texto digitado na caixa **Enviar texto** da janela de compartilhamento (Enter ou botão Enviar):
+
+```json
+{
+  "type": "screen_share.text",
+  "shareId": "id-opaco-da-transmissao",
+  "text": "Texto digitado no computador"
+}
+```
+
+O texto tem limite de 4000 caracteres. O cliente deve inseri-lo no campo editável com foco, preservando cursor e seleção quando possível, e responder pela mesma sessão com `screen_share.text_result` (`success: true/false`, opcionalmente `message`). Se não conseguir executar gesto ou inserir texto, responda `screen_share.input_error` com `shareId` e `message`. A janela do JMD mostra a resposta como aviso temporário por 10 segundos. Os eventos são limitados a no máximo 50 por segundo pelo JMD.
 
 Para reproduzir gestos em outras aplicações, o cliente Android precisa de um `AccessibilityService` habilitado explicitamente pelo usuário e pode usar `dispatchGesture` (API 24+). Declare os metadados e capacidades de gesto exigidos pelo Android. A captura por `MediaProjection` **não** concede permissão para controlar a tela. Se o serviço não estiver habilitado, o Android deve ignorar o gesto ou responder pela mesma sessão com:
 
@@ -340,9 +391,28 @@ O JMDroid deve abrir o visualizador e responder pela **mesma sessão WebSocket**
 }
 ```
 
-Envie dimensões positivas correspondentes ao espaço disponível no visualizador, após considerar orientação e barras do sistema. O JMD limita o maior lado do quadro a 1440 px. `shareId` deve ser ecoado sem alterações. Se receber novamente o mesmo `shareId`, reutilize o visualizador atual e reenvie `ready`; não crie telas ou sessões duplicadas. O Android pode enviar `ready` novamente ao mudar a orientação/resolução para o JMD ajustar a captura.
+Envie dimensões positivas correspondentes ao espaço disponível no visualizador, após considerar orientação e barras do sistema. O JMD limita o maior lado dos quadros da tela inteira a 1440 px. `shareId` deve ser ecoado sem alterações. Se receber novamente o mesmo `shareId`, reutilize o visualizador atual e reenvie `ready`; não crie telas ou sessões duplicadas. O Android pode enviar `ready` novamente ao mudar a orientação/resolução para o JMD ajustar a captura.
 
 `maxFps` é o teto configurado no JMD para ambas as direções (12–60 FPS; padrão 12). `maxFrameBytes` é o máximo por mensagem binária (512 KiB). `quality` é a qualidade JPEG solicitada; o codificador pode reduzir a qualidade e, se necessário, a resolução até caber no limite de tamanho.
+
+### Pedir uma área ampliada da tela
+
+Por padrão, o JMD transmite a tela principal inteira, reduzida para caber nas dimensões de `ready`. Quando o usuário ampliar ou mover a imagem no Android, o app pode pedir ao JMD que capture somente a região visível. Envie pela mesma sessão WebSocket uma mensagem de texto:
+
+```json
+{
+  "type": "desktop_screen_share.viewport",
+  "shareId": "id-opaco-da-transmissao",
+  "x": 0.25,
+  "y": 0.2,
+  "width": 0.5,
+  "height": 0.6
+}
+```
+
+`x`, `y`, `width` e `height` são frações entre `0` e `1`, relativas à tela principal inteira, com origem no canto superior esquerdo. O retângulo precisa permanecer dentro da tela (`x + width <= 1`, `y + height <= 1`) e ter pelo menos `0.02` de largura e altura. Por exemplo, `x: 0.25`, `y: 0.2`, `width: 0.5`, `height: 0.6` pede a área central da tela. Envie um novo retângulo ao mover ou alterar o zoom. Para voltar à tela inteira, envie `x: 0`, `y: 0`, `width: 1`, `height: 1`.
+
+O JMD aplica a região no próximo quadro, captura seus pixels na resolução física da tela e transmite a imagem recortada sem faixas laterais. Para ampliar, isso recupera detalhe que foi descartado quando a tela inteira foi reduzida. O quadro do recorte pode chegar a 2400 px no maior lado, mas não excede a resolução física da região; o limite de 512 KiB continua valendo e o codificador reduz a qualidade/resolução se necessário. O Android deve exibir cada quadro recebido ocupando o retângulo ampliado e manter sua proporção. O `shareId` precisa corresponder à transmissão ativa; regiões inválidas são ignoradas. A captura continua limitada à tela principal.
 
 ### Receber quadros
 
@@ -355,7 +425,7 @@ WebSocket BINARY: FF D8 ... FF D9   (JMD → Android; um JPEG)
 WebSocket BINARY: FF D8 ... FF D9   (próximo quadro)
 ```
 
-O JMD ajusta a tela principal para caber no espaço informado pelo Android, sem ampliar a captura e sem distorcer sua proporção (em uma tela de celular retrato, uma tela desktop paisagem terá faixas vazias acima/abaixo). O maior lado fica limitado a 1440 px. O JMD tenta manter cada JPEG abaixo de 512 KiB e aplica o limite de FPS. O servidor pode enviar menos quadros por segundo para respeitar o teto ou acompanhar o desempenho. Exiba sempre o quadro mais recente e descarte imagens atrasadas para não formar fila. Preserve a proporção; não estique a imagem para preencher a tela.
+O JMD ajusta a tela principal para caber no espaço informado pelo Android, sem ampliar a captura e sem distorcer sua proporção (em uma tela de celular retrato, uma tela desktop paisagem terá faixas vazias acima/abaixo). O maior lado dos quadros da tela inteira fica limitado a 1440 px; quadros de uma área ampliada seguem o limite de 2400 px descrito acima e a resolução física da área. O JMD tenta manter cada JPEG abaixo de 512 KiB e aplica o limite de FPS. O servidor pode enviar menos quadros por segundo para respeitar o teto ou acompanhar o desempenho. Exiba sempre o quadro mais recente e descarte imagens atrasadas para não formar fila. Preserve a proporção; não estique a imagem para preencher a tela.
 
 ### Encerrar e falhas
 

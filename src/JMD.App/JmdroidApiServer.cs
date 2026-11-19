@@ -196,9 +196,11 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         ScreenShareEnded?.Invoke(deviceId, "Compartilhamento encerrado.");
     }
 
-    public async Task<bool> SendScreenShareInputAsync(string deviceId, string shareId, string action, double x, double y, int deltaX, int deltaY)
+    public async Task<bool> SendScreenShareInputAsync(string deviceId, string shareId, string action, double x, double y, int deltaX, int deltaY,
+        int frameWidth, int frameHeight, double? endX = null, double? endY = null, int durationMilliseconds = 0)
     {
-        if (!JmdroidScreenShareInputPolicy.IsValid(action, x, y, deltaX, deltaY)) return false;
+        if (!JmdroidScreenShareInputPolicy.IsValid(action, x, y, deltaX, deltaY, endX, endY, durationMilliseconds) ||
+            frameWidth <= 0 || frameHeight <= 0) return false;
         if (!_screenShares.TryGetValue(deviceId, out var share) || share.ShareId != shareId || !share.TryAcceptInput(DateTimeOffset.UtcNow)) return false;
         try
         {
@@ -209,9 +211,30 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                 action,
                 x,
                 y,
+                frameWidth,
+                frameHeight,
                 deltaX,
-                deltaY
+                deltaY,
+                endX,
+                endY,
+                durationMilliseconds
             }, CancellationToken.None);
+            return true;
+        }
+        catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> SendScreenShareTextAsync(string deviceId, string shareId, string text)
+    {
+        if (!JmdroidScreenShareInputPolicy.IsValidText(text) ||
+            !_screenShares.TryGetValue(deviceId, out var share) || share.ShareId != shareId ||
+            !share.TryAcceptInput(DateTimeOffset.UtcNow)) return false;
+        try
+        {
+            await SendSessionMessageAsync(share.Socket, new { type = "screen_share.text", shareId, text }, CancellationToken.None);
             return true;
         }
         catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException or OperationCanceledException)
@@ -308,6 +331,11 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         }
         finally { sendLock.Release(); }
     }
+
+    public JmdroidScreenShareViewport GetDesktopScreenShareViewport(string deviceId, string shareId)
+        => _desktopScreenShares.TryGetValue(deviceId, out var share) && share.ShareId == shareId
+            ? share.GetViewport()
+            : JmdroidScreenShareViewport.FullScreen;
 
     public async Task FailDesktopScreenShareAsync(string deviceId, string shareId, string message)
     {
@@ -626,7 +654,13 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             }
             PairingRequestsChanged?.Invoke();
             context.Response.StatusCode = StatusCodes.Status202Accepted;
-            await context.Response.WriteAsJsonAsync(new { requestId = request.Id, state = "pending", pollAfterMs = 1500 }, JsonOptions, context.RequestAborted);
+            await context.Response.WriteAsJsonAsync(new
+            {
+                requestId = request.Id,
+                state = "pending",
+                pollAfterMs = 1500,
+                computerName = Environment.MachineName
+            }, JsonOptions, context.RequestAborted);
         });
 
         app.MapGet("/api/v1/pairing/requests/{requestId}", async context =>
@@ -643,15 +677,26 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             if (request.State == "pending")
             {
                 context.Response.StatusCode = StatusCodes.Status202Accepted;
-                await context.Response.WriteAsJsonAsync(new { state = "pending", pollAfterMs = 1500 }, JsonOptions, context.RequestAborted);
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    state = "pending",
+                    pollAfterMs = 1500,
+                    computerName = Environment.MachineName
+                }, JsonOptions, context.RequestAborted);
             }
             else if (request.State == "approved")
-                await context.Response.WriteAsJsonAsync(new { state = "approved", deviceId = request.DeviceId, accessToken = request.AccessToken }, JsonOptions, context.RequestAborted);
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    state = "approved",
+                    deviceId = request.DeviceId,
+                    accessToken = request.AccessToken,
+                    computerName = Environment.MachineName
+                }, JsonOptions, context.RequestAborted);
             else
             {
                 var state = request.State;
                 _pending.TryRemove(request.Id, out _);
-                await context.Response.WriteAsJsonAsync(new { state }, JsonOptions, context.RequestAborted);
+                await context.Response.WriteAsJsonAsync(new { state, computerName = Environment.MachineName }, JsonOptions, context.RequestAborted);
             }
         });
 
@@ -1151,6 +1196,15 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                     _ = SendDesktopScreenShareStoppedSafelyAsync(socket, desktopShare.ShareId);
                     DesktopScreenShareEnded?.Invoke(deviceId, "O compartilhamento foi encerrado no Android.");
                 }
+                else if (type == "desktop_screen_share.viewport" &&
+                    root.TryGetProperty("x", out var xValue) && xValue.TryGetDouble(out var x) &&
+                    root.TryGetProperty("y", out var yValue) && yValue.TryGetDouble(out var y) &&
+                    root.TryGetProperty("width", out var viewportWidthValue) && viewportWidthValue.TryGetDouble(out var viewportWidth) &&
+                    root.TryGetProperty("height", out var viewportHeightValue) && viewportHeightValue.TryGetDouble(out var viewportHeight) &&
+                    JmdroidScreenSharePolicy.TryCreateDesktopViewport(x, y, viewportWidth, viewportHeight, out var viewport))
+                {
+                    desktopShare.SetViewport(viewport);
+                }
                 else if (type is "desktop_screen_share.stopped" or "desktop_screen_share.error")
                 {
                     var reason = root.TryGetProperty("message", out var messageValue) && messageValue.ValueKind == JsonValueKind.String
@@ -1190,8 +1244,18 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                     ? messageValue.GetString()
                     : null;
                 ScreenShareStatusChanged?.Invoke(deviceId, string.IsNullOrWhiteSpace(reason)
-                    ? "O Android não conseguiu executar o gesto remoto."
-                    : $"O Android não conseguiu executar o gesto remoto: {reason}");
+                    ? "O Android não conseguiu executar a ação remota."
+                    : $"O Android não conseguiu executar a ação remota: {reason}");
+            }
+            else if (type == "screen_share.text_result")
+            {
+                var success = root.TryGetProperty("success", out var successValue) && successValue.ValueKind == JsonValueKind.True;
+                var reason = root.TryGetProperty("message", out var messageValue) && messageValue.ValueKind == JsonValueKind.String
+                    ? messageValue.GetString()
+                    : null;
+                ScreenShareStatusChanged?.Invoke(deviceId, success
+                    ? "Texto enviado ao Android."
+                    : string.IsNullOrWhiteSpace(reason) ? "O Android não conseguiu inserir o texto." : reason);
             }
             else if (type == "screen_share.stop")
             {
@@ -1593,6 +1657,8 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private sealed class ActiveDesktopScreenShare(string shareId, string deviceName, WebSocket socket, int maxFps)
     {
         private int _isReady;
+        private readonly object _viewportLock = new();
+        private JmdroidScreenShareViewport _viewport = JmdroidScreenShareViewport.FullScreen;
 
         public string ShareId { get; } = shareId;
         public string DeviceName { get; } = deviceName;
@@ -1600,6 +1666,14 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         public int MaxFps { get; } = maxFps;
         public bool IsReady => Volatile.Read(ref _isReady) == 1;
         public void MarkReady() => Volatile.Write(ref _isReady, 1);
+        public JmdroidScreenShareViewport GetViewport()
+        {
+            lock (_viewportLock) return _viewport;
+        }
+        public void SetViewport(JmdroidScreenShareViewport viewport)
+        {
+            lock (_viewportLock) _viewport = viewport;
+        }
     }
     private sealed class PairingSession(string id, string secret, DateTimeOffset expiresAt)
     {

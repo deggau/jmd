@@ -388,11 +388,13 @@ public partial class MainWindow : Window
         _commands.Add(new CommandRow("screenShare", "Ver tela do celular",
             "Abre a tela de um Android conectado e solicita autorização para transmitir.", GetShortcut("screenShare"))
         {
+            IconGlyph = "🤖",
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("screenShare")
         });
         _commands.Add(new CommandRow("desktopScreenShare", "Ver tela do computador no celular",
             "Transmite a tela principal do computador para um Android conectado.", GetShortcut("desktopScreenShare"))
         {
+            IconGlyph = "🖥️",
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("desktopScreenShare")
         });
         _commands.Add(new CommandRow("about", "Abrir Sobre", "Abre a tela Sobre do JMD.", "Sem atalho")
@@ -4551,8 +4553,10 @@ public partial class MainWindow : Window
         {
             window = new AndroidScreenShareWindow(deviceId, deviceName, shareId);
             _androidScreenShareWindows[deviceId] = window;
-            window.InputRequested += (activeShareId, action, x, y, deltaX, deltaY) =>
-                _ = SendAndroidScreenShareInputAsync(deviceId, window, activeShareId, action, x, y, deltaX, deltaY);
+            window.InputRequested += (activeShareId, input) =>
+                _ = SendAndroidScreenShareInputAsync(deviceId, window, activeShareId, input);
+            window.TextRequested += (activeShareId, text) =>
+                _ = SendAndroidScreenShareTextAsync(deviceId, window, activeShareId, text);
             window.ClosedByUser += () =>
             {
                 if (_androidScreenShareWindows.TryGetValue(deviceId, out var current) && ReferenceEquals(current, window))
@@ -4570,13 +4574,23 @@ public partial class MainWindow : Window
         window.Activate();
     }
 
-    private async Task SendAndroidScreenShareInputAsync(string deviceId, AndroidScreenShareWindow window, string shareId, string action, double x, double y, int deltaX, int deltaY)
+    private async Task SendAndroidScreenShareInputAsync(string deviceId, AndroidScreenShareWindow window, string shareId, ScreenShareInputRequest input)
     {
         var server = _jmdroidApiServer;
         if (server is null) return;
-        var sent = await server.SendScreenShareInputAsync(deviceId, shareId, action, x, y, deltaX, deltaY);
+        var sent = await server.SendScreenShareInputAsync(deviceId, shareId, input.Action, input.X, input.Y,
+            input.DeltaX, input.DeltaY, input.FrameWidth, input.FrameHeight, input.EndX, input.EndY, input.DurationMilliseconds);
         if (!sent && window.IsVisible && window.ShareId == shareId)
-            window.SetStatus("O celular não recebeu o gesto. Confirme se a transmissão continua ativa e se o Android implementa controle remoto.");
+            window.SetTransientStatus("O celular não recebeu o gesto. Confirme se a transmissão continua ativa e se o Android implementa controle remoto.");
+    }
+
+    private async Task SendAndroidScreenShareTextAsync(string deviceId, AndroidScreenShareWindow window, string shareId, string text)
+    {
+        var server = _jmdroidApiServer;
+        if (server is null) return;
+        var sent = await server.SendScreenShareTextAsync(deviceId, shareId, text);
+        if (!sent && window.IsVisible && window.ShareId == shareId)
+            window.SetTransientStatus("O celular não recebeu o texto. Confirme se a transmissão continua ativa.");
     }
 
     private void UpdateAndroidScreenShareFrame(string deviceId, ReadOnlyMemory<byte> frame)
@@ -4596,7 +4610,7 @@ public partial class MainWindow : Window
             Dispatcher.BeginInvoke(new Action(() => UpdateAndroidScreenShareStatus(deviceId, status)));
             return;
         }
-        if (_androidScreenShareWindows.TryGetValue(deviceId, out var window)) window.SetStatus(status);
+        if (_androidScreenShareWindows.TryGetValue(deviceId, out var window)) window.SetTransientStatus(status);
     }
 
     public async Task StartJmdroidApiForPairedDevicesAsync()
@@ -4817,6 +4831,7 @@ public partial class MainWindow : Window
             var server = _jmdroidApiServer;
             if (server is null) return;
             await DesktopScreenCaptureStreamer.StreamAsync(width, height, framesPerSecond,
+                () => server.GetDesktopScreenShareViewport(deviceId, shareId),
                 (frame, token) => server.SendDesktopScreenShareFrameAsync(deviceId, shareId, frame, token), cancellation.Token);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
@@ -5911,6 +5926,7 @@ internal sealed class CommandRow(string id, string name, string description, str
     private string _voicePhrasesDisplay = string.Empty;
     private bool _isCustomShortcut;
     private string? _iconDataUrl;
+    private string _iconGlyph = "◇";
     private System.Windows.Media.ImageSource? _iconImage;
     public bool IsCustomShortcut { get => _isCustomShortcut; set { _isCustomShortcut = value; Changed(nameof(IsCustomShortcut)); } }
     public string? IconDataUrl
@@ -5927,6 +5943,7 @@ internal sealed class CommandRow(string id, string name, string description, str
     }
     public System.Windows.Media.ImageSource? IconImage => _iconImage;
     public bool HasIcon => _iconImage is not null;
+    public string IconGlyph { get => _iconGlyph; set { _iconGlyph = value; Changed(nameof(IconGlyph)); } }
     public string Shortcut { get => _shortcut; set { _shortcut = value; Changed(nameof(Shortcut)); } }
     public string Status { get => _status; set { _status = value; Changed(nameof(Status)); } }
     public Brush StatusBrush { get => _statusBrush; set { _statusBrush = value; Changed(nameof(StatusBrush)); } }

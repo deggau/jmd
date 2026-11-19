@@ -8,7 +8,19 @@ public static class JmdroidScreenSharePolicy
     public const int MaxDimension = 2400;
     public const int DesktopToAndroidMaxFrameBytes = 512 * 1024;
     public const int DesktopToAndroidMaxDimension = 1440;
+    public const int DesktopToAndroidZoomMaxDimension = 2400;
     public const int DesktopToAndroidJpegQuality = 55;
+
+    public static bool TryCreateDesktopViewport(double x, double y, double width, double height, out JmdroidScreenShareViewport viewport)
+    {
+        viewport = default;
+        if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(width) || !double.IsFinite(height) ||
+            x < 0 || y < 0 || width < 0.02 || height < 0.02 || x + width > 1 || y + height > 1)
+            return false;
+
+        viewport = new JmdroidScreenShareViewport(x, y, width, height);
+        return true;
+    }
 
     public static bool IsValidJpegFrame(ReadOnlySpan<byte> frame)
         => frame.Length is >= 4 and <= MaxFrameBytes &&
@@ -40,6 +52,12 @@ public static class JmdroidScreenSharePolicy
             (double)maxDimension / Math.Max(screenWidth, screenHeight)));
         return (Math.Max(1, (int)Math.Round(screenWidth * scale)), Math.Max(1, (int)Math.Round(screenHeight * scale)));
     }
+}
+
+public readonly record struct JmdroidScreenShareViewport(double X, double Y, double Width, double Height)
+{
+    public static JmdroidScreenShareViewport FullScreen { get; } = new(0, 0, 1, 1);
+    public bool IsFullScreen => X == 0 && Y == 0 && Width == 1 && Height == 1;
 }
 
 public sealed class JmdroidScreenShareFrameThrottle(int framesPerSecond = JmdroidScreenSharePolicy.DefaultMaxFramesPerSecond)

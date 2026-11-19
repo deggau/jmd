@@ -26,6 +26,7 @@ public sealed class JmdroidScreenSharePolicyTests
         Assert.Equal(2400, JmdroidScreenSharePolicy.MaxDimension);
         Assert.Equal(512 * 1024, JmdroidScreenSharePolicy.DesktopToAndroidMaxFrameBytes);
         Assert.Equal(1440, JmdroidScreenSharePolicy.DesktopToAndroidMaxDimension);
+        Assert.Equal(2400, JmdroidScreenSharePolicy.DesktopToAndroidZoomMaxDimension);
     }
 
     [Theory]
@@ -51,6 +52,33 @@ public sealed class JmdroidScreenSharePolicyTests
         var result = JmdroidScreenSharePolicy.FitScreenToViewport(
             screenWidth, screenHeight, viewportWidth, viewportHeight, maxDimension);
         Assert.Equal((expectedWidth, expectedHeight), result);
+    }
+
+    [Theory]
+    [InlineData(0, 0, 1, 1)]
+    [InlineData(0.25, 0.25, 0.5, 0.5)]
+    [InlineData(0.01, 0.01, 0.02, 0.02)]
+    public void Accepts_full_screen_and_valid_normalized_viewports(double x, double y, double width, double height)
+    {
+        Assert.True(JmdroidScreenSharePolicy.TryCreateDesktopViewport(x, y, width, height, out var viewport));
+        Assert.Equal(new JmdroidScreenShareViewport(x, y, width, height), viewport);
+    }
+
+    [Theory]
+    [InlineData(-0.01, 0, 0.5, 0.5)]
+    [InlineData(0, -0.01, 0.5, 0.5)]
+    [InlineData(0.8, 0, 0.3, 0.5)]
+    [InlineData(0, 0.8, 0.5, 0.3)]
+    [InlineData(0, 0, 0.019, 1)]
+    [InlineData(0, 0, 1, 0)]
+    public void Rejects_invalid_or_too_small_normalized_viewports(double x, double y, double width, double height)
+        => Assert.False(JmdroidScreenSharePolicy.TryCreateDesktopViewport(x, y, width, height, out _));
+
+    [Fact]
+    public void Rejects_non_finite_normalized_viewports()
+    {
+        Assert.False(JmdroidScreenSharePolicy.TryCreateDesktopViewport(double.NaN, 0, 1, 1, out _));
+        Assert.False(JmdroidScreenSharePolicy.TryCreateDesktopViewport(0, double.PositiveInfinity, 1, 1, out _));
     }
 
     [Theory]
