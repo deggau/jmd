@@ -358,6 +358,12 @@ internal sealed class UserSettings
     public bool KeepAwakeEnabled { get; set; }
     public bool HideFromScreenCapture { get; set; }
     public bool UseJmdNotifications { get; set; }
+    public bool NotificationScheduleEnabled { get; set; } = true;
+    public string NotificationStartTime { get; set; } = "09:00";
+    public string NotificationEndTime { get; set; } = "17:00";
+    public bool NotificationWeekdays { get; set; } = true;
+    public bool NotificationSaturdays { get; set; }
+    public bool NotificationSundays { get; set; }
     public string ShortcutActivatedSound { get; set; } = ActivationSoundService.Classic;
     public string VoiceCommandFoundSound { get; set; } = ActivationSoundService.Classic;
     public string JeyRecognizedSound { get; set; } = ActivationSoundService.Classic;

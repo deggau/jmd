@@ -606,6 +606,24 @@
                           Checked="AdvancedNotificationsToggle_Changed" Unchecked="AdvancedNotificationsToggle_Changed" />
                 <TextBlock Text="Substitui o balão e o som padrão do Windows por uma janela discreta do JMD. O som de ativação do JMD continua funcionando."
                            Foreground="#FF969BA7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+                <CheckBox x:Name="NotificationScheduleToggle" Content="Exibir notificações somente no horário definido"
+                          Style="{StaticResource CompactToggleCheckBoxStyle}" FontSize="12" Margin="0,14,0,8"
+                          Checked="NotificationSchedule_Changed" Unchecked="NotificationSchedule_Changed" />
+                <TextBlock Text="Horário" Foreground="#FFBFC3CC" FontSize="11" Margin="0,0,0,5" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <ComboBox x:Name="NotificationStartCombo" Width="105" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="NotificationTime_Changed" />
+                  <TextBlock Text="até" Foreground="#FF969BA7" VerticalAlignment="Center" Margin="8,0" />
+                  <ComboBox x:Name="NotificationEndCombo" Width="105" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="NotificationTime_Changed" />
+                </StackPanel>
+                <TextBlock Text="Dias em que as notificações podem aparecer" Foreground="#FFBFC3CC" FontSize="11" Margin="0,10,0,5" />
+                <StackPanel Orientation="Horizontal">
+                  <CheckBox x:Name="NotificationWeekdaysToggle" Content="Dias de semana" Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,0,14,0"
+                            Checked="NotificationDays_Changed" Unchecked="NotificationDays_Changed" />
+                  <CheckBox x:Name="NotificationSaturdayToggle" Content="Sábado" Style="{StaticResource CompactToggleCheckBoxStyle}" Margin="0,0,14,0"
+                            Checked="NotificationDays_Changed" Unchecked="NotificationDays_Changed" />
+                  <CheckBox x:Name="NotificationSundayToggle" Content="Domingo" Style="{StaticResource CompactToggleCheckBoxStyle}"
+                            Checked="NotificationDays_Changed" Unchecked="NotificationDays_Changed" />
+                </StackPanel>
               </StackPanel>
             </Border>
             <TextBlock Text="Sons de sinalização" Foreground="White" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,10" />

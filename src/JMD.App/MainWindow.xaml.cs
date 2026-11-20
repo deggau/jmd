@@ -95,6 +95,7 @@ public partial class MainWindow : Window
     private bool _updatingCaptureExclusionToggle;
     private bool _usesRoundedWindowRegion;
     private bool _loadingAdvancedNotificationToggle;
+    private bool _loadingNotificationSchedule;
     private bool _loadingAdvancedSoundSettings;
     private bool _showingDialog;
     private bool _checkingUpdates;
@@ -201,6 +202,19 @@ public partial class MainWindow : Window
         _loadingAdvancedNotificationToggle = true;
         AdvancedNotificationsToggle.IsChecked = _settings.UseJmdNotifications;
         _loadingAdvancedNotificationToggle = false;
+        _loadingNotificationSchedule = true;
+        NotificationScheduleToggle.IsChecked = _settings.NotificationScheduleEnabled;
+        NotificationWeekdaysToggle.IsChecked = _settings.NotificationWeekdays;
+        NotificationSaturdayToggle.IsChecked = _settings.NotificationSaturdays;
+        NotificationSundayToggle.IsChecked = _settings.NotificationSundays;
+        var notificationTimes = Enumerable.Range(0, 96).Select(index => TimeSpan.FromMinutes(index * 15).ToString(@"hh\:mm")).ToArray();
+        NotificationStartCombo.ItemsSource = notificationTimes;
+        NotificationEndCombo.ItemsSource = notificationTimes;
+        NotificationStartCombo.SelectedItem = notificationTimes.Contains(_settings.NotificationStartTime) ? _settings.NotificationStartTime : "09:00";
+        NotificationEndCombo.SelectedItem = notificationTimes.Contains(_settings.NotificationEndTime) ? _settings.NotificationEndTime : "17:00";
+        _settings.NotificationStartTime = (string)NotificationStartCombo.SelectedItem;
+        _settings.NotificationEndTime = (string)NotificationEndCombo.SelectedItem;
+        _loadingNotificationSchedule = false;
         _settings.ShortcutActivatedSound = ActivationSoundService.Normalize(_settings.ShortcutActivatedSound, ActivationSoundService.Classic);
         _settings.VoiceCommandFoundSound = ActivationSoundService.Normalize(_settings.VoiceCommandFoundSound, ActivationSoundService.Classic);
         _settings.JeyRecognizedSound = ActivationSoundService.Normalize(_settings.JeyRecognizedSound, ActivationSoundService.Classic);
@@ -5047,6 +5061,62 @@ public partial class MainWindow : Window
         }
     }
 
+    private void NotificationSchedule_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingNotificationSchedule) return;
+        _settings.NotificationScheduleEnabled = NotificationScheduleToggle.IsChecked == true;
+        SaveNotificationSchedule();
+    }
+
+    private void NotificationDays_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingNotificationSchedule) return;
+        _settings.NotificationWeekdays = NotificationWeekdaysToggle.IsChecked == true;
+        _settings.NotificationSaturdays = NotificationSaturdayToggle.IsChecked == true;
+        _settings.NotificationSundays = NotificationSundayToggle.IsChecked == true;
+        SaveNotificationSchedule();
+    }
+
+    private void NotificationTime_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingNotificationSchedule) return;
+        if (NotificationStartCombo.SelectedItem is string start) _settings.NotificationStartTime = start;
+        if (NotificationEndCombo.SelectedItem is string end) _settings.NotificationEndTime = end;
+        SaveNotificationSchedule();
+    }
+
+    private void SaveNotificationSchedule()
+    {
+        try
+        {
+            _settingsStore.Save(_settings);
+            SetStatus("Horário de notificações salvo.", true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"Não foi possível salvar o horário de notificações: {exception.Message}", false);
+        }
+    }
+
+    private bool IsNotificationTimeAllowed(DateTime now)
+    {
+        if (!_settings.NotificationScheduleEnabled) return true;
+        if (!TimeSpan.TryParse(_settings.NotificationStartTime, out var start) ||
+            !TimeSpan.TryParse(_settings.NotificationEndTime, out var end))
+            return true;
+        var time = now.TimeOfDay;
+        if (start == end) return false;
+        var scheduleDay = start > end && time < end ? now.AddDays(-1).DayOfWeek : now.DayOfWeek;
+        var allowedDay = scheduleDay switch
+        {
+            DayOfWeek.Saturday => _settings.NotificationSaturdays,
+            DayOfWeek.Sunday => _settings.NotificationSundays,
+            _ => _settings.NotificationWeekdays
+        };
+        if (!allowedDay) return false;
+        return start < end ? time >= start && time < end : time >= start || time < end;
+    }
+
     private static void SelectAdvancedSound(ComboBox combo, string sound)
     {
         combo.SelectedItem = combo.Items.OfType<ComboBoxItem>()
@@ -5750,6 +5820,7 @@ public partial class MainWindow : Window
             executionState.FailureMessage = message;
         }
         SetStatus(message, success);
+        if (!IsNotificationTimeAllowed(DateTime.Now)) return;
         TrayNotification?.Invoke(title, message, _settings.UseJmdNotifications,
             clickTarget ?? NotificationClickTarget.ForHistory(historyId),
             displayDuration ?? TimeSpan.FromSeconds(4));
