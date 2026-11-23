@@ -7,7 +7,13 @@ public sealed record TodoTaskApiTaskInput(
     string CategoryColor = "Verde",
     string Urls = "",
     string Attachments = "",
-    IReadOnlyList<TodoTaskChecklistEntry>? Checklist = null);
+    IReadOnlyList<TodoTaskChecklistEntry>? Checklist = null,
+    DateTimeOffset? CreatedAt = null,
+    DateTimeOffset? CompletedAt = null,
+    DateTimeOffset? LastReminderAt = null,
+    DateTimeOffset? PausedAt = null,
+    string PauseReason = "",
+    string PausedBy = "");
 
 public sealed record TodoTaskApiChecklistCompletion(bool IsCompleted);
 public sealed record TodoTaskApiPauseInput(string Reason = "", string Responsible = "");
@@ -48,13 +54,58 @@ public sealed class TodoTaskApiService
         Validate(input);
         lock (_sync)
         {
-            var created = _tasks.Create(input.Title.Trim(), input.Description, _now(), input.ReminderIntervalMinutes,
+            var created = _tasks.Create(input.Title.Trim(), input.Description, input.CreatedAt ?? _now(), input.ReminderIntervalMinutes,
                 input.CategoryColor, input.Urls, input.Attachments);
-            var task = created with { Checklist = input.Checklist?.ToList() ?? [] };
+            var task = created with
+            {
+                Checklist = input.Checklist?.ToList() ?? [],
+                CompletedAt = input.CompletedAt,
+                LastReminderAt = input.LastReminderAt,
+                PausedAt = input.PausedAt,
+                PauseReason = input.PauseReason,
+                PausedBy = input.PausedBy
+            };
             _tasks.SaveAll(_tasks.GetAll().Select(existing => existing.Id == task.Id ? task : existing));
             Record("criada", task, string.Empty, TaskSummary("Tarefa criada", task), source, deviceName);
             TasksChanged?.Invoke();
             return task;
+        }
+    }
+
+    public TodoTaskEntry Import(TodoTaskEntry input, string source = "APP", string? deviceName = null)
+    {
+        if (string.IsNullOrWhiteSpace(input.Id) || input.Id.Length > 80)
+            throw new ArgumentException("O identificador da tarefa transferida é inválido.", nameof(input));
+        Validate(new TodoTaskApiTaskInput(input.Title, input.Description, input.ReminderIntervalMinutes, input.CategoryColor,
+            input.Urls, input.Attachments, input.Checklist));
+        lock (_sync)
+        {
+            var tasks = _tasks.GetAll().ToList();
+            var existing = tasks.FirstOrDefault(task => task.Id == input.Id);
+            if (existing is not null)
+            {
+                if (existing.Title != input.Title || existing.CreatedAt != input.CreatedAt)
+                    throw new ArgumentException("Já existe uma tarefa com esse identificador e conteúdo diferente.", nameof(input));
+                return existing;
+            }
+
+            var allocated = _tasks.Create(input.Title.Trim(), input.Description, input.CreatedAt, input.ReminderIntervalMinutes,
+                input.CategoryColor, input.Urls, input.Attachments);
+            var imported = allocated with
+            {
+                Id = input.Id,
+                CompletedAt = input.CompletedAt,
+                LastReminderAt = input.LastReminderAt,
+                PausedAt = input.PausedAt,
+                PauseReason = input.PauseReason,
+                PausedBy = input.PausedBy,
+                Checklist = input.Checklist?.ToList() ?? []
+            };
+            tasks.Add(imported);
+            _tasks.SaveAll(tasks.Where(task => task.Id != allocated.Id));
+            Record("importada", imported, string.Empty, TaskSummary("Tarefa importada", imported), source, deviceName);
+            TasksChanged?.Invoke();
+            return imported;
         }
     }
 

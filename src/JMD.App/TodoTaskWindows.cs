@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -18,6 +19,7 @@ using FontFamily = System.Windows.Media.FontFamily;
 using Orientation = System.Windows.Controls.Orientation;
 using HorizontalAlignment = System.Windows.HorizontalAlignment;
 using MessageBox = System.Windows.MessageBox;
+using ComboBox = System.Windows.Controls.ComboBox;
 
 namespace JMD.App;
 
@@ -322,6 +324,7 @@ internal sealed class TodoTaskEditWindow : Window
     private readonly TextBox _urls = new();
     private readonly TextBox _attachments = new();
     private readonly StackPanel _checklistPanel = new();
+    private readonly ComboBox? _destinationPicker;
     private readonly List<(TextBox Title, TextBox Weight, bool Completed)> _checklistRows = [];
     private readonly Dictionary<string, Button> _categoryButtons = new(StringComparer.Ordinal);
     private string _categoryColor = "Verde";
@@ -336,8 +339,10 @@ internal sealed class TodoTaskEditWindow : Window
         .Select(row => new TodoTaskChecklistEntry(row.Title.Text.Trim(),
             decimal.TryParse(row.Weight.Text, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out var weight) ? weight : -1m,
             row.Completed)).ToList();
+    public string? TargetPeerId => (_destinationPicker?.SelectedItem as ComboBoxItem)?.Tag as string;
 
-    public TodoTaskEditWindow(TodoTask? task = null, string initialDescription = "", string initialUrls = "", string initialAttachments = "")
+    public TodoTaskEditWindow(TodoTask? task = null, string initialDescription = "", string initialUrls = "", string initialAttachments = "",
+        IReadOnlyList<DesktopPairedPeer>? connectedPeers = null)
     {
         Title = task is null ? "Nova tarefa" : "Editar tarefa";
         Width = 440; SizeToContent = SizeToContent.Height; WindowStyle = WindowStyle.None;
@@ -361,6 +366,16 @@ internal sealed class TodoTaskEditWindow : Window
         panel.Children.Add(Label("Descrição"));
         StyleBox(_description); _description.AcceptsReturn = true; _description.TextWrapping = TextWrapping.Wrap; _description.Height = 112; _description.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _description.Text = task?.Description ?? initialDescription; _description.Margin = new Thickness(0, 4, 0, 14); panel.Children.Add(_description);
+        if (connectedPeers is { Count: > 0 })
+        {
+            panel.Children.Add(Label(task is null ? "Criar em" : "Mover para"));
+            _destinationPicker = new ComboBox { Height = 32, Margin = new Thickness(0, 4, 0, 12), Background = new SolidColorBrush(Color.FromRgb(36, 39, 48)), Foreground = Brushes.White };
+            _destinationPicker.Items.Add(new ComboBoxItem { Content = "Este computador", Tag = null });
+            foreach (var peer in connectedPeers)
+                _destinationPicker.Items.Add(new ComboBoxItem { Content = peer.Name, Tag = peer.Id });
+            _destinationPicker.SelectedIndex = 0;
+            panel.Children.Add(_destinationPicker);
+        }
         panel.Children.Add(Label("Checklist (peso de cada etapa no progresso)"));
         _checklistPanel.Margin = new Thickness(0, 5, 0, 12); panel.Children.Add(_checklistPanel);
         foreach (var entry in task?.Checklist ?? []) AddChecklistRow(entry.Title, entry.Weight, entry.IsCompleted);
@@ -665,7 +680,11 @@ internal sealed class TodoTaskPauseWindow : Window
 
 internal sealed class TodoTaskPanelWindow : Window
 {
+    private const string LocalComputerFilter = "__local__";
+    private const string AllComputersFilter = "__all__";
     private readonly ObservableCollection<TodoTask> _tasks;
+    private readonly UserSettings _settings;
+    private readonly DesktopTaskApiClient _desktopTaskApi;
     private readonly Action<TodoTask> _complete;
     private readonly Action<TodoTask> _edit;
     private readonly Action<TodoTask> _delete;
@@ -685,6 +704,14 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly System.Windows.Threading.DispatcherTimer _undoTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly TextBlock _title;
     private readonly StackPanel _list = new();
+    private readonly ComboBox _computerFilter = new() { Height = 30, Margin = new Thickness(0, 0, 0, 8), Visibility = Visibility.Collapsed };
+    private readonly Button _refreshRemoteButton = new() { Content = "Atualizar", Padding = new Thickness(9, 5, 9, 5), Margin = new Thickness(8, 0, 0, 8), Visibility = Visibility.Collapsed, Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+    private readonly System.Windows.Threading.DispatcherTimer _remoteRefreshTimer = new() { Interval = TimeSpan.FromSeconds(30) };
+    private readonly List<RemoteTodoTask> _remoteTasks = [];
+    private readonly List<DesktopPairedPeer> _onlinePeers = [];
+    private string _selectedComputerId = LocalComputerFilter;
+    private bool _loadingRemoteTasks;
+    private string? _remoteTaskError;
     private List<TodoTaskEntry>? _pendingUndoSnapshot;
     private List<TodoTaskEntry>? _undoSnapshot;
     private bool _showHistory;
@@ -698,8 +725,11 @@ internal sealed class TodoTaskPanelWindow : Window
     public TodoTaskPanelWindow(ObservableCollection<TodoTask> tasks, Action<TodoTask> complete, Action<TodoTask> edit,
         Action<TodoTask> delete, Action<TodoTask> reopen, Action<TodoTask> pause, Action<TodoTask> unpause, Action<TodoTask, int> toggleChecklist,
         Func<Task> onCreate, Action showReport, Action<IReadOnlyList<TodoTaskEntry>> undo,
-        Func<Task<IReadOnlyList<BusinessmapTaskCard>>> loadBusinessmapTasks, bool businessmapEnabled)
+        Func<Task<IReadOnlyList<BusinessmapTaskCard>>> loadBusinessmapTasks, bool businessmapEnabled,
+        UserSettings settings, SettingsStore settingsStore)
     {
+        _settings = settings;
+        _desktopTaskApi = new DesktopTaskApiClient(settings, settingsStore);
         _tasks = tasks; _complete = complete; _edit = edit; _delete = delete; _reopen = reopen;
         _pause = pause; _unpause = unpause; _toggleChecklist = toggleChecklist; _create = onCreate; _showReport = showReport; _undo = undo;
         _loadBusinessmapTasks = loadBusinessmapTasks; _businessmapEnabled = businessmapEnabled;
@@ -715,7 +745,7 @@ internal sealed class TodoTaskPanelWindow : Window
         DockPanel.SetDock(_businessmapButton, Dock.Right); header.Children.Add(_businessmapButton);
         var collapse = IconButton("\uE76C", "Recolher painel"); collapse.Click += (_, _) => Hide(); DockPanel.SetDock(collapse, Dock.Right); header.Children.Add(collapse);
         _historyButton = IconButton("\uE81C", "Ver tarefas concluídas");
-        _historyButton.Click += (_, _) => { _showHistory = !_showHistory; _historyButton.ToolTip = _showHistory ? "Ver tarefas em aberto" : "Ver tarefas concluídas"; Refresh(); };
+        _historyButton.Click += async (_, _) => { _showHistory = !_showHistory; _historyButton.ToolTip = _showHistory ? "Ver tarefas em aberto" : "Ver tarefas concluídas"; Refresh(); await RefreshRemoteTasksAsync(); };
         DockPanel.SetDock(_historyButton, Dock.Right); header.Children.Add(_historyButton); DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
         _reportButton = IconButton("\uE9D2", "Relatório de tarefas"); _reportButton.Click += (_, _) => _showReport(); DockPanel.SetDock(_reportButton, Dock.Right); header.Children.Add(_reportButton);
         var content = new DockPanel();
@@ -730,13 +760,31 @@ internal sealed class TodoTaskPanelWindow : Window
         };
         _undoButton.Click += (_, _) => UndoLastAction();
         _undoTimer.Tick += (_, _) => ClearUndo();
+        _remoteRefreshTimer.Tick += async (_, _) => await RefreshRemoteTasksAsync();
         var bottomActions = new StackPanel();
         bottomActions.Children.Add(_undoButton);
         bottomActions.Children.Add(_newTaskButton);
         DockPanel.SetDock(bottomActions, Dock.Bottom); content.Children.Add(bottomActions);
+        var filterRow = new DockPanel();
+        _refreshRemoteButton.Click += async (_, _) => await RefreshRemoteTasksAsync();
+        DockPanel.SetDock(_refreshRemoteButton, Dock.Right); filterRow.Children.Add(_refreshRemoteButton);
+        _computerFilter.SelectionChanged += (_, _) =>
+        {
+            if (_computerFilter.SelectedItem is ComboBoxItem option && option.Tag is string id)
+            {
+                _selectedComputerId = id;
+                Refresh();
+            }
+        };
+        filterRow.Children.Add(_computerFilter);
+        DockPanel.SetDock(filterRow, Dock.Top); content.Children.Add(filterRow);
         content.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _list }); root.Children.Add(content);
-        Content = root; Refresh();
-        IsVisibleChanged += (_, _) => { if (!IsVisible) ClearUndo(); };
+        Content = root; UpdateComputerFilter(); Refresh();
+        IsVisibleChanged += async (_, _) =>
+        {
+            if (!IsVisible) { ClearUndo(); _remoteRefreshTimer.Stop(); }
+            else { _remoteRefreshTimer.Start(); await RefreshRemoteTasksAsync(); }
+        };
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape || (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.Left)) { e.Handled = true; Hide(); } };
         Deactivated += (_, _) => { if (!_modalChildActive) Hide(); };
     }
@@ -751,16 +799,31 @@ internal sealed class TodoTaskPanelWindow : Window
         TryPromotePendingUndo();
         _list.Children.Clear();
         _title.Text = _showHistory ? "Histórico" : "Tarefas";
-        var matchingTasks = _tasks.Where(t => _showHistory ? t.CompletedAt is not null : t.CompletedAt is null);
-        var entries = _showHistory
-            ? matchingTasks.OrderByDescending(t => t.CompletedAt)
-            : matchingTasks.OrderBy(t => t.CreatedAt);
-        foreach (var task in entries)
+        var localTasks = _tasks.Where(task => _showHistory ? task.CompletedAt is not null : task.CompletedAt is null)
+            .Select(task => new RemoteTodoTask(task, Environment.MachineName, false, string.Empty));
+        var remoteTasks = _remoteTasks.Where(item => _showHistory ? item.Task.CompletedAt is not null : item.Task.CompletedAt is null);
+        var entries = _selectedComputerId switch
         {
+            AllComputersFilter => localTasks.Concat(remoteTasks).ToList(),
+            LocalComputerFilter => localTasks.ToList(),
+            _ => remoteTasks.Where(item => item.PeerId == _selectedComputerId).ToList()
+        };
+        if (_loadingRemoteTasks && _selectedComputerId != LocalComputerFilter)
+            _list.Children.Add(new TextBlock { Text = "Consultando computadores pareados…", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 12, Margin = new Thickness(0, 0, 0, 8) });
+        if (!string.IsNullOrWhiteSpace(_remoteTaskError) && _selectedComputerId != LocalComputerFilter)
+            _list.Children.Add(new TextBlock { Text = _remoteTaskError, Foreground = new SolidColorBrush(Color.FromRgb(255, 190, 120)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) });
+        foreach (var dayGroup in entries.GroupBy(item => item.Task.CreatedAt.ToLocalTime().Date).OrderByDescending(group => group.Key))
+        {
+            var day = dayGroup.Key;
+            var dayLabel = day == DateTime.Today ? "Hoje" : day == DateTime.Today.AddDays(-1) ? "Ontem" : day.ToString("dddd, dd/MM/yyyy", System.Globalization.CultureInfo.CurrentCulture);
+            _list.Children.Add(new TextBlock { Text = dayLabel, Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 12, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 3, 0, 7) });
+            foreach (var item in dayGroup.OrderBy(item => _showHistory ? item.Task.CompletedAt : item.Task.CreatedAt))
+            {
+            var task = item.Task;
             var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(9), Padding = new Thickness(12), Margin = new Thickness(0, 0, 0, 9) };
             var layout = new StackPanel();
             var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, 0, 4) };
-            if (!_showHistory)
+            if (!item.IsRemote && !_showHistory)
             {
                 var done = IconButton("\uE73E", "Concluir"); done.Click += (_, _) => RunUndoableAction(() => _complete(task));
                 actions.Children.Add(done);
@@ -780,15 +843,19 @@ internal sealed class TodoTaskPanelWindow : Window
                     actions.Children.Add(unpause);
                 }
             }
-            else
+            else if (!item.IsRemote)
             {
                 var reopen = IconButton("\uE777", "Reabrir tarefa"); reopen.Click += (_, _) => RunUndoableAction(() => _reopen(task)); actions.Children.Add(reopen);
             }
-            var edit = IconButton("\uE70F", "Editar"); edit.Click += (_, _) => RunUndoableAction(() => _edit(task)); actions.Children.Add(edit);
-            var remove = IconButton("\uE74D", "Excluir"); remove.Click += (_, _) => RunUndoableAction(() => _delete(task)); actions.Children.Add(remove);
-            layout.Children.Add(actions);
+            if (!item.IsRemote)
+            {
+                var edit = IconButton("\uE70F", "Editar"); edit.Click += (_, _) => RunUndoableAction(() => _edit(task)); actions.Children.Add(edit);
+                var remove = IconButton("\uE74D", "Excluir"); remove.Click += (_, _) => RunUndoableAction(() => _delete(task)); actions.Children.Add(remove);
+                layout.Children.Add(actions);
+            }
             var body = new StackPanel();
             body.Children.Add(new TextBlock { Text = TodoTaskDisplay.Reference(task), Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, Margin = new Thickness(0, 0, 0, 3) });
+            body.Children.Add(new Border { Background = item.IsRemote ? new SolidColorBrush(Color.FromRgb(75, 65, 105)) : new SolidColorBrush(Color.FromRgb(53, 70, 48)), CornerRadius = new CornerRadius(5), Padding = new Thickness(6, 2, 6, 2), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 5), Child = new TextBlock { Text = item.ComputerName, Foreground = Brushes.White, FontSize = 9 }, ToolTip = item.IsRemote ? $"Tarefa do computador {item.ComputerName}" : "Tarefa deste computador" });
             var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
             titleRow.Children.Add(new Border { Width = 10, Height = 10, Background = TodoTaskEditWindow.CategoryBrush(task.CategoryColor), CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 4, 7, 0), ToolTip = $"Prioridade {task.CategoryColor}" });
             var selectableTitle = CreateSelectableTaskText(task.Title, Brushes.White, 14, FontWeights.SemiBold);
@@ -842,12 +909,79 @@ internal sealed class TodoTaskPanelWindow : Window
                 resourceLinks.Children.Add(ResourceLinkButton($"↗ {label}", url));
             }
             foreach (var path in task.Attachments.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                resourceLinks.Children.Add(ResourceLinkButton($"📎 {System.IO.Path.GetFileName(path)}", path));
+            {
+                if (item.IsRemote)
+                    resourceLinks.Children.Add(new TextBlock { Text = $"📎 {System.IO.Path.GetFileName(path)}", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 10, Margin = new Thickness(0, 0, 10, 2), ToolTip = $"Anexo no computador {item.ComputerName}" });
+                else resourceLinks.Children.Add(ResourceLinkButton($"📎 {System.IO.Path.GetFileName(path)}", path));
+            }
             if (resourceLinks.Children.Count > 0) body.Children.Add(resourceLinks);
             layout.Children.Add(body); card.Child = layout; _list.Children.Add(card);
+            }
         }
-        if (_list.Children.Count == 0) _list.Children.Add(new TextBlock { Text = _showHistory ? "Nenhuma tarefa concluída." : "Nenhuma tarefa em aberto.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 10, 0, 0) });
+        if (entries.Count == 0 && !_loadingRemoteTasks) _list.Children.Add(new TextBlock { Text = _showHistory ? "Nenhuma tarefa concluída." : "Nenhuma tarefa em aberto.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 13, Margin = new Thickness(0, 10, 0, 0) });
     }
+
+    public IReadOnlyList<DesktopPairedPeer> OnlineDesktopPeers => _onlinePeers.ToArray();
+
+    public async Task RefreshRemoteTasksAsync()
+    {
+        if (_loadingRemoteTasks || _settings.DesktopPeers.Count == 0) return;
+        _loadingRemoteTasks = true;
+        _remoteTaskError = null;
+        Refresh();
+        try
+        {
+            var status = _showHistory ? "completed" : "open";
+            var results = await Task.WhenAll(_settings.DesktopPeers.Select(async peer =>
+            {
+                try { return (Peer: peer, Tasks: await _desktopTaskApi.GetTasksAsync(peer, status), Error: (string?)null); }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidDataException or CryptographicException or System.Net.Sockets.SocketException or System.Net.NetworkInformation.NetworkInformationException or InvalidOperationException)
+                { return (Peer: peer, Tasks: (IReadOnlyList<TodoTaskEntry>)[], Error: $"{peer.Name}: {exception.Message}"); }
+            }));
+            _onlinePeers.Clear();
+            _onlinePeers.AddRange(results.Where(result => result.Error is null).Select(result => result.Peer));
+            _remoteTasks.Clear();
+            foreach (var result in results.Where(result => result.Error is null))
+                _remoteTasks.AddRange(result.Tasks.Select(task => new RemoteTodoTask(FromRemoteEntry(task), result.Peer.Name, true, result.Peer.Id)));
+            _remoteTaskError = string.Join(" · ", results.Where(result => result.Error is not null).Select(result => result.Error!));
+            UpdateComputerFilter();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or CryptographicException or System.Net.Sockets.SocketException or System.Net.NetworkInformation.NetworkInformationException)
+        {
+            _remoteTaskError = exception.Message;
+            _onlinePeers.Clear();
+            _remoteTasks.Clear();
+            UpdateComputerFilter();
+        }
+        finally
+        {
+            _loadingRemoteTasks = false;
+            Refresh();
+        }
+    }
+
+    private void UpdateComputerFilter()
+    {
+        var previous = _selectedComputerId;
+        _computerFilter.Items.Clear();
+        _computerFilter.Items.Add(new ComboBoxItem { Content = "Este computador", Tag = LocalComputerFilter });
+        foreach (var peer in _onlinePeers.OrderBy(peer => peer.Name, StringComparer.CurrentCultureIgnoreCase))
+            _computerFilter.Items.Add(new ComboBoxItem { Content = peer.Name, Tag = peer.Id });
+        if (_onlinePeers.Count > 0) _computerFilter.Items.Add(new ComboBoxItem { Content = "Todos os computadores", Tag = AllComputersFilter });
+        var selected = _computerFilter.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, previous));
+        if (selected is null) { _selectedComputerId = LocalComputerFilter; selected = (ComboBoxItem)_computerFilter.Items[0]; }
+        _computerFilter.SelectedItem = selected;
+        _computerFilter.Visibility = _onlinePeers.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _refreshRemoteButton.Visibility = _onlinePeers.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static TodoTask FromRemoteEntry(TodoTaskEntry task)
+        => new() { Id = task.Id, Title = task.Title, Description = task.Description, CreatedAt = task.CreatedAt, CompletedAt = task.CompletedAt,
+            TaskNumber = task.TaskNumber, ReminderIntervalMinutes = task.ReminderIntervalMinutes, CategoryColor = task.CategoryColor,
+            LastReminderAt = task.LastReminderAt, Urls = task.Urls, Attachments = task.Attachments, PausedAt = task.PausedAt,
+            PauseReason = task.PauseReason, PausedBy = task.PausedBy, Checklist = task.Checklist ?? [] };
+
+    private sealed record RemoteTodoTask(TodoTask Task, string ComputerName, bool IsRemote, string PeerId);
 
     public void SetBusinessmapEnabled(bool enabled)
     {

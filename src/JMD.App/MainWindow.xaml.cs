@@ -4,6 +4,8 @@ using System.Globalization;
 using System.IO;
 using System.Diagnostics;
 using System.Net.Http;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -118,6 +120,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, AndroidScreenShareWindow> _androidScreenShareWindows = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (string ShareId, CancellationTokenSource Cancellation)> _desktopScreenCaptures = new(StringComparer.Ordinal);
     private TodoTaskApiService? _todoTaskApiService;
+    private DesktopTaskApiClient? _desktopTaskApiClient;
     private AndroidSettingsPanel? _androidSettingsPanel;
     private DesktopConnectionsPanel? _desktopConnectionsPanel;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
@@ -2400,8 +2403,29 @@ public partial class MainWindow : Window
             }
         }
         var capture = TodoTaskClipboardCapturePolicy.Resolve(copiedContent?.Text, copiedContent?.Html, selectedFiles);
-        var dialog = new TodoTaskEditWindow(initialDescription: capture.Description, initialUrls: capture.Urls, initialAttachments: capture.Attachments);
+        var connectedPeers = await GetConnectedDesktopPeersAsync();
+        var dialog = new TodoTaskEditWindow(initialDescription: capture.Description, initialUrls: capture.Urls,
+            initialAttachments: capture.Attachments, connectedPeers: connectedPeers);
         if (!ShowTodoTaskDialog(dialog)) return false;
+        if (dialog.TargetPeerId is { } targetPeerId)
+        {
+            var peer = connectedPeers.FirstOrDefault(candidate => candidate.Id == targetPeerId);
+            if (peer is null) return false;
+            try
+            {
+                var remoteTask = await CreateRemoteTodoTaskAsync(peer, new TodoTaskApiTaskInput(dialog.TaskTitle, dialog.Description,
+                    dialog.ReminderIntervalMinutes, dialog.CategoryColor, dialog.Urls, string.Empty, dialog.Checklist,
+                    DateTimeOffset.Now), dialog.Attachments);
+                _todoTaskPanel?.RefreshRemoteTasksAsync();
+                _discoveryStatusForTaskTransfer(peer.Name, remoteTask.Title);
+                return true;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or CryptographicException)
+            {
+                MessageBox.Show($"Não foi possível criar a tarefa em {peer.Name}:\n{exception.Message}", "Não foi possível criar a tarefa", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+        }
         var task = FromTodoTaskEntry(_todoTaskStore.Create(dialog.TaskTitle, dialog.Description, DateTimeOffset.Now,
             dialog.ReminderIntervalMinutes, dialog.CategoryColor, dialog.Urls, dialog.Attachments));
         task.Checklist = dialog.Checklist.ToList();
@@ -2418,7 +2442,8 @@ public partial class MainWindow : Window
     {
         _todoTaskPanel ??= new TodoTaskPanelWindow(_todoTasks, CompleteTodoTask, EditTodoTask, DeleteTodoTask,
             ReopenTodoTask, PauseTodoTask, UnpauseTodoTask, ToggleTodoTaskChecklist,
-            async () => { await CreateTodoTaskAsync(); }, ShowTodoTaskReport, UndoTodoTaskActions, LoadBusinessmapTasksAsync, _settings.Businessmap.Enabled);
+            async () => { await CreateTodoTaskAsync(); }, ShowTodoTaskReport, UndoTodoTaskActions, LoadBusinessmapTasksAsync,
+            _settings.Businessmap.Enabled, _settings, _settingsStore);
         _todoTaskPanel.ShowOpenTasks();
         _todoTaskPanel.Show();
         _todoTaskPanel.Activate();
@@ -2495,10 +2520,43 @@ public partial class MainWindow : Window
         finally { panel.SetModalChildActive(false); }
     }
 
-    private void EditTodoTask(TodoTask task)
+    private async void EditTodoTask(TodoTask task)
     {
-        var dialog = new TodoTaskEditWindow(task);
+        var connectedPeers = await GetConnectedDesktopPeersAsync();
+        var dialog = new TodoTaskEditWindow(task, connectedPeers: connectedPeers);
         if (!ShowTodoTaskDialog(dialog)) return;
+        if (dialog.TargetPeerId is { } targetPeerId)
+        {
+            var peer = connectedPeers.FirstOrDefault(candidate => candidate.Id == targetPeerId);
+            if (peer is null) return;
+            try
+            {
+                await ImportRemoteTodoTaskAsync(peer, ToTodoTaskEntry(task) with
+                {
+                    Title = dialog.TaskTitle,
+                    Description = dialog.Description,
+                    ReminderIntervalMinutes = dialog.ReminderIntervalMinutes,
+                    CategoryColor = dialog.CategoryColor,
+                    Urls = dialog.Urls,
+                    Attachments = string.Empty,
+                    LastReminderAt = task.ReminderIntervalMinutes != dialog.ReminderIntervalMinutes
+                        ? dialog.ReminderIntervalMinutes is null ? null : DateTimeOffset.Now
+                        : task.LastReminderAt,
+                    Checklist = dialog.Checklist.ToList()
+                }, task.Attachments);
+                _todoTasks.Remove(task);
+                SaveTodoTasks();
+                RecordTodoTaskChange("movida", task, $"Tarefa movida para {peer.Name}: {TodoTaskDisplay.Reference(task)} {task.Title}");
+                _todoTaskPanel?.Refresh();
+                _todoTaskPanel?.RefreshRemoteTasksAsync();
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or CryptographicException)
+            {
+                MessageBox.Show($"A tarefa permaneceu neste computador. Não foi possível concluir a cópia em {peer.Name}:\n{exception.Message}",
+                    "Não foi possível mover a tarefa", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            return;
+        }
         var previousTask = FromTodoTaskEntry(ToTodoTaskEntry(task));
         var attachmentErrors = OrganizeTodoTaskAttachments(task, dialog.Attachments);
         var newChecklist = dialog.Checklist.ToList();
@@ -2517,6 +2575,57 @@ public partial class MainWindow : Window
         if (changed) RecordTodoTaskChange("editada", task, DescribeTodoTaskChanges(previousTask, task));
         _todoTaskPanel?.Refresh();
         ShowTodoTaskAttachmentErrors(attachmentErrors);
+    }
+
+    private async Task<IReadOnlyList<DesktopPairedPeer>> GetConnectedDesktopPeersAsync()
+    {
+        if (_settings.DesktopPeers.Count == 0) return [];
+        _desktopTaskApiClient ??= new DesktopTaskApiClient(_settings, _settingsStore);
+        var checks = await Task.WhenAll(_settings.DesktopPeers.Select(async peer =>
+        {
+            try { await _desktopTaskApiClient.GetTasksAsync(peer, "open"); return peer; }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidDataException or CryptographicException or SocketException or NetworkInformationException or InvalidOperationException)
+            { return null; }
+        }));
+        return checks.Where(peer => peer is not null).Cast<DesktopPairedPeer>().ToArray();
+    }
+
+    private async Task<TodoTaskEntry> CreateRemoteTodoTaskAsync(DesktopPairedPeer peer, TodoTaskApiTaskInput task, string attachmentPaths)
+    {
+        _desktopTaskApiClient ??= new DesktopTaskApiClient(_settings, _settingsStore);
+        var created = await _desktopTaskApiClient.CreateTaskAsync(peer, task);
+        var attachments = attachmentPaths.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        try
+        {
+            if (attachments.Length > 0) await _desktopTaskApiClient.UploadAttachmentsAsync(peer, created.Id, attachments);
+        }
+        catch
+        {
+            try { await _desktopTaskApiClient.DeleteTaskAsync(peer, created.Id); }
+            catch { }
+            throw;
+        }
+        return created;
+    }
+
+    private async Task<TodoTaskEntry> ImportRemoteTodoTaskAsync(DesktopPairedPeer peer, TodoTaskEntry task, string attachmentPaths)
+    {
+        _desktopTaskApiClient ??= new DesktopTaskApiClient(_settings, _settingsStore);
+        var imported = await _desktopTaskApiClient.ImportTaskAsync(peer, task);
+        var attachments = attachmentPaths.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (attachments.Length > 0)
+            await _desktopTaskApiClient.UploadAttachmentsAsync(peer, imported.Id, attachments,
+                imported.Attachments.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        return imported;
+    }
+
+    private static TodoTaskApiTaskInput ToTodoTaskApiInput(TodoTask task, TodoTaskEditWindow dialog)
+        => new(dialog.TaskTitle, dialog.Description, dialog.ReminderIntervalMinutes, dialog.CategoryColor, dialog.Urls, string.Empty,
+            dialog.Checklist, task.CreatedAt, task.CompletedAt, task.LastReminderAt, task.PausedAt, task.PauseReason, task.PausedBy);
+
+    private void _discoveryStatusForTaskTransfer(string computerName, string taskTitle)
+    {
+        Notify("Tarefa criada no outro JMD", $"{taskTitle} · {computerName}", false);
     }
 
     public void ShowTodoTaskFromNotification(string taskId)

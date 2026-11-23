@@ -78,6 +78,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private readonly object _connectionLock = new();
     private readonly ConcurrentDictionary<string, PendingPairing> _pending = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, PendingDesktopConnection> _desktopConnections = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _desktopApiNonces = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<JmdroidExecutionResult>>> _executions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DeviceRateWindow> _deviceRates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, int> _activeConnections = new(StringComparer.Ordinal);
@@ -585,6 +586,37 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
                 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
                 app.Use(async (context, next) =>
                 {
+                    if (!context.Request.Path.StartsWithSegments("/api/v1/tasks") ||
+                        string.IsNullOrWhiteSpace(context.Request.Headers["X-JMD-Peer-Id"].ToString()))
+                    {
+                        await next();
+                        return;
+                    }
+
+                    var originalBody = context.Response.Body;
+                    await using var responseBuffer = new MemoryStream();
+                    context.Response.Body = responseBuffer;
+                    try { await next(); }
+                    finally
+                    {
+                        context.Response.Body = originalBody;
+                        var responseBytes = responseBuffer.ToArray();
+                        if (context.Items.ContainsKey("JmdDesktopPeerAuthenticated"))
+                        {
+                            var nonce = context.Request.Headers["X-JMD-Nonce"].ToString();
+                            var peerId = DesktopPeerIdentity.PeerId(_settings.DesktopIdentityPublicKey);
+                            var path = context.Request.Path + context.Request.QueryString;
+                            var digest = Convert.ToHexString(SHA256.HashData(responseBytes));
+                            var signed = $"response\n{context.Request.Method}\n{path}\n{context.Response.StatusCode}\n{nonce}\n{digest}";
+                            context.Response.Headers["X-JMD-Peer-Id"] = peerId;
+                            context.Response.Headers["X-JMD-Response-Signature"] = DesktopPeerIdentity.Sign(_settings, signed);
+                        }
+                        context.Response.ContentLength = responseBytes.Length;
+                        await originalBody.WriteAsync(responseBytes, context.RequestAborted);
+                    }
+                });
+                app.Use(async (context, next) =>
+                {
                     CancelIdleShutdown();
                     try { await next(); }
                     finally { ScheduleStopWhenIdle(); }
@@ -936,10 +968,16 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 
         async Task<JmdroidPairedDevice?> AuthorizeTaskApiAsync(HttpContext context)
         {
-            if (!TryAuthenticate(context, out var device))
+            JmdroidPairedDevice? device;
+            if (!TryAuthenticate(context, out device))
             {
-                await WriteErrorAsync(context, StatusCodes.Status401Unauthorized, "unauthorized", "Token ausente ou inválido.");
-                return null;
+                var peer = await AuthenticateDesktopPeerAsync(context);
+                if (peer is null)
+                {
+                    await WriteErrorAsync(context, StatusCodes.Status401Unauthorized, "unauthorized", "Autenticação do dispositivo ausente ou inválida.");
+                    return null;
+                }
+                device = new JmdroidPairedDevice { Id = peer.Id, Name = peer.Name };
             }
             if (await RateLimitAsync(context, device!.Id)) return null;
             return device;
@@ -993,6 +1031,33 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             catch (ArgumentException exception)
             {
                 await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", exception.Message);
+            }
+        });
+
+        app.MapPost("/api/v1/tasks/import", async context =>
+        {
+            var device = await AuthorizeTaskApiAsync(context);
+            if (device is null) return;
+            if (!context.Items.ContainsKey("JmdDesktopPeerAuthenticated"))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status403Forbidden, "desktop_pairing_required", "A importação entre computadores exige um JMD pareado.");
+                return;
+            }
+            var body = await ReadJsonBodyAsync<TodoTaskEntry>(context);
+            if (body is null)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_input", "Informe os dados da tarefa a transferir.");
+                return;
+            }
+            try
+            {
+                var task = _todoTaskApi.Import(body, "JMD Desktop", device.Name);
+                context.Response.Headers.Location = $"/api/v1/tasks/{Uri.EscapeDataString(task.Id)}";
+                await context.Response.WriteAsJsonAsync(task, JsonOptions, context.RequestAborted);
+            }
+            catch (ArgumentException exception)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status409Conflict, "task_import_conflict", exception.Message);
             }
         });
 
@@ -1480,6 +1545,44 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         lock (_requestLock)
             device = _devices.FirstOrDefault(item => FixedTimeTextEquals(item.TokenSha256, hash));
         return device is not null;
+    }
+
+    private async Task<DesktopPairedPeer?> AuthenticateDesktopPeerAsync(HttpContext context)
+    {
+        var peerId = context.Request.Headers["X-JMD-Peer-Id"].ToString();
+        var timestampText = context.Request.Headers["X-JMD-Timestamp"].ToString();
+        var nonce = context.Request.Headers["X-JMD-Nonce"].ToString();
+        var signature = context.Request.Headers["X-JMD-Signature"].ToString();
+        if (peerId.Length != 64 || !long.TryParse(timestampText, out var timestamp) ||
+            Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - timestamp) > 120 ||
+            nonce.Length != 64 || nonce.Any(character => !Uri.IsHexDigit(character)) || string.IsNullOrWhiteSpace(signature)) return null;
+        var remote = context.Connection.RemoteIpAddress;
+        if (remote is null || !IsPrivateAddress(remote)) return null;
+        var peer = _settings.DesktopPeers.FirstOrDefault(candidate => candidate.Id == peerId);
+        if (peer is null || DesktopPeerIdentity.PeerId(peer.PublicKey) != peerId) return null;
+
+        if (context.Request.Path.Value?.Contains("/attachments", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var sizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (sizeFeature is { IsReadOnly: false }) sizeFeature.MaxRequestBodySize = MaxAttachmentUploadBytes;
+        }
+        context.Request.EnableBuffering(bufferThreshold: 64 * 1024, bufferLimit: 32 * 1024 * 1024);
+        await using var bodyBuffer = new MemoryStream();
+        await context.Request.Body.CopyToAsync(bodyBuffer, context.RequestAborted);
+        if (bodyBuffer.Length > 30 * 1024 * 1024) return null;
+        context.Request.Body.Position = 0;
+        var bodyHash = Convert.ToHexString(SHA256.HashData(bodyBuffer.GetBuffer().AsSpan(0, checked((int)bodyBuffer.Length))));
+        var path = context.Request.Path + context.Request.QueryString;
+        var signed = $"request\n{context.Request.Method}\n{path}\n{timestamp}\n{nonce}\n{bodyHash}";
+        if (!DesktopPeerIdentity.Verify(peer.PublicKey, signed, signature)) return null;
+
+        var now = DateTimeOffset.UtcNow;
+        if (_desktopApiNonces.Count > 20_000)
+            foreach (var expired in _desktopApiNonces.Where(item => item.Value < now).Take(5_000))
+                _desktopApiNonces.TryRemove(expired.Key, out _);
+        if (!_desktopApiNonces.TryAdd($"{peerId}:{nonce}", now.AddMinutes(3))) return null;
+        context.Items["JmdDesktopPeerAuthenticated"] = true;
+        return peer;
     }
 
     private async Task<bool> RateLimitAsync(HttpContext context, string deviceId)
