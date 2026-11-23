@@ -92,6 +92,7 @@ public partial class MainWindow : Window
     private IntPtr _previousWindow;
     private bool _closingForExit;
     private bool _hotkeysPausedForSettings;
+    private bool _hotkeysPausedForSearch;
     private bool _conversionRunning;
     private bool _updatingKeepAwakeToggle;
     private bool _updatingCaptureExclusionToggle;
@@ -5820,6 +5821,46 @@ public partial class MainWindow : Window
         _commandView?.Refresh();
     }
 
+    private void SearchBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (_navigation.CurrentPage != AppPage.Palette || _hotkeysPausedForSearch) return;
+        _hotkeysPausedForSearch = true;
+        _hotkeys?.UnregisterAll();
+    }
+
+    private void SearchBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (!_hotkeysPausedForSearch) return;
+        _hotkeysPausedForSearch = false;
+        if (_navigation.CurrentPage == AppPage.Palette && !_hotkeysPausedForSettings)
+            RegisterConfiguredShortcuts(resetRegistrations: true);
+    }
+
+    private bool TryFindCommandForSearchShortcut(KeyEventArgs e)
+    {
+        if (!SearchBox.IsKeyboardFocusWithin) return false;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+            return false;
+
+        var modifiers = Keyboard.Modifiers;
+        if (modifiers == ModifierKeys.None) return false;
+        var shortcutModifiers = ShortcutModifiers.None;
+        if (modifiers.HasFlag(ModifierKeys.Control)) shortcutModifiers |= ShortcutModifiers.Control;
+        if (modifiers.HasFlag(ModifierKeys.Alt)) shortcutModifiers |= ShortcutModifiers.Alt;
+        if (modifiers.HasFlag(ModifierKeys.Shift)) shortcutModifiers |= ShortcutModifiers.Shift;
+        if (modifiers.HasFlag(ModifierKeys.Windows)) shortcutModifiers |= ShortcutModifiers.Windows;
+        var binding = new ShortcutBinding(shortcutModifiers, KeyInterop.VirtualKeyFromKey(key));
+
+        var command = _commands.FirstOrDefault(candidate => !_settings.DisabledCommands.Contains(candidate.Id) &&
+            ShortcutParser.TryParse(GetShortcut(candidate.Id), out var configured, out _) && configured == binding);
+        if (command is null) return false;
+
+        SearchBox.Text = binding.ToString();
+        SearchBox.CaretIndex = SearchBox.Text.Length;
+        return true;
+    }
+
     private void TestButton_Click(object sender, RoutedEventArgs e)
     {
         var result = FormatText(TestInput.Text);
@@ -5852,6 +5893,11 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (TryFindCommandForSearchShortcut(e))
+        {
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Escape)
         {
             HideToBackground();
