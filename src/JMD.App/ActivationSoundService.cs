@@ -12,10 +12,11 @@ internal static class ActivationSoundService
     public const string Soft = "soft";
     public const string Chime = "chime";
     public const string Double = "double";
+    public const string LevelClear = "levelClear";
     public const string None = "none";
 
     public static string Normalize(string? sound, string fallback)
-        => sound is Classic or Soft or Chime or Double or None ? sound : fallback;
+        => sound is Classic or Soft or Chime or Double or LevelClear or None ? sound : fallback;
 
     public static void PlayShortcutActivated(string? sound = null) => Play(sound, Signal.Shortcut);
 
@@ -24,6 +25,10 @@ internal static class ActivationSoundService
     public static void PlayJeyRecognized(string? sound = null) => Play(sound, Signal.JeyActivated);
 
     public static void PlayTaskReminder(string? sound = null) => Play(sound ?? Soft, Signal.TaskReminder);
+
+    public static void PlayTaskStepCompleted(string? sound = null) => Play(sound ?? Chime, Signal.TaskStepCompleted);
+
+    public static void PlayTodoTaskCompleted(string? sound = null) => Play(sound ?? LevelClear, Signal.TaskCompleted);
 
     private static void Play(string? sound, Signal signal)
     {
@@ -35,12 +40,15 @@ internal static class ActivationSoundService
             Soft => new SoundPattern([440], 0.075, 115, 0),
             Chime => new SoundPattern([784, 1046, 1318], 0.14, 78, 24),
             Double => new SoundPattern([659, 659], 0.13, 72, 42),
+            LevelClear => new SoundPattern([784, 988, 1318, 1568], 0.17, 76, 12),
             _ => signal switch
             {
                 Signal.Shortcut => new SoundPattern([740, 988], Volume, 72, 18),
                 Signal.VoiceCommand => new SoundPattern([587, 740, 988], Volume, 72, 18),
                 Signal.JeyActivated => new SoundPattern([494], 0.10, 72, 18),
                 Signal.TaskReminder => new SoundPattern([440], 0.075, 115, 0),
+                Signal.TaskStepCompleted => new SoundPattern([659, 784], 0.12, 68, 14),
+                Signal.TaskCompleted => new SoundPattern([784, 988, 1318, 1568], 0.17, 76, 12),
                 _ => new SoundPattern([], 0, 72, 18)
             }
         };
@@ -94,5 +102,5 @@ internal static class ActivationSoundService
 
     private sealed record SoundPattern(int[] Notes, double Volume, int NoteMilliseconds, int GapMilliseconds);
 
-    private enum Signal { Shortcut, VoiceCommand, JeyActivated, TaskReminder }
+    private enum Signal { Shortcut, VoiceCommand, JeyActivated, TaskReminder, TaskStepCompleted, TaskCompleted }
 }

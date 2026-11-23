@@ -34,7 +34,7 @@ internal sealed class CustomShortcutEditorWindow : Window
     private bool _accepted;
     private readonly TextBlock _testStatus = new()
     {
-        Text = "O teste executa as etapas no programa selecionado.",
+        Text = "O teste executa as etapas no programa ou endereço configurado.",
         Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
         FontSize = 11,
         TextWrapping = TextWrapping.Wrap,
@@ -258,7 +258,7 @@ internal sealed class CustomShortcutEditorWindow : Window
         workflowHeading.Children.Add(new TextBlock { Text = "Etapas do workflow", Foreground = Brushes.White, FontSize = 14, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         form.Children.Add(workflowHeading);
         form.Children.Add(_testStatus);
-        form.Children.Add(new TextBlock { Text = "As etapas são executadas na ordem abaixo. Após abrir um programa, o JMD aguarda um instante antes de continuar.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 0, 2, 8) });
+        form.Children.Add(new TextBlock { Text = "As etapas são executadas na ordem abaixo. Ao abrir um programa ou endereço, o JMD aguarda um instante antes de continuar.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 0, 2, 8) });
         var availableVariables = variableNames?.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray() ?? [];
         form.Children.Add(new TextBlock { Text = availableVariables.Length == 0
                 ? "Para preencher dados reutilizáveis, cadastre variáveis globais em Gerenciar atalhos e use {{nome}} no texto."
@@ -322,11 +322,15 @@ internal sealed class CustomShortcutEditorWindow : Window
 
             var type = new ComboBox { Margin = new Thickness(0, 8, 0, 5), Padding = new Thickness(6, 4, 6, 4), ItemsSource = new[]
             {
-                "Abrir programa ou URL", "Pressionar tecla", "Digitar texto", "Aguardar", "Focar campo ou botão",
+                "Abrir programa", "Abrir URL", "Pressionar tecla", "Digitar texto", "Aguardar", "Focar campo ou botão",
                 "Aguardar janela", "Aguardar controle", "Se controle corresponder", "Clique na janela", "Reposicionar janela", "Falar texto em voz alta"
             } };
-            type.SelectedIndex = step.Action switch { "Open" => 0, "Key" => 1, "Type" => 2, "Wait" => 3, "Focus" => 4,
-                "WaitWindow" => 5, "WaitControl" => 6, "IfControl" => 7, "Click" => 8, "PositionWindow" => 9, "Speak" => 10, _ => 2 };
+            type.SelectedIndex = step.Action switch
+            {
+                "Open" => WorkflowLaunchTargetPolicy.IsUrlTarget(step.Value) ? 1 : 0,
+                "OpenProgram" => 0, "OpenUrl" => 1, "Key" => 2, "Type" => 3, "Wait" => 4, "Focus" => 5,
+                "WaitWindow" => 6, "WaitControl" => 7, "IfControl" => 8, "Click" => 9, "PositionWindow" => 10, "Speak" => 11, _ => 3
+            };
             body.Children.Add(type);
             var value = CreateBox(step.Action == "Type" ? 68 : 36, multiline: step.Action == "Type");
             value.Text = step.Value;
@@ -393,60 +397,67 @@ internal sealed class CustomShortcutEditorWindow : Window
                 switch (type.SelectedIndex)
                 {
                     case 0:
-                        valueLabel.Text = "Programa, parâmetros ou URL";
-                        value.ToolTip = "Ex.: notepad.exe, explorer.exe \"C:\\Pasta com espaços\" ou https://example.com";
+                        valueLabel.Text = "Programa e parâmetros";
+                        value.ToolTip = "Ex.: notepad.exe ou explorer.exe \"C:\\Pasta com espaços\"";
                         value.Height = 36; value.AcceptsReturn = false;
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Aguardar após abrir (ms, opcional; padrão 1000 ms)";
                         break;
                     case 1:
+                        valueLabel.Text = "Endereço da página";
+                        value.ToolTip = "Informe um endereço http:// ou https://. Ex.: https://example.com/pedidos/{{pedidoId}}";
+                        value.Height = 36; value.AcceptsReturn = false;
+                        value.TextWrapping = TextWrapping.NoWrap;
+                        delayLabel.Text = "Aguardar após abrir (ms, opcional; padrão 1000 ms)";
+                        break;
+                    case 2:
                         valueLabel.Text = "Tecla";
                         value.ToolTip = "Ex.: Tab, Enter, Escape, Backspace, F1, seta para baixo";
                         value.Height = 36; value.AcceptsReturn = false;
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Pausa após a tecla (ms, opcional)";
                         break;
-                    case 2:
+                    case 3:
                         valueLabel.Text = "Texto literal para digitar";
                         value.ToolTip = "O texto será digitado no campo que estiver com foco";
                         value.Height = 68; value.AcceptsReturn = true;
                         value.TextWrapping = TextWrapping.Wrap;
                         delayLabel.Text = "Pausa após digitar (ms, opcional)";
                         break;
-                    case 3:
+                    case 4:
                         valueLabel.Text = "Tempo de espera (ms)";
                         value.ToolTip = "Informe um valor entre 1 e 60000 ms";
                         value.Height = 36; value.AcceptsReturn = false;
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "";
                         break;
-                    case 4:
+                    case 5:
                         valueLabel.Text = "Nome acessível ou AutomationId do campo ou botão";
                         value.ToolTip = "Use Copiar ID no inspetor (id:Salvar) ou informe name:Salvar. Busca restrita à janela ativa.";
                         value.Height = 36; value.AcceptsReturn = false;
                         value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Pausa após focar (ms, opcional)";
                         break;
-                    case 5:
+                    case 6:
                         valueLabel.Text = "Título da janela ou process:nome-do-processo";
                         value.ToolTip = "Ex.: TeamViewer ou process:TeamViewer. Aguarda até o tempo limite.";
                         value.Height = 36; value.AcceptsReturn = false; value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Pausa após encontrar (ms, opcional)";
                         break;
-                    case 6:
                     case 7:
+                    case 8:
                         valueLabel.Text = "Controle: id:AutomationId ou name:nome acessível";
                         value.ToolTip = "Use Copiar ID no inspetor para copiar um identificador inequívoco.";
                         value.Height = 36; value.AcceptsReturn = false; value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Pausa após verificar (ms, opcional)";
                         break;
-                    case 8:
+                    case 9:
                         valueLabel.Text = "Posição relativa à janela (copie com Shift + clique no inspetor)";
                         value.ToolTip = "Ex.: 0.42,0.68. As coordenadas acompanham a janela ao mover para outro monitor.";
                         value.Height = 36; value.AcceptsReturn = false; value.TextWrapping = TextWrapping.NoWrap;
                         delayLabel.Text = "Pausa após clicar (ms, opcional)";
                         break;
-                    case 10:
+                    case 11:
                         valueLabel.Text = "Texto que o Jey vai falar";
                         value.ToolTip = "Use {{hora}} e {{data}} para inserir os valores atuais quando o workflow executar.";
                         value.Height = 68; value.AcceptsReturn = true;
@@ -460,14 +471,14 @@ internal sealed class CustomShortcutEditorWindow : Window
                         delayLabel.Text = "Pausa após mover (ms, opcional)";
                         break;
                 }
-                delayLabel.Visibility = type.SelectedIndex == 3 ? Visibility.Collapsed : Visibility.Visible;
-                delay.Visibility = type.SelectedIndex == 3 ? Visibility.Collapsed : Visibility.Visible;
-                repeatPanel.Visibility = type.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
-                timeoutPanel.Visibility = type.SelectedIndex is 5 or 6 ? Visibility.Visible : Visibility.Collapsed;
-                monitorPanel.Visibility = type.SelectedIndex is 0 or 9 ? Visibility.Visible : Visibility.Collapsed;
-                conditionPanel.Visibility = type.SelectedIndex == 7 ? Visibility.Visible : Visibility.Collapsed;
-                skipPanel.Visibility = type.SelectedIndex == 7 ? Visibility.Visible : Visibility.Collapsed;
-                mousePanel.Visibility = type.SelectedIndex == 8 ? Visibility.Visible : Visibility.Collapsed;
+                delayLabel.Visibility = type.SelectedIndex == 4 ? Visibility.Collapsed : Visibility.Visible;
+                delay.Visibility = type.SelectedIndex == 4 ? Visibility.Collapsed : Visibility.Visible;
+                repeatPanel.Visibility = type.SelectedIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+                timeoutPanel.Visibility = type.SelectedIndex is 6 or 7 ? Visibility.Visible : Visibility.Collapsed;
+                monitorPanel.Visibility = type.SelectedIndex is 0 or 1 or 10 ? Visibility.Visible : Visibility.Collapsed;
+                conditionPanel.Visibility = type.SelectedIndex == 8 ? Visibility.Visible : Visibility.Collapsed;
+                skipPanel.Visibility = type.SelectedIndex == 8 ? Visibility.Visible : Visibility.Collapsed;
+                mousePanel.Visibility = type.SelectedIndex == 9 ? Visibility.Visible : Visibility.Collapsed;
             }
             type.SelectionChanged += (_, _) => UpdateKind();
             UpdateKind();
@@ -507,8 +518,8 @@ internal sealed class CustomShortcutEditorWindow : Window
             if (step.TypeBox is not null)
                 step.Action = step.TypeBox.SelectedIndex switch
                 {
-                    0 => "Open", 1 => "Key", 2 => "Type", 3 => "Wait", 4 => "Focus", 5 => "WaitWindow",
-                    6 => "WaitControl", 7 => "IfControl", 8 => "Click", 9 => "PositionWindow", 10 => "Speak", _ => "Type"
+                    0 => "OpenProgram", 1 => "OpenUrl", 2 => "Key", 3 => "Type", 4 => "Wait", 5 => "Focus",
+                    6 => "WaitWindow", 7 => "WaitControl", 8 => "IfControl", 9 => "Click", 10 => "PositionWindow", 11 => "Speak", _ => "Type"
                 };
             if (step.ValueBox is not null) step.Value = step.ValueBox.Text;
             if (step.DelayBox is not null)

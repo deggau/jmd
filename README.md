@@ -46,6 +46,10 @@ No menu `...`, a opção **Manter tela ativa** solicita ao Windows que mantenha 
 
 Com o .NET 10 SDK e o NSIS instalados e `makensis.exe` no `PATH`, execute `./installer/Build-Installer.ps1`. O procedimento e os parâmetros estão descritos em [installer/README.md](installer/README.md).
 
+## Organizar workflows existentes
+
+O editor separa etapas **Abrir programa** e **Abrir URL**. Para classificar etapas antigas salvas como `Open`, execute `./tools/Organize-Workflows.ps1` no PowerShell. A execução padrão só mostra uma prévia. Para aplicar a conversão ao `settings.json` do usuário, use `./tools/Organize-Workflows.ps1 -Apply`; o script cria um backup ao lado do arquivo antes de salvar. Um arquivo alternativo pode ser selecionado com `-Path`.
+
 ### Instalar pelo PowerShell
 
 Com o repositório público, abra o PowerShell e execute:

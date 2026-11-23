@@ -479,10 +479,18 @@ internal sealed class TodoTaskEditWindow : Window
         if (connectedPeers is { Count: > 0 })
         {
             panel.Children.Add(Label(task is null ? "Criar em" : "Mover para"));
-            _destinationPicker = new ComboBox { Height = 32, Margin = new Thickness(0, 4, 0, 12), Background = new SolidColorBrush(Color.FromRgb(36, 39, 48)), Foreground = Brushes.White };
-            _destinationPicker.Items.Add(new ComboBoxItem { Content = "Este computador", Tag = null });
-            foreach (var peer in connectedPeers)
-                _destinationPicker.Items.Add(new ComboBoxItem { Content = peer.Name, Tag = peer.Id });
+            _destinationPicker = new ComboBox
+            {
+                Height = 36, Margin = new Thickness(0, 4, 0, 12),
+                Style = (Style)System.Windows.Application.Current.FindResource("JeyModelComboBoxStyle"),
+                ToolTip = task is null ? "Escolha em qual computador a nova tarefa será criada" : "Escolha o computador para onde esta tarefa será movida"
+            };
+            _destinationPicker.Items.Add(CreateDestinationItem("Este computador", null, TodoTaskComputerPalette.Local));
+            for (var index = 0; index < connectedPeers.Count; index++)
+            {
+                var peer = connectedPeers[index];
+                _destinationPicker.Items.Add(CreateDestinationItem(peer.Name, peer.Id, TodoTaskComputerPalette.Remote(index)));
+            }
             _destinationPicker.SelectedIndex = 0;
             panel.Children.Add(_destinationPicker);
         }
@@ -591,6 +599,22 @@ internal sealed class TodoTaskEditWindow : Window
         _title.Focus();
         Keyboard.Focus(_title);
     }
+
+    private static ComboBoxItem CreateDestinationItem(string name, string? peerId, Color color)
+        => new()
+        {
+            Tag = peerId,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children =
+                {
+                    new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = new SolidColorBrush(color), Margin = new Thickness(0, 0, 9, 0) },
+                    new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }
+                }
+            }
+        };
 
     private void Attachments_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {

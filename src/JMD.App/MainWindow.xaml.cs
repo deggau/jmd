@@ -225,11 +225,15 @@ public partial class MainWindow : Window
         _settings.VoiceCommandFoundSound = ActivationSoundService.Normalize(_settings.VoiceCommandFoundSound, ActivationSoundService.Classic);
         _settings.JeyRecognizedSound = ActivationSoundService.Normalize(_settings.JeyRecognizedSound, ActivationSoundService.Classic);
         _settings.TaskReminderSound = ActivationSoundService.Normalize(_settings.TaskReminderSound, ActivationSoundService.Soft);
+        _settings.TodoTaskStepCompletedSound = ActivationSoundService.Normalize(_settings.TodoTaskStepCompletedSound, ActivationSoundService.Chime);
+        _settings.TodoTaskCompletedSound = ActivationSoundService.Normalize(_settings.TodoTaskCompletedSound, ActivationSoundService.LevelClear);
         _loadingAdvancedSoundSettings = true;
         SelectAdvancedSound(ShortcutSoundCombo, _settings.ShortcutActivatedSound);
         SelectAdvancedSound(VoiceCommandSoundCombo, _settings.VoiceCommandFoundSound);
         SelectAdvancedSound(JeySoundCombo, _settings.JeyRecognizedSound);
         SelectAdvancedSound(TaskReminderSoundCombo, _settings.TaskReminderSound);
+        SelectAdvancedSound(TaskStepCompletedSoundCombo, _settings.TodoTaskStepCompletedSound);
+        SelectAdvancedSound(TodoTaskCompletedSoundCombo, _settings.TodoTaskCompletedSound);
         _loadingAdvancedSoundSettings = false;
         if (_settings.HistoryRetentionDays is < 1 or > 3650)
             _settings.HistoryRetentionDays = 15;
@@ -1088,6 +1092,9 @@ public partial class MainWindow : Window
     private static bool IsValidCustomTarget(string target)
         => WorkflowCommandLinePolicy.IsValidTarget(target);
 
+    private static bool IsWorkflowLaunchAction(string? action)
+        => action is "Open" or "OpenProgram" or "OpenUrl";
+
     private bool HasShortcutConflict(string shortcutText, string? exceptId)
     {
         if (!ShortcutParser.TryParse(shortcutText, out var candidate, out _)) return false;
@@ -1142,7 +1149,7 @@ public partial class MainWindow : Window
             {
                 Id = existing?.Id ?? $"custom:test:{Guid.NewGuid():N}",
                 Name = draft.CommandName,
-                Target = draft.Steps.FirstOrDefault(step => step.Action == "Open")?.Value ?? string.Empty,
+                Target = draft.Steps.FirstOrDefault(step => IsWorkflowLaunchAction(step.Action))?.Value ?? string.Empty,
                 Shortcut = draft.Shortcut,
                 FocusIfAlreadyOpen = draft.FocusIfAlreadyOpen,
                 Steps = draft.Steps
@@ -1157,7 +1164,7 @@ public partial class MainWindow : Window
 
         var name = dialog.CommandName;
         var steps = dialog.Steps;
-        var target = steps.FirstOrDefault(step => step.Action == "Open")?.Value ?? string.Empty;
+        var target = steps.FirstOrDefault(step => IsWorkflowLaunchAction(step.Action))?.Value ?? string.Empty;
         var shortcutText = dialog.Shortcut;
         var focusIfAlreadyOpen = dialog.FocusIfAlreadyOpen;
         var allowJmdroidExecution = !dialog.BlockJmdroidExecution;
@@ -1248,6 +1255,8 @@ public partial class MainWindow : Window
         if (steps.Count == 0) return "Adicione ao menos uma etapa ao workflow.";
         if (steps.Any(step => step.DelayMilliseconds is < 0 or > 60000)) return "A pausa após cada etapa deve ficar entre 0 e 60000 ms.";
         if (steps.Any(step => step.Action == "Open" && !IsValidCustomTarget(step.Value))) return "Informe um caminho de programa ou uma URL http/https válida em cada etapa de abertura.";
+        if (steps.Any(step => step.Action == "OpenProgram" && !WorkflowLaunchTargetPolicy.IsValidProgramTarget(step.Value))) return "Informe um programa válido, sem inserir um endereço URL nessa etapa.";
+        if (steps.Any(step => step.Action == "OpenUrl" && !WorkflowLaunchTargetPolicy.IsValidUrlTarget(step.Value))) return "Informe um endereço http:// ou https:// válido nessa etapa.";
         if (steps.Any(step => step.Action == "Key" && !TryGetWorkflowKey(step.Value, out _))) return "Informe uma tecla válida, como Tab, Enter, Escape ou F1.";
         if (steps.Any(step => step.Action == "Key" && !WorkflowRepeatPolicy.IsValidCount(step.RepeatCount))) return $"A repetição da tecla deve ficar entre {WorkflowRepeatPolicy.MinimumCount} e {WorkflowRepeatPolicy.MaximumCount} vezes.";
         if (steps.Any(step => step.Action == "Type" && string.IsNullOrEmpty(step.Value))) return "Informe o texto a digitar em cada etapa de texto.";
@@ -1271,7 +1280,7 @@ public partial class MainWindow : Window
         var dynamicNames = dialog.VoicePhrases
             .SelectMany(phrase => Regex.Matches(phrase, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var token in steps.Where(step => step.Action is "Open" or "Type" or "Focus" or "WaitWindow" or "WaitControl" or "IfControl" or "PositionWindow" or "Speak")
+        foreach (var token in steps.Where(step => step.Action is "Open" or "OpenProgram" or "OpenUrl" or "Type" or "Focus" or "WaitWindow" or "WaitControl" or "IfControl" or "PositionWindow" or "Speak")
                      .SelectMany(step => Regex.Matches(step.Value, "\\{\\{([A-Za-z][A-Za-z0-9_]{0,39})\\}\\}").Select(match => match.Groups[1].Value)))
         {
             if (!WorkflowSpeechTemplatePolicy.IsBuiltInVariable(token) &&
@@ -1870,7 +1879,7 @@ public partial class MainWindow : Window
 
             var firstLaunch = true;
             var hasTypingOrKeys = steps.Any(step => step.Action is "Key" or "Type" or "Focus" or "Click" or "WaitControl" or "IfControl");
-            var hasOpenStep = steps.Any(step => step.Action == "Open");
+            var hasOpenStep = steps.Any(step => IsWorkflowLaunchAction(step.Action));
             if (hasTypingOrKeys && !hasOpenStep && _previousWindow == IntPtr.Zero)
                 throw new InvalidOperationException("Não foi possível identificar a janela que deve receber o texto.");
             if (hasTypingOrKeys && !hasOpenStep)
@@ -1885,7 +1894,9 @@ public partial class MainWindow : Window
                 var step = steps[stepIndex];
                 currentStepDescription = step.Action switch
                 {
-                    "Open" => "Abrir programa ou URL",
+                    "Open" => WorkflowLaunchTargetPolicy.IsUrlTarget(step.Value) ? "Abrir URL" : "Abrir programa",
+                    "OpenProgram" => "Abrir programa",
+                    "OpenUrl" => "Abrir URL",
                     "Speak" => "Falar texto em voz alta",
                     "Key" => "Pressionar tecla",
                     "Type" => "Digitar texto",
@@ -1901,14 +1912,21 @@ public partial class MainWindow : Window
                 switch (step.Action)
                 {
                     case "Open":
+                    case "OpenProgram":
+                    case "OpenUrl":
                         var commandVariables = voiceCommand?.Variables ?? dynamicVariables;
+                        var expectedUrl = step.Action == "OpenUrl" ||
+                            step.Action == "Open" && WorkflowLaunchTargetPolicy.IsUrlTarget(step.Value);
                         var openTarget = ExpandWorkflowVariables(step.Value, commandVariables,
-                            urlEncodeValues: step.Value.TrimStart().StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                                step.Value.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+                            urlEncodeValues: expectedUrl);
                         openTarget = Environment.ExpandEnvironmentVariables(openTarget);
                         if (!WorkflowCommandLinePolicy.TryParse(openTarget, out var executable, out var arguments))
                             throw new InvalidOperationException($"Programa ou URL inválido: {openTarget}");
                         var isUrl = Uri.TryCreate(executable, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+                        if (step.Action == "OpenUrl" && !isUrl)
+                            throw new InvalidOperationException($"Endereço URL inválido: {openTarget}");
+                        if (step.Action == "OpenProgram" && isUrl)
+                            throw new InvalidOperationException("Informe um programa na etapa Abrir programa; para endereços, use Abrir URL.");
                         var workingDirectory = string.Empty;
                         if (!isUrl && Path.GetExtension(executable).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
                         {
@@ -2092,7 +2110,7 @@ public partial class MainWindow : Window
                         throw new InvalidOperationException("O workflow contém uma etapa desconhecida.");
                 }
 
-                if (step.Action is not ("Wait" or "Open") && step.DelayMilliseconds > 0)
+                if (step.Action is not ("Wait" or "Open" or "OpenProgram" or "OpenUrl") && step.DelayMilliseconds > 0)
                     await Task.Delay(Math.Clamp(step.DelayMilliseconds, 1, 60000));
             }
             var searchFilterNote = voiceCommand is null && matchedPhrase is not null && _commandExecutionContext.Value is null
@@ -2669,6 +2687,8 @@ public partial class MainWindow : Window
             CompleteTodoTask(task);
             return;
         }
+        if (task.Checklist[index].IsCompleted)
+            ActivationSoundService.PlayTaskStepCompleted(_settings.TodoTaskStepCompletedSound);
         SaveTodoTasks();
         _todoTaskPanel?.Refresh();
     }
@@ -2678,6 +2698,7 @@ public partial class MainWindow : Window
         if (task.CompletedAt is not null) return;
         if (task.PausedAt is not null) UnpauseTodoTask(task);
         task.CompletedAt = DateTimeOffset.Now;
+        ActivationSoundService.PlayTodoTaskCompleted(_settings.TodoTaskCompletedSound);
         SaveTodoTasks();
         RecordTodoTaskChange("concluída", task, $"Tarefa concluída: {TodoTaskDisplay.Reference(task)} {task.Title}");
         _todoTaskPanel?.Refresh();
@@ -5316,6 +5337,8 @@ public partial class MainWindow : Window
             case nameof(VoiceCommandSoundCombo): _settings.VoiceCommandFoundSound = sound; break;
             case nameof(JeySoundCombo): _settings.JeyRecognizedSound = sound; break;
             case nameof(TaskReminderSoundCombo): _settings.TaskReminderSound = sound; break;
+            case nameof(TaskStepCompletedSoundCombo): _settings.TodoTaskStepCompletedSound = sound; break;
+            case nameof(TodoTaskCompletedSoundCombo): _settings.TodoTaskCompletedSound = sound; break;
             default: return;
         }
 
@@ -5339,6 +5362,8 @@ public partial class MainWindow : Window
             case "voice": ActivationSoundService.PlayVoiceCommandFound(GetSelectedSound(VoiceCommandSoundCombo)); break;
             case "jey": ActivationSoundService.PlayJeyRecognized(GetSelectedSound(JeySoundCombo)); break;
             case "reminder": ActivationSoundService.PlayTaskReminder(GetSelectedSound(TaskReminderSoundCombo)); break;
+            case "taskStep": ActivationSoundService.PlayTaskStepCompleted(GetSelectedSound(TaskStepCompletedSoundCombo)); break;
+            case "taskCompleted": ActivationSoundService.PlayTodoTaskCompleted(GetSelectedSound(TodoTaskCompletedSoundCombo)); break;
         }
     }
 

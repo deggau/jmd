@@ -32,7 +32,7 @@ internal static class WorkflowIconService
         string? previousDataUrl = null,
         CancellationToken cancellationToken = default)
     {
-        var openTarget = steps.FirstOrDefault(step => step.Action == "Open")?.Value;
+        var openTarget = steps.FirstOrDefault(step => step.Action is "Open" or "OpenProgram" or "OpenUrl")?.Value;
         var target = GetIconTarget(openTarget);
         if (target is null) return null;
         if (string.Equals(target, previousTarget, StringComparison.OrdinalIgnoreCase) &&

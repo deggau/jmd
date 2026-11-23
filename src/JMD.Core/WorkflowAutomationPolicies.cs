@@ -57,10 +57,35 @@ public static class WorkflowStepActionPolicy
 {
     private static readonly HashSet<string> SupportedActions = new(StringComparer.Ordinal)
     {
-        "Open", "Key", "Type", "Wait", "Focus", "WaitWindow", "WaitControl", "IfControl", "Click", "PositionWindow", "Speak"
+        "Open", "OpenProgram", "OpenUrl", "Key", "Type", "Wait", "Focus", "WaitWindow", "WaitControl", "IfControl", "Click", "PositionWindow", "Speak"
     };
 
     public static bool IsSupported(string? action) => action is not null && SupportedActions.Contains(action);
+}
+
+public static class WorkflowLaunchTargetPolicy
+{
+    private static readonly System.Text.RegularExpressions.Regex VariablePattern =
+        new(@"\{\{[A-Za-z][A-Za-z0-9_]{0,39}\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    public static bool IsUrlTarget(string? value)
+    {
+        var target = value?.Trim() ?? string.Empty;
+        return target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+               target.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string ClassifyLegacyTarget(string? value) => IsUrlTarget(value) ? "OpenUrl" : "OpenProgram";
+
+    public static bool IsValidUrlTarget(string? value)
+    {
+        if (!IsUrlTarget(value)) return false;
+        var expanded = VariablePattern.Replace(value!.Trim(), "jmd-template-value");
+        return Uri.TryCreate(expanded, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+    }
+
+    public static bool IsValidProgramTarget(string? value)
+        => !IsUrlTarget(value) && WorkflowCommandLinePolicy.IsValidTarget(value);
 }
 
 public static class WorkflowSpeechTemplatePolicy

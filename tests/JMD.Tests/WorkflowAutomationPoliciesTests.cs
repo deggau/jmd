@@ -8,6 +8,8 @@ public sealed class WorkflowAutomationPoliciesTests
 {
     [Theory]
     [InlineData("Open")]
+    [InlineData("OpenProgram")]
+    [InlineData("OpenUrl")]
     [InlineData("Key")]
     [InlineData("Type")]
     [InlineData("Wait")]
