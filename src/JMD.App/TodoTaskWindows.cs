@@ -755,6 +755,84 @@ internal sealed class TodoTaskEditWindow : Window
     });
 }
 
+internal sealed record TodoTaskPickerOption(TodoTask Task, DateTimeOffset ModifiedAt);
+
+internal sealed class TodoTaskPickerWindow : Window
+{
+    private readonly IReadOnlyList<TodoTaskPickerOption> _options;
+    private readonly TextBox _search = new();
+    private readonly System.Windows.Controls.ListBox _list = new();
+
+    public TodoTask? SelectedTask => (_list.SelectedItem as ListBoxItem)?.Tag is TodoTaskPickerOption option ? option.Task : null;
+
+    public TodoTaskPickerWindow(IReadOnlyList<TodoTaskPickerOption> options)
+    {
+        _options = options;
+        Title = "Acrescentar à tarefa"; Width = 520; Height = 590; MinWidth = 420; MinHeight = 440;
+        WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.CanResize; ShowInTaskbar = false; Topmost = true;
+        Background = new SolidColorBrush(Color.FromRgb(23, 25, 31)); WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        var root = new DockPanel { Margin = new Thickness(20) };
+        var footer = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+        DockPanel.SetDock(footer, Dock.Bottom); root.Children.Add(footer);
+        var cancel = MakeButton("Cancelar", false); cancel.Click += (_, _) => DialogResult = false; footer.Children.Add(cancel);
+        var add = MakeButton("Acrescentar", true); add.Margin = new Thickness(8, 0, 0, 0); add.Click += (_, _) => AcceptSelection(); footer.Children.Add(add);
+        var title = new TextBlock { Text = "Escolher tarefa ativa", FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(title, Dock.Top); root.Children.Add(title);
+        var hint = new TextBlock { Text = "Selecione onde acrescentar o conteúdo copiado. As tarefas mais recentemente alteradas aparecem primeiro.", Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
+        DockPanel.SetDock(hint, Dock.Top); root.Children.Add(hint);
+        _search.Padding = new Thickness(9, 7, 9, 7); _search.FontSize = 13; _search.Foreground = Brushes.White;
+        _search.Background = new SolidColorBrush(Color.FromRgb(36, 39, 48)); _search.BorderBrush = new SolidColorBrush(Color.FromRgb(58, 62, 72));
+        _search.Margin = new Thickness(0, 0, 0, 10); _search.ToolTip = "Filtrar por título, descrição ou número";
+        _search.TextChanged += (_, _) => RefreshOptions(); DockPanel.SetDock(_search, Dock.Top); root.Children.Add(_search);
+        _list.Background = new SolidColorBrush(Color.FromRgb(23, 25, 31)); _list.BorderThickness = new Thickness(0);
+        _list.SelectionChanged += (_, _) => { }; _list.MouseDoubleClick += (_, _) => AcceptSelection();
+        root.Children.Add(_list);
+        Content = root;
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape) { DialogResult = false; e.Handled = true; }
+            else if (e.Key == Key.Enter && !_search.IsKeyboardFocusWithin) { AcceptSelection(); e.Handled = true; }
+            else if (e.Key == Key.Down && _search.IsKeyboardFocusWithin && _list.Items.Count > 0)
+            { _list.SelectedIndex = 0; _list.Focus(); e.Handled = true; }
+        };
+        RefreshOptions();
+        Loaded += (_, _) => _search.Focus();
+    }
+
+    private void RefreshOptions()
+    {
+        var query = _search.Text.Trim();
+        _list.Items.Clear();
+        foreach (var option in _options.Where(option => query.Length == 0 ||
+                     option.Task.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                     option.Task.Description.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                     option.Task.TaskNumber.ToString().Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+        {
+            var body = new StackPanel { Margin = new Thickness(4, 2, 4, 2) };
+            var task = option.Task;
+            body.Children.Add(new TextBlock { Text = $"{TodoTaskDisplay.Reference(task)} {task.Title}", Foreground = Brushes.White, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+            var modified = option.ModifiedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm", System.Globalization.CultureInfo.CurrentCulture);
+            var subtitle = string.IsNullOrWhiteSpace(task.Description) ? $"Modificada em {modified}" : $"{task.Description} · Modificada em {modified}";
+            body.Children.Add(new TextBlock { Text = subtitle, Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)), FontSize = 10, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 3, 0, 0) });
+            _list.Items.Add(new ListBoxItem { Tag = option, Content = body, Padding = new Thickness(9, 7, 9, 7), Margin = new Thickness(0, 2, 0, 2), Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), BorderBrush = new SolidColorBrush(Color.FromRgb(49, 52, 61)), BorderThickness = new Thickness(1) });
+        }
+        if (_list.Items.Count > 0 && _list.SelectedIndex < 0) _list.SelectedIndex = 0;
+    }
+
+    private void AcceptSelection()
+    {
+        if (SelectedTask is not null) DialogResult = true;
+    }
+
+    private static Button MakeButton(string text, bool primary) => new()
+    {
+        Content = text, Padding = new Thickness(14, 8, 14, 8),
+        Background = new SolidColorBrush(primary ? Color.FromRgb(180, 243, 106) : Color.FromRgb(48, 52, 62)),
+        Foreground = primary ? new SolidColorBrush(Color.FromRgb(23, 25, 31)) : Brushes.White,
+        BorderThickness = new Thickness(0)
+    };
+}
+
 internal sealed class TodoTaskPauseWindow : Window
 {
     private readonly TextBox _reason = new();

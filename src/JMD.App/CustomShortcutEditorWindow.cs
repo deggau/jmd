@@ -78,7 +78,7 @@ internal sealed class CustomShortcutEditorWindow : Window
 
     public CustomShortcutEditorWindow(CustomShortcutEntry? existing = null, IEnumerable<string>? existingPhrases = null,
         IEnumerable<string>? variableNames = null, Func<CustomShortcutEditorWindow, string?>? validate = null,
-        Func<CustomShortcutEditorWindow, Task<bool>>? testWorkflow = null)
+        Func<CustomShortcutEditorWindow, Task<bool>>? testWorkflow = null, string? initialTarget = null)
     {
         _validate = validate;
         _testWorkflow = testWorkflow;
@@ -96,7 +96,12 @@ internal sealed class CustomShortcutEditorWindow : Window
             else if (!string.IsNullOrWhiteSpace(existing.Target))
                 _steps.Add(new StepDraft("Open", existing.Target, 0));
         }
-        if (_steps.Count == 0) _steps.Add(new StepDraft("Open", "", 0));
+        if (_steps.Count == 0)
+        {
+            var launchAction = WorkflowLaunchTargetPolicy.IsUrlTarget(initialTarget) ? "OpenUrl" : "OpenProgram";
+            _steps.Add(new StepDraft(string.IsNullOrWhiteSpace(initialTarget) ? "Open" : launchAction,
+                initialTarget?.Trim() ?? string.Empty, 0));
+        }
 
         Title = existing is null ? "Criar comando personalizado" : "Editar comando personalizado";
         Width = 590;

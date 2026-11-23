@@ -400,6 +400,11 @@ public partial class MainWindow : Window
         {
             VoicePhrasesDisplay = GetVoicePhrasesDisplay("todoCreate")
         });
+        _commands.Add(new CommandRow("todoAppendSelection", "Acrescentar seleção a uma tarefa",
+            "Escolhe uma tarefa ativa e acrescenta a URL, o anexo ou o texto selecionado.", GetShortcut("todoAppendSelection"))
+        {
+            VoicePhrasesDisplay = GetVoicePhrasesDisplay("todoAppendSelection")
+        });
         _commands.Add(new CommandRow("todoPanel", "Abrir painel de tarefas",
             "Mostra as tarefas em aberto no painel lateral.", GetShortcut("todoPanel"))
         {
@@ -1129,6 +1134,7 @@ public partial class MainWindow : Window
 
     private async void CreateCustomShortcutFromDialog(CustomShortcutEntry? existing = null)
     {
+        var initialTarget = existing is null ? await CaptureSelectedWorkflowTargetAsync() : null;
         (string Name, string Target, string Shortcut, bool FocusIfAlreadyOpen, bool AllowJmdroidExecution, string? IconTarget, string? IconDataUrl, List<CustomWorkflowStep> Steps)? previous = existing is null
             ? null : (existing.Name, existing.Target, existing.Shortcut, existing.FocusIfAlreadyOpen,
                 existing.AllowJmdroidExecution,
@@ -1153,7 +1159,7 @@ public partial class MainWindow : Window
                 Shortcut = draft.Shortcut,
                 FocusIfAlreadyOpen = draft.FocusIfAlreadyOpen,
                 Steps = draft.Steps
-            }, isTestExecution: true));
+            }, isTestExecution: true), initialTarget);
         dialog.Owner = this;
         PrepareWindowForCaptureExclusion(dialog);
         _showingDialog = true;
@@ -1244,6 +1250,61 @@ public partial class MainWindow : Window
             CriticalErrorLog.Write("Atualizar frases de voz após salvar workflow", exception);
             SetStatus($"O workflow foi salvo, mas as frases de voz não foram atualizadas: {exception.Message}", false);
         }
+    }
+
+    private async Task<string?> CaptureSelectedWorkflowTargetAsync()
+    {
+        var sourceWindow = _previousWindow;
+        if (sourceWindow == IntPtr.Zero || _keyboard.GetForegroundWindow() != sourceWindow ||
+            !await _keyboard.WaitForModifiersReleasedAsync() || _keyboard.GetForegroundWindow() != sourceWindow)
+            return null;
+
+        var previousClipboard = _clipboard.TryGetRichContent();
+        var sequenceBeforeCopy = _clipboard.SequenceNumber;
+        if (!_keyboard.SendCopy()) return null;
+
+        for (var attempt = 0; attempt < 24 && _clipboard.SequenceNumber == sequenceBeforeCopy; attempt++)
+            await Task.Delay(25);
+
+        string? selectedTarget = null;
+        if (_clipboard.SequenceNumber != sequenceBeforeCopy)
+        {
+            var copiedText = _clipboard.TryGetRichContent()?.Text?.Trim();
+            if (IsSelectedWorkflowTarget(copiedText))
+                selectedTarget = copiedText;
+            else
+            {
+                try
+                {
+                    if (System.Windows.Clipboard.ContainsFileDropList())
+                        selectedTarget = System.Windows.Clipboard.GetFileDropList().Cast<string>()
+                            .FirstOrDefault(IsSelectedWorkflowTarget);
+                }
+                catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException)
+                {
+                    // Clipboard file drops are optional; use a valid copied text target when available.
+                }
+            }
+        }
+
+        if (previousClipboard is not null) _clipboard.TrySetRichContent(previousClipboard);
+        return selectedTarget;
+    }
+
+    private static bool IsSelectedWorkflowTarget(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        value = value.Trim();
+        if (WorkflowLaunchTargetPolicy.IsUrlTarget(value))
+            return WorkflowLaunchTargetPolicy.IsValidUrlTarget(value);
+        if (!WorkflowCommandLinePolicy.TryParse(value, out var executable, out _)) return false;
+
+        var extension = Path.GetExtension(executable);
+        return File.Exists(executable) || extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".com", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase);
     }
 
     private string? ValidateCustomWorkflowDraft(CustomShortcutEditorWindow dialog, string? exceptId)
@@ -1595,7 +1656,7 @@ public partial class MainWindow : Window
     private static readonly string[] ShortcutIds =
     [
         "palette", "clipboard", "selection", "upperCase", "lowerCase", "titleCase", "jsonPretty", "jsonCompact",
-        "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoPanel", "todoPanelClose", "screenShare", "desktopScreenShare", "about",
+        "snippets", "saveSnippet", "draftSave", "draftRestore", "todoCreate", "todoAppendSelection", "todoPanel", "todoPanelClose", "screenShare", "desktopScreenShare", "about",
         "checkUpdates", "transcribe", "createCustomShortcut",
         .. SystemPowerCommandCatalog.All.Select(command => command.Id)
     ];
@@ -1734,6 +1795,9 @@ public partial class MainWindow : Window
             {
                 case "todoCreate":
                     await CreateTodoTaskAsync();
+                    break;
+                case "todoAppendSelection":
+                    await AppendSelectionToTodoTaskAsync();
                     break;
                 case "todoPanel":
                     ShowTodoTaskPanel();
@@ -2454,6 +2518,132 @@ public partial class MainWindow : Window
         _todoTaskPanel?.Refresh();
         ShowTodoTaskAttachmentErrors(attachmentErrors);
         return true;
+    }
+
+    private async Task AppendSelectionToTodoTaskAsync()
+    {
+        var sourceWindow = _previousWindow;
+        if (sourceWindow == IntPtr.Zero || !await _keyboard.WaitForModifiersReleasedAsync() ||
+            _keyboard.GetForegroundWindow() != sourceWindow)
+        {
+            Notify("Tarefas", "Selecione uma URL, um arquivo ou um texto em outro aplicativo e tente novamente.", false);
+            return;
+        }
+
+        var oldClipboard = _clipboard.TryGetRichContent();
+        var sequenceBeforeCopy = _clipboard.SequenceNumber;
+        if (!_keyboard.SendCopy())
+        {
+            Notify("Tarefas", "Não foi possível copiar a seleção.", false);
+            return;
+        }
+        await Task.Delay(180);
+        RichClipboardContent? copiedContent = null;
+        IReadOnlyList<string> selectedFiles = [];
+        if (_clipboard.SequenceNumber != sequenceBeforeCopy)
+        {
+            copiedContent = _clipboard.TryGetRichContent();
+            try
+            {
+                if (System.Windows.Clipboard.ContainsFileDropList())
+                    selectedFiles = System.Windows.Clipboard.GetFileDropList().Cast<string>().ToArray();
+            }
+            catch (Exception exception) when (exception is ExternalException or InvalidOperationException or ArgumentException)
+            {
+                // Use copied text if file-drop data is unavailable.
+            }
+        }
+        if (oldClipboard is not null) _clipboard.TrySetRichContent(oldClipboard);
+
+        var capture = TodoTaskClipboardCapturePolicy.Resolve(copiedContent?.Text, copiedContent?.Html, selectedFiles);
+        if (string.IsNullOrWhiteSpace(capture.Description) && string.IsNullOrWhiteSpace(capture.Urls) && string.IsNullOrWhiteSpace(capture.Attachments))
+        {
+            Notify("Tarefas", "Nenhuma URL, anexo ou texto foi encontrado na seleção.", false);
+            return;
+        }
+
+        var activeTasks = _todoTasks.Where(task => task.CompletedAt is null).ToArray();
+        if (activeTasks.Length == 0)
+        {
+            Notify("Tarefas", "Não há tarefas ativas para receber esse conteúdo.", false);
+            return;
+        }
+
+        var historyEvents = _historyStore?.Search("Tarefa ") ?? [];
+        var options = activeTasks.Select(task =>
+        {
+            var nextSameNumber = _todoTasks.Where(candidate => candidate.TaskNumber == task.TaskNumber && candidate.CreatedAt > task.CreatedAt)
+                .Select(candidate => (DateTimeOffset?)candidate.CreatedAt).Min();
+            var marker = $"Tarefa {task.TaskNumber})";
+            var modifiedAt = historyEvents.Where(entry => entry.OccurredAt >= task.CreatedAt &&
+                    (nextSameNumber is null || entry.OccurredAt < nextSameNumber.Value) &&
+                    entry.CommandName.Contains(marker, StringComparison.Ordinal))
+                .Select(entry => entry.OccurredAt).DefaultIfEmpty(task.CreatedAt).Max();
+            return new TodoTaskPickerOption(task, modifiedAt);
+        }).OrderByDescending(option => option.ModifiedAt).ThenByDescending(option => option.Task.CreatedAt).ToArray();
+        var picker = new TodoTaskPickerWindow(options);
+        if (!ShowTodoTaskDialog(picker) || picker.SelectedTask is not { } selectedTask) return;
+
+        var changes = new List<string>();
+        if (!string.IsNullOrWhiteSpace(capture.Description))
+        {
+            var description = AppendTaskText(selectedTask.Description, capture.Description);
+            if (description != selectedTask.Description)
+            {
+                selectedTask.Description = description;
+                changes.Add("texto acrescentado à descrição");
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(capture.Urls))
+        {
+            var urls = AppendTaskLines(selectedTask.Urls, capture.Urls);
+            if (urls != selectedTask.Urls)
+            {
+                selectedTask.Urls = urls;
+                changes.Add("URL adicionada");
+            }
+        }
+        IReadOnlyList<string> attachmentErrors = [];
+        if (!string.IsNullOrWhiteSpace(capture.Attachments))
+        {
+            var attachments = AppendTaskLines(selectedTask.Attachments, capture.Attachments);
+            if (attachments != selectedTask.Attachments)
+            {
+                selectedTask.Attachments = attachments;
+                attachmentErrors = OrganizeTodoTaskAttachments(selectedTask, attachments);
+                changes.Add("anexo adicionado");
+            }
+        }
+
+        if (changes.Count == 0)
+        {
+            Notify("Tarefas", "Esse conteúdo já está na tarefa selecionada.", false);
+            return;
+        }
+
+        SaveTodoTasks();
+        RecordTodoTaskChange("atualizada pela seleção", selectedTask,
+            $"Conteúdo selecionado acrescentado à tarefa {TodoTaskDisplay.Reference(selectedTask)} {selectedTask.Title}: {string.Join(", ", changes)}.");
+        _todoTaskPanel?.Refresh();
+        ShowTodoTaskAttachmentErrors(attachmentErrors);
+        Notify("Tarefas", $"Conteúdo acrescentado a {TodoTaskDisplay.Reference(selectedTask)} {selectedTask.Title}.", true);
+    }
+
+    private static string AppendTaskText(string existing, string addition)
+    {
+        var value = addition.Trim();
+        if (string.IsNullOrWhiteSpace(value)) return existing;
+        if (existing.Contains(value, StringComparison.Ordinal)) return existing;
+        return string.IsNullOrWhiteSpace(existing) ? value : $"{existing.TrimEnd()}{Environment.NewLine}{Environment.NewLine}{value}";
+    }
+
+    private static string AppendTaskLines(string existing, string additions)
+    {
+        var lines = existing.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var known = lines.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        lines.AddRange(additions.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(known.Add));
+        return string.Join(Environment.NewLine, lines);
     }
 
     private void ShowTodoTaskPanel()
@@ -5727,6 +5917,7 @@ public partial class MainWindow : Window
                 await TransformStructuredDataFromPaletteAsync(id == "jsonPretty" ? StructuredDataLayout.Pretty : StructuredDataLayout.Compact);
             if (id == "snippets") await InsertSavedSnippetAsync();
             if (id == "saveSnippet") await CaptureSnippetAsync();
+            if (id == "todoAppendSelection") await AppendSelectionToTodoTaskAsync();
             if (id == "screenShare") await StartAndroidScreenShareFromDesktopAsync();
             if (SystemPowerCommandCatalog.TryGet(id, out _) && !ExecuteSystemPowerCommand(id))
             {
