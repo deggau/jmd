@@ -13,10 +13,13 @@ internal static class ActivationSoundService
     public const string Chime = "chime";
     public const string Double = "double";
     public const string LevelClear = "levelClear";
+    public const string Fanfare = "fanfare";
+    public const string Celebration = "celebration";
+    public const string GrandCelebration = "grandCelebration";
     public const string None = "none";
 
     public static string Normalize(string? sound, string fallback)
-        => sound is Classic or Soft or Chime or Double or LevelClear or None ? sound : fallback;
+        => sound is Classic or Soft or Chime or Double or LevelClear or Fanfare or Celebration or GrandCelebration or None ? sound : fallback;
 
     public static void PlayShortcutActivated(string? sound = null) => Play(sound, Signal.Shortcut);
 
@@ -26,9 +29,9 @@ internal static class ActivationSoundService
 
     public static void PlayTaskReminder(string? sound = null) => Play(sound ?? Soft, Signal.TaskReminder);
 
-    public static void PlayTaskStepCompleted(string? sound = null) => Play(sound ?? Chime, Signal.TaskStepCompleted);
+    public static void PlayTaskStepCompleted(string? sound = null) => Play(sound ?? Fanfare, Signal.TaskStepCompleted);
 
-    public static void PlayTodoTaskCompleted(string? sound = null) => Play(sound ?? LevelClear, Signal.TaskCompleted);
+    public static void PlayTodoTaskCompleted(string? sound = null) => Play(sound ?? Celebration, Signal.TaskCompleted);
 
     private static void Play(string? sound, Signal signal)
     {
@@ -41,14 +44,17 @@ internal static class ActivationSoundService
             Chime => new SoundPattern([784, 1046, 1318], 0.14, 78, 24),
             Double => new SoundPattern([659, 659], 0.13, 72, 42),
             LevelClear => new SoundPattern([784, 988, 1318, 1568], 0.17, 76, 12),
+            Fanfare => new SoundPattern([523, 659, 784, 1046, 1318, 1568], 0.18, 112, 28),
+            Celebration => new SoundPattern([523, 659, 784, 1046, 1318, 1568, 1318, 1568], 0.19, 140, 32),
+            GrandCelebration => new SoundPattern([392, 523, 659, 784, 1046, 1318, 1568, 1760, 1568, 1760], 0.20, 145, 34),
             _ => signal switch
             {
                 Signal.Shortcut => new SoundPattern([740, 988], Volume, 72, 18),
                 Signal.VoiceCommand => new SoundPattern([587, 740, 988], Volume, 72, 18),
                 Signal.JeyActivated => new SoundPattern([494], 0.10, 72, 18),
                 Signal.TaskReminder => new SoundPattern([440], 0.075, 115, 0),
-                Signal.TaskStepCompleted => new SoundPattern([659, 784], 0.12, 68, 14),
-                Signal.TaskCompleted => new SoundPattern([784, 988, 1318, 1568], 0.17, 76, 12),
+                Signal.TaskStepCompleted => new SoundPattern([523, 659, 784, 1046, 1318, 1568], 0.18, 112, 28),
+                Signal.TaskCompleted => new SoundPattern([523, 659, 784, 1046, 1318, 1568, 1318, 1568], 0.19, 140, 32),
                 _ => new SoundPattern([], 0, 72, 18)
             }
         };

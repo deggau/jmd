@@ -368,8 +368,8 @@ internal sealed class UserSettings
     public string VoiceCommandFoundSound { get; set; } = ActivationSoundService.Classic;
     public string JeyRecognizedSound { get; set; } = ActivationSoundService.Classic;
     public string TaskReminderSound { get; set; } = ActivationSoundService.Soft;
-    public string TodoTaskStepCompletedSound { get; set; } = ActivationSoundService.Chime;
-    public string TodoTaskCompletedSound { get; set; } = ActivationSoundService.LevelClear;
+    public string TodoTaskStepCompletedSound { get; set; } = ActivationSoundService.Fanfare;
+    public string TodoTaskCompletedSound { get; set; } = ActivationSoundService.Celebration;
     public bool SilentUpdatesEnabled { get; set; }
     public bool VoiceWakeWordEnabled { get; set; } = true;
     public bool VoiceDebugEnabled { get; set; }

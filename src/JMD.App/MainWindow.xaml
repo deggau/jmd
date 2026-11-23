@@ -676,14 +676,14 @@
                 <Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="68"/></Grid.ColumnDefinitions>
                   <TextBlock Text="Etapa concluída" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
                   <ComboBox x:Name="TaskStepCompletedSoundCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="AdvancedSoundSelection_Changed">
-                    <ComboBoxItem Content="Clássico" Tag="classic"/><ComboBoxItem Content="Suave" Tag="soft"/><ComboBoxItem Content="Sino" Tag="chime"/><ComboBoxItem Content="Duplo" Tag="double"/><ComboBoxItem Content="Fase concluída" Tag="levelClear"/><ComboBoxItem Content="Sem som" Tag="none"/>
+                    <ComboBoxItem Content="Clássico" Tag="classic"/><ComboBoxItem Content="Suave" Tag="soft"/><ComboBoxItem Content="Sino" Tag="chime"/><ComboBoxItem Content="Duplo" Tag="double"/><ComboBoxItem Content="Fase concluída" Tag="levelClear"/><ComboBoxItem Content="Fanfarra" Tag="fanfare"/><ComboBoxItem Content="Comemoração" Tag="celebration"/><ComboBoxItem Content="Grande comemoração" Tag="grandCelebration"/><ComboBoxItem Content="Sem som" Tag="none"/>
                   </ComboBox>
                   <Button Grid.Column="2" Content="Ouvir" Tag="taskStep" Click="PreviewSignalSound_Click" Margin="6,0,0,0" Padding="6,4" Background="#FF30343E" Foreground="White" BorderThickness="0" />
                 </Grid>
                 <Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="68"/></Grid.ColumnDefinitions>
                   <TextBlock Text="Tarefa concluída" Foreground="#FFBFC3CC" VerticalAlignment="Center" />
                   <ComboBox x:Name="TodoTaskCompletedSoundCombo" Grid.Column="1" Style="{StaticResource JeyModelComboBoxStyle}" SelectionChanged="AdvancedSoundSelection_Changed">
-                    <ComboBoxItem Content="Clássico" Tag="classic"/><ComboBoxItem Content="Suave" Tag="soft"/><ComboBoxItem Content="Sino" Tag="chime"/><ComboBoxItem Content="Duplo" Tag="double"/><ComboBoxItem Content="Fase concluída" Tag="levelClear"/><ComboBoxItem Content="Sem som" Tag="none"/>
+                    <ComboBoxItem Content="Clássico" Tag="classic"/><ComboBoxItem Content="Suave" Tag="soft"/><ComboBoxItem Content="Sino" Tag="chime"/><ComboBoxItem Content="Duplo" Tag="double"/><ComboBoxItem Content="Fase concluída" Tag="levelClear"/><ComboBoxItem Content="Fanfarra" Tag="fanfare"/><ComboBoxItem Content="Comemoração" Tag="celebration"/><ComboBoxItem Content="Grande comemoração" Tag="grandCelebration"/><ComboBoxItem Content="Sem som" Tag="none"/>
                   </ComboBox>
                   <Button Grid.Column="2" Content="Ouvir" Tag="taskCompleted" Click="PreviewSignalSound_Click" Margin="6,0,0,0" Padding="6,4" Background="#FF30343E" Foreground="White" BorderThickness="0" />
                 </Grid>
