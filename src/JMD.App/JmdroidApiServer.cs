@@ -53,6 +53,7 @@ internal sealed record JmdroidNetworkAddress(string InterfaceName, IPAddress Add
     public string DisplayName => $"{InterfaceName} — {Address}";
 }
 internal sealed record JmdroidPairingRequestView(string Id, string DeviceName, string AppVersion, DateTimeOffset CreatedAt);
+internal sealed record DesktopConnectionRequestView(string Id, string ComputerName, string PeerId, string PublicKey, DateTimeOffset CreatedAt);
 internal sealed record JmdroidExecutionResult(string Status, string? Text = null, string? Error = null, int? InputItemCount = null, int? OutputItemCount = null);
 
 internal sealed class JmdroidApiServer : IAsyncDisposable
@@ -67,6 +68,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private readonly Func<IReadOnlyList<JmdroidApiCommand>> _getCommands;
     private readonly Func<string, JsonElement, CancellationToken, Task<JmdroidExecutionResult>> _executeCommand;
     private readonly IList<JmdroidPairedDevice> _devices;
+    private readonly UserSettings _settings;
     private readonly Action _saveSettings;
     private readonly TodoTaskApiService _todoTaskApi;
     private readonly Func<string>? _getTaskAttachmentsFolder;
@@ -75,6 +77,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private readonly object _requestLock = new();
     private readonly object _connectionLock = new();
     private readonly ConcurrentDictionary<string, PendingPairing> _pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, PendingDesktopConnection> _desktopConnections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<JmdroidExecutionResult>>> _executions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DeviceRateWindow> _deviceRates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, int> _activeConnections = new(StringComparer.Ordinal);
@@ -89,6 +92,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     private PairingSession? _pairingSession;
     private bool _pairingScreenOpen;
     private bool _disposed;
+    private bool _keepAliveForNetworkDiscovery;
     private string? _baseUrl;
     private int _listeningPort;
     private int _httpDiagnosticPort;
@@ -116,6 +120,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         Func<IReadOnlyList<JmdroidApiCommand>> getCommands,
         Func<string, JsonElement, CancellationToken, Task<JmdroidExecutionResult>> executeCommand,
         IList<JmdroidPairedDevice> devices,
+        UserSettings settings,
         Action saveSettings,
         TodoTaskApiService todoTaskApi,
         Func<string>? getTaskAttachmentsFolder = null)
@@ -123,6 +128,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         _getCommands = getCommands;
         _executeCommand = executeCommand;
         _devices = devices;
+        _settings = settings;
         _saveSettings = saveSettings;
         _todoTaskApi = todoTaskApi;
         _getTaskAttachmentsFolder = getTaskAttachmentsFolder;
@@ -139,6 +145,47 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
     public IReadOnlyList<JmdroidPairedDevice> PairedDevices
     {
         get { lock (_requestLock) return _devices.ToArray(); }
+    }
+    public IReadOnlyList<DesktopConnectionRequestView> GetPendingDesktopConnections()
+        => _desktopConnections.Values.Where(request => request.State == "pending" && DateTimeOffset.UtcNow - request.CreatedAt <= TimeSpan.FromMinutes(5))
+            .OrderBy(request => request.CreatedAt)
+            .Select(request => new DesktopConnectionRequestView(request.Id, request.ComputerName, request.PeerId, request.PublicKey, request.CreatedAt)).ToArray();
+
+    public IReadOnlyList<DesktopPairedPeer> DesktopPeers => _settings.DesktopPeers.ToArray();
+
+    public bool ApproveDesktopConnection(string requestId)
+    {
+        if (!_desktopConnections.TryGetValue(requestId, out var request) || request.State != "pending") return false;
+        lock (_requestLock)
+        {
+            if (request.State != "pending") return false;
+            var url = request.Scheme + "://" + request.RemoteAddress + ":" + request.RemotePort;
+            var existing = _settings.DesktopPeers.FirstOrDefault(peer => peer.Id == request.PeerId);
+            if (existing is null)
+                _settings.DesktopPeers.Add(new DesktopPairedPeer { Id = request.PeerId, Name = request.ComputerName, PublicKey = request.PublicKey, BaseUrl = url });
+            else { existing.Name = request.ComputerName; existing.PublicKey = request.PublicKey; existing.BaseUrl = url; }
+            request.State = "approved";
+            request.ApprovalSignature = DesktopPeerIdentity.Sign(_settings, $"approved\n{request.Id}\n{request.PeerId}\n{DesktopPeerIdentity.PeerId(_settings.DesktopIdentityPublicKey)}");
+            _saveSettings();
+        }
+        StateChanged?.Invoke();
+        return true;
+    }
+
+    public bool DenyDesktopConnection(string requestId)
+    {
+        if (!_desktopConnections.TryGetValue(requestId, out var request) || request.State != "pending") return false;
+        request.State = "denied";
+        StateChanged?.Invoke();
+        return true;
+    }
+
+    public void UpdateDesktopPeerAddress(string peerId, Uri baseUri)
+    {
+        var peer = _settings.DesktopPeers.FirstOrDefault(candidate => candidate.Id == peerId);
+        if (peer is null || peer.BaseUrl == baseUri.ToString().TrimEnd('/')) return;
+        peer.BaseUrl = baseUri.ToString().TrimEnd('/');
+        _saveSettings();
     }
     public bool IsDeviceConnected(string deviceId) { lock (_connectionLock) return _activeConnections.ContainsKey(deviceId); }
 
@@ -402,18 +449,27 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         finally { _lifecycleLock.Release(); }
     }
 
-    public async Task StartForPairedDevicesAsync(bool useHttp, CancellationToken cancellationToken = default)
+    public async Task StartForNetworkDiscoveryAsync(bool useHttp, CancellationToken cancellationToken = default)
     {
-        if (PairedDevices.Count == 0) return;
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             CancelIdleShutdown();
+            var address = _listeningAddress is { } listeningAddress && GetLanAddresses().Any(candidate => candidate.Address.Equals(listeningAddress))
+                ? listeningAddress
+                : GetLanAddress();
+            if (_application is not null && (_usesHttp != useHttp || !_listeningAddress!.Equals(address)))
+            {
+                _pairingScreenOpen = false;
+                _pairingSession = null;
+                await StopIfIdleAsync(force: true);
+            }
             if (_application is null)
-                await StartListenerAsync(GetLanAddress(), useHttp, cancellationToken);
+                await StartListenerAsync(address, useHttp, cancellationToken);
             _pairingScreenOpen = false;
             _pairingSession = null;
+            _keepAliveForNetworkDiscovery = true;
         }
         finally { _lifecycleLock.Release(); }
     }
@@ -618,6 +674,96 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
             service = "jmdroid-pairing",
             timestamp = DateTimeOffset.UtcNow
         }));
+
+        app.MapGet("/api/v1/discovery", () => Results.Json(new
+        {
+            service = "jmd",
+            computerName = Environment.MachineName,
+            apiVersion = 1,
+            port = _listeningPort,
+            scheme = _usesHttp ? "http" : "https",
+            appVersion = typeof(JmdroidApiServer).Assembly.GetName().Version?.ToString(),
+            peerId = DesktopPeerIdentity.PeerId(_settings.DesktopIdentityPublicKey),
+            publicKey = _settings.DesktopIdentityPublicKey
+        }));
+
+        app.MapGet("/api/v1/desktop/identity/{nonce}", async context =>
+        {
+            var nonce = Convert.ToString(context.Request.RouteValues["nonce"]);
+            var remote = context.Connection.RemoteIpAddress;
+            if (remote is null || !IsPrivateAddress(remote) || nonce is null || nonce.Length != 64 || nonce.Any(character => !Uri.IsHexDigit(character)))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_identity_challenge", "Desafio de identidade inválido.");
+                return;
+            }
+            var peerId = DesktopPeerIdentity.PeerId(_settings.DesktopIdentityPublicKey);
+            await context.Response.WriteAsJsonAsync(new
+            {
+                peerId,
+                publicKey = _settings.DesktopIdentityPublicKey,
+                signature = DesktopPeerIdentity.Sign(_settings, $"identity\n{nonce}\n{peerId}")
+            }, JsonOptions, context.RequestAborted);
+        });
+
+        app.MapPost("/api/v1/desktop/connections", async context =>
+        {
+            var body = await context.Request.ReadFromJsonAsync<DesktopConnectionClaim>(JsonOptions, context.RequestAborted);
+            if (body is null || string.IsNullOrWhiteSpace(body.RequestId) || body.RequestId.Length is > 64 or < 24 ||
+                string.IsNullOrWhiteSpace(body.ComputerName) || body.ComputerName.Length > 80 ||
+                string.IsNullOrWhiteSpace(body.PublicKey) || body.PublicKey.Length > 4096 ||
+                body.Port is < 1 or > 65535 || body.Scheme is not ("http" or "https") ||
+                body.PeerId != DesktopPeerIdentity.PeerId(body.PublicKey) ||
+                Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - body.Timestamp) > 120 ||
+                !DesktopPeerIdentity.Verify(body.PublicKey,
+                    $"connect\n{body.RequestId}\n{body.ComputerName}\n{body.PeerId}\n{body.Port}\n{body.Scheme}\n{body.Timestamp}", body.Signature))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid_connection_request", "Pedido de conexão inválido.");
+                return;
+            }
+            if (body.PeerId == DesktopPeerIdentity.PeerId(_settings.DesktopIdentityPublicKey))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status409Conflict, "same_computer", "Este JMD já é este computador.");
+                return;
+            }
+            var remote = context.Connection.RemoteIpAddress;
+            if (remote is null || !IsPrivateAddress(remote))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status403Forbidden, "private_network_only", "Conexões JMD só são aceitas pela rede privada local.");
+                return;
+            }
+            var pending = new PendingDesktopConnection(body.RequestId, body.ComputerName.Trim(), body.PeerId, body.PublicKey,
+                remote.ToString(), body.Port, body.Scheme, DateTimeOffset.UtcNow);
+            if (!_desktopConnections.TryAdd(body.RequestId, pending))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status409Conflict, "duplicate_request", "Este pedido de conexão já foi recebido.");
+                return;
+            }
+            PairingRequestsChanged?.Invoke();
+            context.Response.StatusCode = StatusCodes.Status202Accepted;
+            await context.Response.WriteAsJsonAsync(new { state = pending.State, requestId = pending.Id }, JsonOptions, context.RequestAborted);
+        });
+
+        app.MapGet("/api/v1/desktop/connections/{requestId}", async context =>
+        {
+            var requestId = Convert.ToString(context.Request.RouteValues["requestId"]);
+            if (requestId is null || !_desktopConnections.TryGetValue(requestId, out var request))
+            {
+                await WriteErrorAsync(context, StatusCodes.Status404NotFound, "request_not_found", "Pedido de conexão inexistente.");
+                return;
+            }
+            if (request.State == "pending" && DateTimeOffset.UtcNow - request.CreatedAt > TimeSpan.FromMinutes(5))
+                request.State = "expired";
+            var response = new
+            {
+                state = request.State,
+                requestId = request.Id,
+                peerId = DesktopPeerIdentity.PeerId(_settings.DesktopIdentityPublicKey),
+                computerName = Environment.MachineName,
+                publicKey = _settings.DesktopIdentityPublicKey,
+                signature = request.ApprovalSignature
+            };
+            await context.Response.WriteAsJsonAsync(response, JsonOptions, context.RequestAborted);
+        });
 
         app.MapPost("/api/v1/pairing/requests", async context =>
         {
@@ -1439,7 +1585,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 
     private async Task StopIfIdleAsync(bool force = false)
     {
-        if (_pairingScreenOpen || ConnectedDeviceCount > 0 || (!force && PairedDevices.Count > 0) || _application is null) return;
+        if ((!force && (_pairingScreenOpen || ConnectedDeviceCount > 0 || _keepAliveForNetworkDiscovery || PairedDevices.Count > 0)) || _application is null) return;
         var app = _application;
         _application = null;
         _baseUrl = null;
@@ -1588,6 +1734,14 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         return leftBytes.Length == rightBytes.Length && CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
     }
 
+    private static bool IsPrivateAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        var bytes = address.GetAddressBytes();
+        return address.AddressFamily == AddressFamily.InterNetwork &&
+               (bytes[0] == 10 || bytes[0] == 172 && bytes[1] is >= 16 and <= 31 || bytes[0] == 192 && bytes[1] == 168);
+    }
+
     private static async Task<T?> ReadJsonBodyAsync<T>(HttpContext context)
     {
         try { return await context.Request.ReadFromJsonAsync<T>(JsonOptions, context.RequestAborted); }
@@ -1632,6 +1786,7 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
 
     private sealed record PairingQrPayload(string Type, int Version, string BaseUrl, string CertificateSha256, string SessionId, string PairingSecret, DateTimeOffset ExpiresAt);
     private sealed record PairingClaim(string SessionId, string PairingSecret, string DeviceName, string AppVersion);
+    private sealed record DesktopConnectionClaim(string RequestId, string ComputerName, string PeerId, string PublicKey, int Port, string Scheme, long Timestamp, string Signature);
     private sealed record ExecuteCommandRequest(string RequestId, JsonElement Input);
     private sealed class ActiveScreenShare(string shareId, string deviceName, WebSocket socket, int maxFps)
     {
@@ -1693,6 +1848,21 @@ internal sealed class JmdroidApiServer : IAsyncDisposable
         public string State { get; set; } = "pending";
         public string? DeviceId { get; set; }
         public string? AccessToken { get; set; }
+    }
+
+    private sealed class PendingDesktopConnection(string id, string computerName, string peerId, string publicKey,
+        string remoteAddress, int remotePort, string scheme, DateTimeOffset createdAt)
+    {
+        public string Id { get; } = id;
+        public string ComputerName { get; } = computerName;
+        public string PeerId { get; } = peerId;
+        public string PublicKey { get; } = publicKey;
+        public string RemoteAddress { get; } = remoteAddress;
+        public int RemotePort { get; } = remotePort;
+        public string Scheme { get; } = scheme;
+        public DateTimeOffset CreatedAt { get; } = createdAt;
+        public string State { get; set; } = "pending";
+        public string? ApprovalSignature { get; set; }
     }
 
     private sealed class DeviceRateWindow

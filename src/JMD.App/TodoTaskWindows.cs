@@ -153,14 +153,44 @@ internal sealed class TodoTaskReportWindow : Window
                     var itemPeriod = hour >= 5 && hour < 12 ? "Manhã" : hour >= 12 && hour < 18 ? "Tarde" : "Noite";
                     return itemPeriod == periodName;
                 }).OrderByDescending(item => item.LocalTime).ToList();
-                foreach (var item in periodEvents)
+                if (_executedOnly.IsChecked == true)
                 {
-                    var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 5) };
-                    var content = new StackPanel();
-                    content.Children.Add(new TextBlock { Text = $"{item.LocalTime:HH:mm}  ·  {item.Entry.CommandName}", Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-                    if (!string.IsNullOrWhiteSpace(item.Entry.AfterValue))
-                        content.Children.Add(new TextBlock { Text = item.Entry.AfterValue, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
-                    card.Child = content; periodPanel.Children.Add(card);
+                    var taskGroups = periodEvents.GroupBy(item => GetExecutedTaskGrouping(item.Entry), StringComparer.OrdinalIgnoreCase)
+                        .OrderByDescending(group => group.Max(item => item.LocalTime));
+                    foreach (var taskGroup in taskGroups)
+                    {
+                        var orderedActions = taskGroup.OrderBy(item => item.LocalTime).ToList();
+                        var latest = orderedActions[^1];
+                        var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 5) };
+                        var content = new StackPanel();
+                        content.Children.Add(new TextBlock { Text = GetExecutedTaskLabel(latest.Entry), Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                        foreach (var action in orderedActions)
+                        {
+                            var actionText = GetExecutedActionLabel(action.Entry);
+                            content.Children.Add(new TextBlock
+                            {
+                                Text = $"{action.LocalTime:HH:mm}  ·  {actionText}",
+                                Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)),
+                                FontSize = 11,
+                                TextWrapping = TextWrapping.Wrap,
+                                Margin = new Thickness(0, 5, 0, 0)
+                            });
+                        }
+                        card.Child = content;
+                        periodPanel.Children.Add(card);
+                    }
+                }
+                else
+                {
+                    foreach (var item in periodEvents)
+                    {
+                        var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 5) };
+                        var content = new StackPanel();
+                        content.Children.Add(new TextBlock { Text = $"{item.LocalTime:HH:mm}  ·  {item.Entry.CommandName}", Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                        if (!string.IsNullOrWhiteSpace(item.Entry.AfterValue))
+                            content.Children.Add(new TextBlock { Text = item.Entry.AfterValue, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
+                        card.Child = content; periodPanel.Children.Add(card);
+                    }
                 }
                 if (periodEvents.Count == 0)
                     periodPanel.Children.Add(new TextBlock { Text = "—", Foreground = new SolidColorBrush(Color.FromRgb(100, 104, 114)), FontSize = 12, Margin = new Thickness(2, 5, 0, 0) });
@@ -177,6 +207,30 @@ internal sealed class TodoTaskReportWindow : Window
         if (!entry.CommandName.StartsWith("Tarefa checklist", StringComparison.OrdinalIgnoreCase)) return false;
         return entry.AfterValue.Contains("concluído", StringComparison.OrdinalIgnoreCase)
             || entry.AfterValue.Contains("concluída", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetExecutedTaskGrouping(ConversionHistoryEntry entry)
+    {
+        var label = GetExecutedTaskLabel(entry);
+        var closingParenthesis = label.IndexOf(')');
+        if (label.StartsWith('(') && closingParenthesis > 0)
+            return $"reference:{label[..(closingParenthesis + 1)]}";
+        return $"title:{label.Trim()}";
+    }
+
+    private static string GetExecutedTaskLabel(ConversionHistoryEntry entry)
+    {
+        var separator = entry.CommandName.IndexOf(" — ", StringComparison.Ordinal);
+        if (separator >= 0 && separator + 3 < entry.CommandName.Length)
+            return entry.CommandName[(separator + 3)..].Trim();
+        return entry.AfterValue.Trim();
+    }
+
+    private static string GetExecutedActionLabel(ConversionHistoryEntry entry)
+    {
+        if (!entry.CommandName.StartsWith("Tarefa checklist", StringComparison.OrdinalIgnoreCase))
+            return "Tarefa concluída";
+        return string.IsNullOrWhiteSpace(entry.AfterValue) ? "Etapa concluída" : entry.AfterValue.Trim();
     }
 
     private void RenderCalendar()

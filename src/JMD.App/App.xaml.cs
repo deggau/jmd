@@ -107,8 +107,8 @@ public partial class App : System.Windows.Application
             _mainWindow.Dispatcher.BeginInvoke(new Action(() => DispatchNotificationClick(_mainWindow, activeBalloonClickTarget)));
         StartUpdateSignalListener();
         StartCliServer();
-        if (!updateOnStartup && _mainWindow.PairedJmdroidDeviceCount > 0)
-            _ = _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.StartJmdroidApiForPairedDevicesAsync()));
+        if (!updateOnStartup)
+            _ = _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.StartJmdroidApiForNetworkDiscoveryAsync()));
         if (updateOnStartup)
             _ = _mainWindow.Dispatcher.BeginInvoke(new Action(async () => await _mainWindow.UpdateFromCommandLineAsync()));
         else if (openSettingsOnStartup)
@@ -383,6 +383,10 @@ internal sealed class UserSettings
     public List<CustomShortcutEntry> CustomShortcuts { get; set; } = [];
     public List<JmdroidPairedDevice> JmdroidDevices { get; set; } = [];
     public bool JmdroidUseHttp { get; set; }
+    public bool DesktopNetworkDiscoveryEnabled { get; set; } = true;
+    public string DesktopIdentityPublicKey { get; set; } = string.Empty;
+    public string ProtectedDesktopIdentityPrivateKey { get; set; } = string.Empty;
+    public List<DesktopPairedPeer> DesktopPeers { get; set; } = [];
     public int JmdroidScreenShareMaxFps { get; set; } = JmdroidScreenSharePolicy.DefaultMaxFramesPerSecond;
     public bool JmdroidWorkflowPermissionsMigrated { get; set; } = true;
     public List<WorkflowVariableEntry> WorkflowVariables { get; set; } = [];
@@ -411,6 +415,15 @@ internal sealed class UserSettings
     };
     public Dictionary<string, List<string>> VoicePhrases { get; set; } = new(StringComparer.Ordinal);
     public HashSet<string> DisabledCommands { get; set; } = new(StringComparer.Ordinal);
+}
+
+internal sealed class DesktopPairedPeer
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string PublicKey { get; set; } = string.Empty;
+    public string BaseUrl { get; set; } = string.Empty;
+    public DateTimeOffset PairedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 internal sealed class JmdroidPairedDevice

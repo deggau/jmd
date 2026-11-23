@@ -114,11 +114,14 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<TodoTask> _todoTasks;
     private TodoTaskPanelWindow? _todoTaskPanel;
     private JmdroidApiServer? _jmdroidApiServer;
+    private string? _lastJmdroidApiStartError;
     private readonly Dictionary<string, AndroidScreenShareWindow> _androidScreenShareWindows = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (string ShareId, CancellationTokenSource Cancellation)> _desktopScreenCaptures = new(StringComparer.Ordinal);
     private TodoTaskApiService? _todoTaskApiService;
     private AndroidSettingsPanel? _androidSettingsPanel;
+    private DesktopConnectionsPanel? _desktopConnectionsPanel;
     private readonly System.Windows.Threading.DispatcherTimer _todoReminderTimer = new() { Interval = TimeSpan.FromSeconds(15) };
+    private readonly System.Windows.Threading.DispatcherTimer _jmdroidApiRetryTimer = new() { Interval = TimeSpan.FromSeconds(30) };
 
     public event Action<string, string, bool, NotificationClickTarget, TimeSpan>? TrayNotification;
     public bool IsVoiceWakeWordEnabled => _settings.VoiceWakeWordEnabled;
@@ -272,6 +275,7 @@ public partial class MainWindow : Window
         SourceInitialized += MainWindow_SourceInitialized;
         _memoryRefreshTimer.Tick += (_, _) => RefreshMemoryStatus();
         _memoryRefreshTimer.Start();
+        _jmdroidApiRetryTimer.Tick += async (_, _) => await RetryJmdroidApiForNetworkDiscoveryAsync();
         _hotkeyRecoveryTimer.Tick += (_, _) =>
         {
             if (!_hotkeysPausedForSettings)
@@ -4534,10 +4538,14 @@ public partial class MainWindow : Window
         }
         if (_jmdroidApiServer is null)
         {
+            var hadDesktopIdentity = !string.IsNullOrWhiteSpace(_settings.DesktopIdentityPublicKey) && !string.IsNullOrWhiteSpace(_settings.ProtectedDesktopIdentityPrivateKey);
+            DesktopPeerIdentity.Ensure(_settings);
+            if (!hadDesktopIdentity) _settingsStore.Save(_settings);
             _jmdroidApiServer = new JmdroidApiServer(
                 GetJmdroidApiCommands,
                 ExecuteJmdroidCommandAsync,
                 _settings.JmdroidDevices,
+                _settings,
                 () => _settingsStore.Save(_settings),
                 taskApi,
                 () => string.IsNullOrWhiteSpace(_settings.Businessmap.TaskAttachmentsFolder)
@@ -4627,17 +4635,59 @@ public partial class MainWindow : Window
         if (_androidScreenShareWindows.TryGetValue(deviceId, out var window)) window.SetTransientStatus(status);
     }
 
-    public async Task StartJmdroidApiForPairedDevicesAsync()
+    public async Task StartJmdroidApiForNetworkDiscoveryAsync()
     {
-        if (_settings.JmdroidDevices.Count == 0) return;
+        _jmdroidApiRetryTimer.Start();
         try
         {
-            await EnsureJmdroidApiServer().StartForPairedDevicesAsync(_settings.JmdroidUseHttp);
+            await EnsureJmdroidApiServer().StartForNetworkDiscoveryAsync(_settings.JmdroidUseHttp);
+            _lastJmdroidApiStartError = null;
         }
         catch (Exception exception)
         {
-            CriticalErrorLog.Write("Iniciar API JMDroid para aparelhos pareados", exception);
+            if (!string.Equals(_lastJmdroidApiStartError, exception.Message, StringComparison.Ordinal))
+            {
+                CriticalErrorLog.Write("Iniciar API JMD para descoberta na rede", exception);
+                _lastJmdroidApiStartError = exception.Message;
+            }
         }
+    }
+
+    private Task RetryJmdroidApiForNetworkDiscoveryAsync()
+    {
+        if (_jmdroidApiServer is { IsRunning: true, ListeningAddress: { } address } server &&
+            server.AvailableNetworkAddresses.Any(candidate => candidate.Address.Equals(address)))
+            return Task.CompletedTask;
+        return StartJmdroidApiForNetworkDiscoveryAsync();
+    }
+
+    private async void DesktopNetworkMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        await StartJmdroidApiForNetworkDiscoveryAsync();
+        _desktopConnectionsPanel ??= new DesktopConnectionsPanel(EnsureJmdroidApiServer(), _settings, _settingsStore);
+        AndroidSettingsHost.Content = _desktopConnectionsPanel;
+        _navigation.ShowShortcutSettings();
+        CommandsList.Visibility = Visibility.Collapsed;
+        SettingsTabs.Visibility = Visibility.Visible;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        WorkflowSettingsPage.Visibility = Visibility.Collapsed;
+        SqlInTestPage.Visibility = Visibility.Collapsed;
+        SnippetManagementPage.Visibility = Visibility.Collapsed;
+        HistoryPage.Visibility = Visibility.Collapsed;
+        AndroidSettingsPage.Visibility = Visibility.Visible;
+        AboutPage.Visibility = Visibility.Collapsed;
+        JeySettingsPage.Visibility = Visibility.Collapsed;
+        AdvancedSettingsPage.Visibility = Visibility.Collapsed;
+        SettingsRetryButton.Visibility = Visibility.Collapsed;
+        FooterHints.Visibility = Visibility.Collapsed;
+        SearchBox.Visibility = Visibility.Collapsed;
+        ManageButton.Content = "Voltar aos comandos";
+        PageTitle.Text = "JMD na rede";
+        PageSubtitle.Text = "Descubra outros computadores JMD na rede privada";
+        PauseConfiguredShortcuts();
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
     }
 
     private void AndroidMenuItem_Click(object sender, RoutedEventArgs e)
