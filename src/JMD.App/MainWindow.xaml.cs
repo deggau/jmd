@@ -2509,14 +2509,37 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ShowTodoTaskReport()
+    private async void ShowTodoTaskReport()
     {
         var panel = _todoTaskPanel;
         if (panel is null) return;
-        var report = new TodoTaskReportWindow(_historyStore?.Search("Tarefa") ?? []);
-        report.Owner = panel;
         panel.SetModalChildActive(true);
-        try { report.ShowDialog(); }
+        try
+        {
+            var computers = new List<TodoTaskReportComputer>
+            {
+                new("__local__", Environment.MachineName, TodoTaskComputerPalette.Local, _historyStore?.Search("Tarefa") ?? [])
+            };
+            var peers = await GetConnectedDesktopPeersAsync();
+            _desktopTaskApiClient ??= new DesktopTaskApiClient(_settings, _settingsStore);
+            var histories = await Task.WhenAll(peers.Select(async peer =>
+            {
+                try { return (Peer: peer, Events: await _desktopTaskApiClient.GetTaskHistoryAsync(peer), Error: (string?)null); }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidDataException or CryptographicException or SocketException or NetworkInformationException or InvalidOperationException)
+                { return (Peer: peer, Events: (IReadOnlyList<ConversionHistoryEntry>?)null, Error: exception.Message); }
+            }));
+            foreach (var (peer, events, _) in histories.Where(result => result.Events is not null))
+            {
+                var peerIndex = Math.Max(0, _settings.DesktopPeers.FindIndex(candidate => candidate.Id == peer.Id));
+                computers.Add(new TodoTaskReportComputer(peer.Id, peer.Name, TodoTaskComputerPalette.Remote(peerIndex), events!));
+            }
+            var unavailable = histories.Where(result => result.Events is null).Select(result => result.Peer.Name).ToArray();
+            if (unavailable.Length > 0)
+                MessageBox.Show($"Não foi possível carregar o histórico de: {string.Join(", ", unavailable)}. O relatório continuará com os demais computadores.",
+                    "Histórico remoto indisponível", MessageBoxButton.OK, MessageBoxImage.Information);
+            var report = new TodoTaskReportWindow(computers) { Owner = panel };
+            report.ShowDialog();
+        }
         finally { panel.SetModalChildActive(false); }
     }
 

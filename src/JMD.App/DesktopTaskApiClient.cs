@@ -44,6 +44,21 @@ internal sealed class DesktopTaskApiClient
         }
     }
 
+    public async Task<IReadOnlyList<ConversionHistoryEntry>> GetTaskHistoryAsync(DesktopPairedPeer peer, CancellationToken cancellationToken = default)
+    {
+        var result = new List<ConversionHistoryEntry>();
+        for (var pageNumber = 0; ; pageNumber++)
+        {
+            var path = $"/api/v1/tasks/history?q=Tarefa&page={pageNumber}&pageSize=100";
+            using var response = await SendAsync(peer, HttpMethod.Get, path, null, cancellationToken);
+            var page = await EnsureSuccessfulAsync<TodoTaskApiPage<ConversionHistoryEntry>>(response, cancellationToken)
+                ?? throw new InvalidDataException($"{peer.Name} não retornou o histórico de tarefas.");
+            result.AddRange(page.Items);
+            if (result.Count >= page.TotalCount || page.Items.Count == 0) break;
+        }
+        return result;
+    }
+
     public async Task<TodoTaskEntry> CreateTaskAsync(DesktopPairedPeer peer, TodoTaskApiTaskInput task, CancellationToken cancellationToken = default)
     {
         var result = await SendJsonAsync<TodoTaskEntry>(peer, HttpMethod.Post, "/api/v1/tasks", task, cancellationToken);

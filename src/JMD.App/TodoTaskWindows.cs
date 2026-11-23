@@ -44,21 +44,24 @@ internal sealed class TodoTask
 
 internal sealed class TodoTaskReportWindow : Window
 {
-    private readonly IReadOnlyList<ConversionHistoryEntry> _events;
+    private const string AllComputersFilter = "__all__";
+    private readonly IReadOnlyList<TodoTaskReportComputer> _computers;
     private readonly Grid _calendar = new() { Width = 300, HorizontalAlignment = HorizontalAlignment.Right };
+    private readonly WrapPanel _calendarLegend = new() { Width = 300, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 5, 0, 0) };
     private readonly StackPanel _report = new();
     private readonly TextBlock _rangeLabel = new();
     private readonly Button _showMonthButton;
     private readonly Button _calendarToggleButton;
     private readonly System.Windows.Controls.CheckBox _executedOnly = new() { Content = "Executado", VerticalAlignment = VerticalAlignment.Center };
+    private readonly ComboBox _computerFilter = new() { Width = 220, Height = 34, Margin = new Thickness(0, 10, 0, 0) };
+    private string _selectedComputerId = "__local__";
     private bool _calendarExpanded = true;
     private DateTime _displayMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
     private TodoTaskDateFilter _dateFilter = new();
 
-    public TodoTaskReportWindow(IReadOnlyList<ConversionHistoryEntry> events)
+    public TodoTaskReportWindow(IReadOnlyList<TodoTaskReportComputer> computers)
     {
-        _events = events.Where(entry => entry.CommandName.StartsWith("Tarefa ", StringComparison.Ordinal))
-            .OrderByDescending(entry => entry.OccurredAt).ToList();
+        _computers = computers;
         Title = "Relatório de tarefas"; Width = Math.Min(1100, SystemParameters.WorkArea.Width - 80);
         Height = Math.Min(820, SystemParameters.WorkArea.Height - 80); MinWidth = 680; MinHeight = 480;
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.CanResize; ShowInTaskbar = false; Topmost = true;
@@ -85,8 +88,31 @@ internal sealed class TodoTaskReportWindow : Window
         _executedOnly.ToolTip = "Mostrar somente tarefas e etapas concluídas";
         _executedOnly.Checked += (_, _) => RefreshReport();
         _executedOnly.Unchecked += (_, _) => RefreshReport();
-        Grid.SetColumn(_executedOnly, 0);
-        calendarPanel.Children.Add(_executedOnly);
+        var filters = new StackPanel { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+        filters.Children.Add(_executedOnly);
+        if (_computers.Count > 1)
+        {
+            _computerFilter.Style = (Style)System.Windows.Application.Current.FindResource("JeyModelComboBoxStyle");
+            _computerFilter.ToolTip = "Filtrar relatório e calendário por computador";
+            foreach (var computer in _computers)
+                _computerFilter.Items.Add(CreateComputerFilterItem(computer));
+            _computerFilter.Items.Add(new ComboBoxItem
+            {
+                Tag = AllComputersFilter,
+                Content = new TextBlock { Text = "Todos os computadores", VerticalAlignment = VerticalAlignment.Center }
+            });
+            _computerFilter.SelectionChanged += (_, _) =>
+            {
+                if (_computerFilter.SelectedItem is ComboBoxItem option && option.Tag is string id)
+                {
+                    _selectedComputerId = id;
+                    RefreshReport();
+                }
+            };
+            filters.Children.Add(_computerFilter);
+        }
+        Grid.SetColumn(filters, 0);
+        calendarPanel.Children.Add(filters);
         var calendarControlsPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
         var calendarControls = new DockPanel { Width = 340, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 0, 8) };
         var nextMonth = ReportButton("›"); nextMonth.ToolTip = "Próximo mês";
@@ -97,6 +123,7 @@ internal sealed class TodoTaskReportWindow : Window
         {
             _calendarExpanded = !_calendarExpanded;
             _calendar.Visibility = _calendarExpanded ? Visibility.Visible : Visibility.Collapsed;
+            _calendarLegend.Visibility = _calendarExpanded ? Visibility.Visible : Visibility.Collapsed;
             _calendarToggleButton.Content = _calendarExpanded ? "⌄" : "▦";
             _calendarToggleButton.ToolTip = _calendarExpanded ? "Recolher calendário" : "Expandir calendário";
         };
@@ -113,11 +140,13 @@ internal sealed class TodoTaskReportWindow : Window
         monthControls.Children.Add(_showMonthButton); DockPanel.SetDock(monthControls, Dock.Left); calendarControls.Children.Add(monthControls);
         calendarControlsPanel.Children.Add(calendarControls);
         calendarControlsPanel.Children.Add(_calendar);
+        calendarControlsPanel.Children.Add(_calendarLegend);
         Grid.SetColumn(calendarControlsPanel, 1);
         calendarPanel.Children.Add(calendarControlsPanel);
         DockPanel.SetDock(calendarPanel, Dock.Top); root.Children.Add(calendarPanel);
         root.Children.Add(new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _report });
         Content = root;
+        if (_computerFilter.Items.Count > 0) _computerFilter.SelectedIndex = 0;
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { e.Handled = true; Close(); } };
         RefreshReport();
     }
@@ -132,10 +161,14 @@ internal sealed class TodoTaskReportWindow : Window
                 : start.ToString("dd 'de' MMMM yyyy", culture)
             : culture.TextInfo.ToTitleCase(_displayMonth.ToString("MMMM yyyy", culture));
         _showMonthButton.Visibility = _dateFilter.HasSelection ? Visibility.Visible : Visibility.Collapsed;
-        var visible = _events.Select(entry => (Entry: entry, LocalTime: entry.OccurredAt.ToLocalTime()))
+        var selectedComputers = _selectedComputerId == AllComputersFilter
+            ? _computers
+            : _computers.Where(computer => computer.Id == _selectedComputerId).ToList();
+        var visible = selectedComputers.SelectMany(computer => computer.Events
+            .Select(entry => (Entry: entry, LocalTime: entry.OccurredAt.ToLocalTime(), Computer: computer)))
             .Where(item => item.LocalTime.Date >= startDate && item.LocalTime.Date <= endDate)
             .Where(item => !_executedOnly.IsChecked.GetValueOrDefault() || IsCompletionEvent(item.Entry)).ToList();
-        RenderCalendar();
+        RenderCalendar(selectedComputers);
 
         _report.Children.Clear();
         foreach (var dayGroup in visible.GroupBy(item => item.LocalTime.Date).OrderByDescending(group => group.Key))
@@ -157,7 +190,7 @@ internal sealed class TodoTaskReportWindow : Window
                 }).OrderByDescending(item => item.LocalTime).ToList();
                 if (_executedOnly.IsChecked == true)
                 {
-                    var taskGroups = periodEvents.GroupBy(item => GetExecutedTaskGrouping(item.Entry), StringComparer.OrdinalIgnoreCase)
+                    var taskGroups = periodEvents.GroupBy(item => item.Computer.Id + ":" + GetExecutedTaskGrouping(item.Entry), StringComparer.OrdinalIgnoreCase)
                         .OrderByDescending(group => group.Max(item => item.LocalTime));
                     foreach (var taskGroup in taskGroups)
                     {
@@ -165,6 +198,7 @@ internal sealed class TodoTaskReportWindow : Window
                         var latest = orderedActions[^1];
                         var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 5) };
                         var content = new StackPanel();
+                        content.Children.Add(ComputerBadge(latest.Computer));
                         content.Children.Add(new TextBlock { Text = GetExecutedTaskLabel(latest.Entry), Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
                         foreach (var action in orderedActions)
                         {
@@ -188,6 +222,7 @@ internal sealed class TodoTaskReportWindow : Window
                     {
                         var card = new Border { Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 5) };
                         var content = new StackPanel();
+                        content.Children.Add(ComputerBadge(item.Computer));
                         content.Children.Add(new TextBlock { Text = $"{item.LocalTime:HH:mm}  ·  {item.Entry.CommandName}", Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
                         if (!string.IsNullOrWhiteSpace(item.Entry.AfterValue))
                             content.Children.Add(new TextBlock { Text = item.Entry.AfterValue, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
@@ -235,7 +270,7 @@ internal sealed class TodoTaskReportWindow : Window
         return string.IsNullOrWhiteSpace(entry.AfterValue) ? "Etapa concluída" : entry.AfterValue.Trim();
     }
 
-    private void RenderCalendar()
+    private void RenderCalendar(IReadOnlyList<TodoTaskReportComputer> computers)
     {
         _calendar.Children.Clear();
         _calendar.RowDefinitions.Clear();
@@ -251,9 +286,28 @@ internal sealed class TodoTaskReportWindow : Window
             Grid.SetColumn(label, column); _calendar.Children.Add(label);
         }
 
-        var dayCounts = _events.Select(entry => entry.OccurredAt.ToLocalTime().Date)
-            .Where(date => date.Year == _displayMonth.Year && date.Month == _displayMonth.Month)
-            .GroupBy(date => date).ToDictionary(group => group.Key, group => group.Count());
+        var dayComputers = computers.SelectMany(computer => computer.Events
+                .Select(entry => (Date: entry.OccurredAt.ToLocalTime().Date, Computer: computer)))
+            .Where(item => item.Date.Year == _displayMonth.Year && item.Date.Month == _displayMonth.Month)
+            .GroupBy(item => item.Date)
+            .ToDictionary(group => group.Key, group => group.GroupBy(item => item.Computer.Id)
+                .Select(computerGroup => (Computer: computerGroup.First().Computer, Count: computerGroup.Count())).ToList());
+        _calendarLegend.Children.Clear();
+        foreach (var computer in dayComputers.Values.SelectMany(day => day).Select(item => item.Computer).DistinctBy(computer => computer.Id))
+            _calendarLegend.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(34, 37, 45)), CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(7, 3, 7, 3), Margin = new Thickness(0, 0, 5, 5),
+                Child = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Children =
+                    {
+                        new System.Windows.Shapes.Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(computer.Color), Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center },
+                        new TextBlock { Text = computer.Name, Foreground = new SolidColorBrush(Color.FromRgb(190, 194, 204)), FontSize = 9, VerticalAlignment = VerticalAlignment.Center }
+                    }
+                }
+            });
         var firstDayOffset = TodoTaskDateFilterPolicy.GetWeekdayColumn(_displayMonth.DayOfWeek);
         var daysInMonth = DateTime.DaysInMonth(_displayMonth.Year, _displayMonth.Month);
         var weekRows = (firstDayOffset + daysInMonth + 6) / 7;
@@ -265,7 +319,7 @@ internal sealed class TodoTaskReportWindow : Window
             var row = index / 7 + 1;
             var column = index % 7;
             var date = new DateTime(_displayMonth.Year, _displayMonth.Month, dayNumber);
-            var hasEvents = dayCounts.TryGetValue(date, out var count);
+            var hasEvents = dayComputers.TryGetValue(date, out var computersForDay);
             var inSelectedRange = TodoTaskDateFilterPolicy.Contains(_dateFilter, date);
             var selectedEndpoint = _dateFilter.StartDate?.Date == date || _dateFilter.EndDate?.Date == date;
             var dayButton = new Button
@@ -277,15 +331,31 @@ internal sealed class TodoTaskReportWindow : Window
                     Children =
                     {
                         new TextBlock { Text = dayNumber.ToString(System.Globalization.CultureInfo.CurrentCulture), HorizontalAlignment = HorizontalAlignment.Center, FontSize = 12 },
-                        new System.Windows.Shapes.Ellipse { Width = 5, Height = 5, Margin = new Thickness(0, 2, 0, 0), Fill = hasEvents ? new SolidColorBrush(Color.FromRgb(180, 243, 106)) : Brushes.Transparent }
+                        new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            Margin = new Thickness(0, 2, 0, 0),
+                            Children = { }
+                        }
                     }
                 },
                 Margin = new Thickness(2), Padding = new Thickness(2), BorderThickness = selectedEndpoint ? new Thickness(1) : new Thickness(0),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
                 Background = inSelectedRange ? new SolidColorBrush(Color.FromRgb(61, 77, 53)) : new SolidColorBrush(Color.FromRgb(34, 37, 45)),
                 Foreground = Brushes.White, Cursor = System.Windows.Input.Cursors.Hand,
-                ToolTip = hasEvents ? $"{date:dd/MM/yyyy} · {count} {(count == 1 ? "evento" : "eventos")}\nClique para filtrar; Shift+clique para selecionar o fim do intervalo" : $"{date:dd/MM/yyyy} · sem eventos\nClique para filtrar; Shift+clique para selecionar o fim do intervalo"
+                ToolTip = hasEvents
+                    ? $"{date:dd/MM/yyyy}\n{string.Join("\n", computersForDay!.Select(item => $"{item.Computer.Name}: {item.Count} {(item.Count == 1 ? "evento" : "eventos")}"))}\nClique para filtrar; Shift+clique para selecionar o fim do intervalo"
+                    : $"{date:dd/MM/yyyy} · sem eventos\nClique para filtrar; Shift+clique para selecionar o fim do intervalo"
             };
+            var computerDots = (StackPanel)((StackPanel)dayButton.Content).Children[1];
+            if (hasEvents)
+                foreach (var item in computersForDay!)
+                    computerDots.Children.Add(new System.Windows.Shapes.Ellipse
+                    {
+                        Width = 5, Height = 5, Margin = new Thickness(1, 0, 1, 0),
+                        Fill = new SolidColorBrush(item.Computer.Color), ToolTip = item.Computer.Name
+                    });
             dayButton.Click += (_, _) =>
             {
                 _dateFilter = TodoTaskDateFilterPolicy.SelectDay(_dateFilter, date, Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
@@ -295,7 +365,47 @@ internal sealed class TodoTaskReportWindow : Window
         }
     }
 
+    private static ComboBoxItem CreateComputerFilterItem(TodoTaskReportComputer computer)
+        => new()
+        {
+            Tag = computer.Id,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children =
+                {
+                    new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = new SolidColorBrush(computer.Color), Margin = new Thickness(0, 0, 8, 0) },
+                    new TextBlock { Text = computer.Name, VerticalAlignment = VerticalAlignment.Center }
+                }
+            }
+        };
+
+    private static Border ComputerBadge(TodoTaskReportComputer computer)
+        => new()
+        {
+            Background = new SolidColorBrush(Color.FromArgb(38, computer.Color.R, computer.Color.G, computer.Color.B)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(110, computer.Color.R, computer.Color.G, computer.Color.B)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(6, 1, 6, 1),
+            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 5),
+            Child = new TextBlock { Text = computer.Name, Foreground = new SolidColorBrush(computer.Color), FontSize = 9 }
+        };
+
     private static Button ReportButton(string text) => new() { Content = text, Padding = new Thickness(10, 6, 10, 6), Margin = new Thickness(4, 0, 0, 0), Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand };
+}
+
+internal sealed record TodoTaskReportComputer(string Id, string Name, Color Color, IReadOnlyList<ConversionHistoryEntry> Events);
+
+internal static class TodoTaskComputerPalette
+{
+    private static readonly Color[] RemoteColors =
+    [
+        Color.FromRgb(157, 127, 255), Color.FromRgb(89, 190, 255), Color.FromRgb(255, 174, 92),
+        Color.FromRgb(255, 121, 164), Color.FromRgb(88, 214, 173), Color.FromRgb(255, 220, 98)
+    ];
+
+    public static Color Local => Color.FromRgb(180, 243, 106);
+    public static Color Remote(int index) => RemoteColors[Math.Abs(index) % RemoteColors.Length];
 }
 
 internal static class TodoTaskDisplay
@@ -704,7 +814,7 @@ internal sealed class TodoTaskPanelWindow : Window
     private readonly System.Windows.Threading.DispatcherTimer _undoTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly TextBlock _title;
     private readonly StackPanel _list = new();
-    private readonly ComboBox _computerFilter = new() { Height = 30, Margin = new Thickness(0, 0, 0, 8), Visibility = Visibility.Collapsed };
+    private readonly ComboBox _computerFilter = new() { Height = 36, Margin = new Thickness(0, 0, 0, 8), Visibility = Visibility.Collapsed };
     private readonly Button _refreshRemoteButton = new() { Content = "Atualizar", Padding = new Thickness(9, 5, 9, 5), Margin = new Thickness(8, 0, 0, 8), Visibility = Visibility.Collapsed, Background = new SolidColorBrush(Color.FromRgb(49, 53, 63)), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
     private readonly System.Windows.Threading.DispatcherTimer _remoteRefreshTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly List<RemoteTodoTask> _remoteTasks = [];
@@ -730,6 +840,8 @@ internal sealed class TodoTaskPanelWindow : Window
     {
         _settings = settings;
         _desktopTaskApi = new DesktopTaskApiClient(settings, settingsStore);
+        _computerFilter.Style = (Style)System.Windows.Application.Current.FindResource("JeyModelComboBoxStyle");
+        _computerFilter.ToolTip = "Filtrar tarefas por computador";
         _tasks = tasks; _complete = complete; _edit = edit; _delete = delete; _reopen = reopen;
         _pause = pause; _unpause = unpause; _toggleChecklist = toggleChecklist; _create = onCreate; _showReport = showReport; _undo = undo;
         _loadBusinessmapTasks = loadBusinessmapTasks; _businessmapEnabled = businessmapEnabled;
@@ -964,16 +1076,50 @@ internal sealed class TodoTaskPanelWindow : Window
     {
         var previous = _selectedComputerId;
         _computerFilter.Items.Clear();
-        _computerFilter.Items.Add(new ComboBoxItem { Content = "Este computador", Tag = LocalComputerFilter });
+        _computerFilter.Items.Add(CreateComputerFilterItem("Este computador", LocalComputerFilter, TodoTaskComputerPalette.Local, "Este computador"));
         foreach (var peer in _onlinePeers.OrderBy(peer => peer.Name, StringComparer.CurrentCultureIgnoreCase))
-            _computerFilter.Items.Add(new ComboBoxItem { Content = peer.Name, Tag = peer.Id });
-        if (_onlinePeers.Count > 0) _computerFilter.Items.Add(new ComboBoxItem { Content = "Todos os computadores", Tag = AllComputersFilter });
+        {
+            var peerIndex = Math.Max(0, _settings.DesktopPeers.FindIndex(candidate => candidate.Id == peer.Id));
+            _computerFilter.Items.Add(CreateComputerFilterItem(peer.Name, peer.Id, TodoTaskComputerPalette.Remote(peerIndex), "Computador pareado"));
+        }
+        if (_onlinePeers.Count > 0)
+            _computerFilter.Items.Add(new ComboBoxItem
+            {
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Children =
+                    {
+                        new TextBlock { Text = "▦", Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106)), FontSize = 14, Margin = new Thickness(0, 0, 8, 0) },
+                        new TextBlock { Text = "Todos os computadores", VerticalAlignment = VerticalAlignment.Center }
+                    }
+                },
+                Tag = AllComputersFilter
+            });
         var selected = _computerFilter.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, previous));
         if (selected is null) { _selectedComputerId = LocalComputerFilter; selected = (ComboBoxItem)_computerFilter.Items[0]; }
         _computerFilter.SelectedItem = selected;
         _computerFilter.Visibility = _onlinePeers.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         _refreshRemoteButton.Visibility = _onlinePeers.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private static ComboBoxItem CreateComputerFilterItem(string name, string id, Color color, string description)
+        => new()
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children =
+                {
+                    new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = new SolidColorBrush(color), Margin = new Thickness(0, 0, 8, 0) },
+                    new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }
+                }
+            },
+            Tag = id,
+            ToolTip = description
+        };
 
     private static TodoTask FromRemoteEntry(TodoTaskEntry task)
         => new() { Id = task.Id, Title = task.Title, Description = task.Description, CreatedAt = task.CreatedAt, CompletedAt = task.CompletedAt,
