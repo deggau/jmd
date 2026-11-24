@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Windows.Automation;
 using JMD.Core;
 
 namespace JMD.Windows;
@@ -10,6 +11,11 @@ public sealed record WorkflowWindow(IntPtr Handle, uint ProcessId, string Title,
 /// <summary>Small Win32 helpers used by desktop workflow steps.</summary>
 public static class WorkflowWindowAutomation
 {
+    private static readonly HashSet<string> BrowserProcessNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "chrome", "msedge", "firefox", "brave", "opera", "vivaldi"
+    };
+
     private const int RestoreWindow = 9;
     private const uint NoZOrder = 0x0004;
     private const uint NoActivate = 0x0010;
@@ -98,6 +104,47 @@ public static class WorkflowWindowAutomation
             return false;
         }, IntPtr.Zero);
         return match;
+    }
+
+    /// <summary>Finds a visible browser window whose address bar currently contains the requested URL.</summary>
+    public static WorkflowWindow? FindBrowserWindowByUrl(Uri targetUrl)
+    {
+        if (!targetUrl.IsAbsoluteUri || targetUrl.Scheme is not ("http" or "https")) return null;
+
+        WorkflowWindow? match = null;
+        EnumWindows((handle, _) =>
+        {
+            if (!IsWindowVisible(handle)) return true;
+            var candidate = ReadWindow(handle);
+            if (candidate is null || !BrowserProcessNames.Contains(candidate.ProcessName)) return true;
+            if (!BrowserAddressMatches(handle, targetUrl)) return true;
+            match = candidate;
+            return false;
+        }, IntPtr.Zero);
+        return match;
+    }
+
+    private static bool BrowserAddressMatches(IntPtr window, Uri targetUrl)
+    {
+        try
+        {
+            var root = AutomationElement.FromHandle(window);
+            var editCondition = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit);
+            var edits = root.FindAll(TreeScope.Descendants, editCondition);
+            foreach (AutomationElement edit in edits)
+            {
+                if (!edit.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern)) continue;
+                var address = ((ValuePattern)pattern).Current.Value;
+                if (Uri.TryCreate(address, UriKind.Absolute, out var currentUrl) && targetUrl.Equals(currentUrl))
+                    return true;
+            }
+        }
+        catch (Exception exception) when (exception is ElementNotAvailableException or InvalidOperationException or
+                                          COMException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Some browsers do not expose the address bar through UI Automation.
+        }
+        return false;
     }
 
     public static bool Activate(IntPtr handle)

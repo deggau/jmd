@@ -286,7 +286,7 @@ public partial class MainWindow : Window
         _jmdroidApiRetryTimer.Tick += async (_, _) => await RetryJmdroidApiForNetworkDiscoveryAsync();
         _hotkeyRecoveryTimer.Tick += (_, _) =>
         {
-            if (!_hotkeysPausedForSettings)
+            if (!_hotkeysPausedForSettings && !_hotkeysPausedForSearch)
                 RegisterConfiguredShortcuts(reportCustomFailures: false);
         };
         RefreshMemoryStatus();
@@ -465,8 +465,12 @@ public partial class MainWindow : Window
     private void RegisterConfiguredShortcuts(bool resetRegistrations = false, bool reportCustomFailures = true)
     {
         if (_hotkeys is null) return;
+        if (_hotkeysPausedForSettings || _hotkeysPausedForSearch)
+        {
+            _hotkeys.UnregisterAll();
+            return;
+        }
         if (resetRegistrations) _hotkeys.UnregisterAll();
-        _hotkeysPausedForSettings = false;
         foreach (var id in ShortcutIds)
         {
             if (_settings.DisabledCommands.Contains(id))
@@ -520,14 +524,16 @@ public partial class MainWindow : Window
     private void PauseConfiguredShortcuts()
     {
         _hotkeysPausedForSettings = true;
-        foreach (var id in ShortcutIds.Concat(_settings.CustomShortcuts.Select(shortcut => shortcut.Id)))
-            _hotkeys?.Unregister(id);
+        _hotkeysPausedForSearch = false;
+        _hotkeys?.UnregisterAll();
     }
 
     private void HideToBackground()
     {
-        if (_hotkeysPausedForSettings)
+        if (_hotkeysPausedForSettings || _hotkeysPausedForSearch)
         {
+            _hotkeysPausedForSettings = false;
+            _hotkeysPausedForSearch = false;
             RegisterConfiguredShortcuts(resetRegistrations: true);
             RefreshCommandStatuses();
             RefreshShortcutStatuses();
@@ -2277,29 +2283,28 @@ public partial class MainWindow : Window
     private static bool TryFocusExistingTarget(string target)
     {
         var isUrl = Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+        if (isUrl)
+        {
+            var browserWindow = WorkflowWindowAutomation.FindBrowserWindowByUrl(uri!);
+            return browserWindow is not null && WorkflowWindowAutomation.Activate(browserWindow.Handle);
+        }
+
         var processName = string.Empty;
-        if (!isUrl && WorkflowCommandLinePolicy.TryParse(target, out var executable, out var arguments))
+        if (WorkflowCommandLinePolicy.TryParse(target, out var executable, out var arguments))
         {
             // A command with parameters can identify a specific document or folder.
             // Focusing any existing window of the same executable would skip opening it.
             if (arguments.Count > 0) return false;
             processName = Path.GetFileNameWithoutExtension(executable);
         }
-        var processNames = isUrl
-            ? new HashSet<string>(["chrome", "msedge", "firefox", "brave", "opera", "vivaldi"], StringComparer.OrdinalIgnoreCase)
-            : new HashSet<string>([processName], StringComparer.OrdinalIgnoreCase);
-        var domain = isUrl ? uri!.Host : string.Empty;
+        if (processName.Length == 0) return false;
         var targetMatches = false;
         EnumWindows((window, parameter) =>
         {
             if (!IsWindowVisible(window)) return true;
             var details = ForegroundWindowDetails.Read(window);
             if (details is null) return true;
-            var processMatches = details.ApplicationName is not null && processNames.Contains(details.ApplicationName);
-            var titleMatches = details.WindowTitle is not null &&
-                (details.WindowTitle.Contains(target, StringComparison.OrdinalIgnoreCase) ||
-                 (domain.Length > 0 && details.WindowTitle.Contains(domain, StringComparison.OrdinalIgnoreCase)));
-            if (!(isUrl ? processMatches && titleMatches : processMatches)) return true;
+            if (!string.Equals(details.ApplicationName, processName, StringComparison.OrdinalIgnoreCase)) return true;
             ShowWindow(window, 9);
             targetMatches = SetForegroundWindowNative(window);
             return false;
@@ -2426,6 +2431,8 @@ public partial class MainWindow : Window
     public void ShowPalette()
     {
         _navigation.ShowPalette();
+        _hotkeysPausedForSettings = false;
+        _hotkeysPausedForSearch = false;
         CommandsList.Visibility = Visibility.Visible;
         SettingsTabs.Visibility = Visibility.Collapsed;
         SettingsPage.Visibility = Visibility.Collapsed;
@@ -2452,6 +2459,8 @@ public partial class MainWindow : Window
         RefreshCommandStatuses();
         SearchBox.Focus();
         Keyboard.Focus(SearchBox);
+        _hotkeysPausedForSearch = true;
+        _hotkeys?.UnregisterAll();
     }
 
     private async Task<bool> CreateTodoTaskAsync(bool captureForegroundSelection = true)
@@ -5844,6 +5853,10 @@ public partial class MainWindow : Window
             return false;
 
         var modifiers = Keyboard.Modifiers;
+        if (IsKeyDown(0x11)) modifiers |= ModifierKeys.Control;
+        if (IsKeyDown(0x12)) modifiers |= ModifierKeys.Alt;
+        if (IsKeyDown(0x10)) modifiers |= ModifierKeys.Shift;
+        if (IsKeyDown(VkLWin) || IsKeyDown(VkRWin)) modifiers |= ModifierKeys.Windows;
         if (modifiers == ModifierKeys.None) return false;
         var shortcutModifiers = ShortcutModifiers.None;
         if (modifiers.HasFlag(ModifierKeys.Control)) shortcutModifiers |= ShortcutModifiers.Control;
@@ -5852,7 +5865,7 @@ public partial class MainWindow : Window
         if (modifiers.HasFlag(ModifierKeys.Windows)) shortcutModifiers |= ShortcutModifiers.Windows;
         var binding = new ShortcutBinding(shortcutModifiers, KeyInterop.VirtualKeyFromKey(key));
 
-        var command = _commands.FirstOrDefault(candidate => !_settings.DisabledCommands.Contains(candidate.Id) &&
+        var command = _commands.FirstOrDefault(candidate =>
             ShortcutParser.TryParse(GetShortcut(candidate.Id), out var configured, out _) && configured == binding);
         if (command is null) return false;
 
