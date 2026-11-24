@@ -582,6 +582,7 @@ public partial class MainWindow : Window
             ("lowerCase", "LowerCase · Minúsculas", "Transforma a seleção em minúsculas."),
             ("titleCase", "TitleCase · Título", "Capitaliza as palavras, exceto preposições."),
             ("todoCreate", "Criar tarefa", "Abre o cadastro de uma tarefa; a seleção atual vira a descrição."),
+            ("todoAppendSelection", "Acrescentar seleção a uma tarefa", "Escolhe uma tarefa ativa e acrescenta a URL, o anexo ou o texto selecionado."),
             ("todoPanel", "Abrir painel de tarefas", "Mostra as tarefas em aberto no painel lateral."),
             ("todoPanelClose", "Fechar painel de tarefas", "Fecha o painel lateral de tarefas."),
             ("screenShare", "Ver tela do celular", "Abre a tela de um Android conectado e solicita autorização para transmitir."),
@@ -3471,6 +3472,7 @@ public partial class MainWindow : Window
         else if (id == "draftSave") await SaveDraftAsync();
         else if (id == "draftRestore") await RestoreDraftAsync();
         else if (id == "todoCreate") await CreateTodoTaskAsync();
+        else if (id == "todoAppendSelection") await AppendSelectionToTodoTaskAsync();
         else if (id == "todoPanel") ShowTodoTaskPanel();
         else if (id == "todoPanelClose") _todoTaskPanel?.Hide();
         else if (id == "screenShare") await StartAndroidScreenShareFromDesktopAsync();
