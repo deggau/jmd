@@ -16,7 +16,7 @@
 - Registrar um atalho global.
 - Ler texto Unicode e substituí-lo no clipboard.
 - Demonstrar uma transformação simples.
-- Demonstrar a substituição da seleção com recortar, transformar e colar numa aplicação de texto compatível, incluindo recuperação em caso de falha.
+- Demonstrar a substituição da seleção com copiar, transformar e colar numa aplicação de texto compatível, mantendo o original intacto em caso de falha.
 - Tratar conflito do atalho e clipboard ocupado.
 - Fazer um protótipo da paleta de comandos, incluindo abrir/fechar por atalho e captura de uma combinação indisponível.
 
@@ -40,7 +40,7 @@
 - [x] Documentar pré-requisitos, instalação e remoção. A configuração é preservada ao desinstalar.
 - [ ] Validar o instalador e o fluxo de atualização em Windows; avaliar inicialização automática.
 - Automatizar testes unitários dos casos de uso e executar a suíte antes de cada entrega.
-- Validar em versões e aplicações alvo.
+- [ ] Preencher a [matriz de validação manual no Windows](../testes/validacao-windows.md) para versões e aplicações alvo.
 - Revisar uso de memória, logs, acessibilidade e recuperação após atualização.
 
 **Saída:** pacote reproduzível com instruções de instalação e limitações conhecidas.

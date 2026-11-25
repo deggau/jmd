@@ -2,47 +2,46 @@
 
 ## Ator
 
-Desenvolvedor usando um editor ou outro aplicativo Windows compatível.
+Pessoa usando um editor ou outro aplicativo Windows compatível.
 
 ## Pré-condições
 
-- JMD está em execução e a ferramenta de substituição está habilitada.
-- O usuário selecionou texto editável na aplicação de origem.
-- O atalho global foi registrado.
+- JMD está em execução e o comando está habilitado.
+- Há texto editável selecionado na aplicação de origem.
+- O atalho global foi registrado, ou o comando foi escolhido na paleta.
 
 ## Fluxo principal
 
-1. O usuário seleciona um trecho de texto.
-2. O usuário pressiona o atalho da ferramenta.
-3. JMD mantém a aplicação de origem em foco e envia `Ctrl+X` para recortar a seleção.
-4. JMD aguarda a atualização do clipboard e lê o texto recortado.
-5. A transformação é executada sobre o texto recortado.
-6. Se a transformação for bem-sucedida, JMD grava o resultado no clipboard.
-7. JMD envia `Ctrl+V` à aplicação que recebeu a seleção.
-8. O conteúdo colado substitui a seleção original; uma notificação discreta confirma o resultado.
-
-## Por que copiar em vez de recortar
-
-Atalho padrão para esse fluxo: `Ctrl+Alt+I`. O usuário confirmou a sequência `Ctrl+X; transformação; Ctrl+V`. Recortar remove a seleção antes de a transformação terminar, portanto a implementação precisa preservar a entrada recortada e recolocá-la na aplicação se qualquer passo anterior à colagem falhar. `Ctrl+C` seria mais seguro por manter a seleção até o resultado estar pronto, mas o fluxo inicial seguirá o recorte solicitado.
+1. A pessoa seleciona um trecho de texto e aciona o comando.
+2. JMD identifica a janela de origem, aguarda a liberação das teclas modificadoras e confirma que ela continua ativa.
+3. JMD envia `Ctrl+C` e aguarda uma alteração no clipboard.
+4. JMD lê o texto copiado e calcula a transformação em memória; a seleção original continua no aplicativo.
+5. Se a transformação falhar, JMD informa o erro e restaura o clipboard anterior quando havia texto disponível.
+6. Se a transformação for bem-sucedida, JMD grava e confirma o resultado no clipboard.
+7. Se a janela de origem ainda estiver ativa, JMD envia `Ctrl+V` para substituir a seleção.
+8. Uma notificação informa o resultado. Se a colagem falhar, a seleção original permanece e o resultado transformado fica no clipboard para colagem manual.
 
 ## Alternativas e falhas
 
-- **A1 — Nenhum texto selecionado:** não transformar nem colar; informar que é necessário selecionar texto.
-- **A2 — A aplicação não atualiza o clipboard após `Ctrl+X`:** não colar o valor anterior; tentar restaurar o texto original recortado.
-- **A3 — Clipboard ocupado ou sem texto:** cancelar sem substituir a seleção.
-- **A4 — Transformação falha:** restaurar o texto original recortado no clipboard e tentar colá-lo de volta à seleção/local de origem; informar se a restauração não puder ser concluída.
-- **A5 — Foco saiu da aplicação de origem:** cancelar a colagem para evitar inserir o resultado em outra janela, quando a mudança de foco for detectável.
-- **A6 — Aplicação ignora entrada sintetizada ou bloqueia a automação:** informar que a operação não foi concluída; não alegar sucesso.
+- **A1 — Nenhum texto selecionado:** comandos que permitem fallback podem transformar o clipboard e informar isso; comandos exclusivos de seleção cancelam sem alterar o clipboard.
+- **A2 — A aplicação não atualiza o clipboard após `Ctrl+C`:** não enviar `Ctrl+V`; usar fallback de clipboard somente quando o comando permitir.
+- **A3 — Clipboard ocupado ou seleção sem texto Unicode:** não substituir a seleção; informar o limite e restaurar o clipboard anterior quando possível.
+- **A4 — Transformação falha:** manter a seleção original no editor e restaurar o clipboard anterior quando havia texto disponível.
+- **A5 — Foco sai da aplicação de origem:** não colar em outra janela; manter a seleção original.
+- **A6 — A colagem falha ou é ignorada:** manter a seleção original, deixar o resultado no clipboard e instruir a colagem manual.
+- **A7 — Aplicação elevada, protegida ou incompatível:** informar que a automação não foi concluída, sem declarar sucesso.
 
 ## Pós-condições
 
-- Em sucesso, o texto selecionado é substituído pelo resultado transformado.
-- O clipboard contém o resultado transformado após a operação.
-- Em falha anterior à colagem, o texto recortado é restaurado à aplicação de origem sempre que ela continuar disponível e aceitar entrada sintetizada.
+- Em sucesso, o texto selecionado é substituído pelo resultado transformado e o clipboard contém esse resultado.
+- Antes da colagem, qualquer falha mantém o texto original no aplicativo.
+- Se a colagem final falhar, o original continua selecionado e o resultado transformado permanece disponível no clipboard.
+- Ao falhar a transformação, o clipboard anterior é restaurado quando seu texto foi capturado.
 
 ## Critérios de aceite
 
 - O fluxo funciona sem trazer a janela do JMD para frente.
-- A seleção somente é substituída após uma transformação bem-sucedida.
-- Ausência de seleção, timeout e erro não levam à colagem de conteúdo antigo ou vazio.
-- O comportamento é validado em cada aplicação declarada como compatível.
+- JMD copia a seleção; não envia `Ctrl+X`.
+- Ausência de seleção, timeout, erro de conversão ou mudança de foco não levam à substituição por conteúdo antigo ou vazio.
+- O resultado só é colado após transformação e confirmação do clipboard.
+- Compatibilidade é registrada por aplicação e ambiente na [matriz de validação no Windows](../testes/validacao-windows.md).

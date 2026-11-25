@@ -7,8 +7,8 @@ Os testes unitários ficam em `tests/JMD.Tests` e cobrem lógica independente de
 - **UC-001 — Transformar clipboard:** leitura, escrita de resultado, clipboard sem texto, falha de transformação e falha ao gravar sem sobrescrever a entrada.
 - **UC-002 — Configurar atalho:** aliases, combinações padrão, letras, números, teclas especiais e rejeição de combinações inválidas. O registro real e detecção de conflitos dependem do Windows e são validados manualmente.
 - **UC-003 — Tratar falhas:** rejeição de entradas vazias/ambíguas e preservação do conteúdo em erro. Repetições reais do clipboard ocupado pertencem ao adaptador Windows e exigem validação Windows.
-- **UC-004 — Substituir seleção:** recortar-transformar-colar, restauração após erro de conversão, corte recusado e ausência de alteração confirmada no clipboard.
+- **UC-004 — Substituir seleção:** copiar-transformar-colar, seleção intacta após erro de conversão, cópia recusada e ausência de alteração confirmada no clipboard.
 - **UC-005 — Gerenciar comandos:** valores de atalho exibidos usam o mesmo parser coberto em UC-002. A interação visual WPF e os atalhos globais exigem validação manual numa sessão Windows.
 - **UC-006 — Formatar SQL IN:** delimitadores, espaços, apóstrofos, duplicatas, ordem original, deduplicação em listas grandes, limites de itens por linha, contagens exibidas, entradas vazias, ambiguidade e delimitador preferido.
 
-Executar a suíte com `dotnet test JMD.sln`. Os testes não substituem a validação de integração em Windows real, particularmente para `RegisterHotKey`, `SendInput`, clipboard WPF e compatibilidade por aplicativo.
+Os testes não substituem a validação de integração em Windows real, particularmente para `RegisterHotKey`, `SendInput`, clipboard WPF e compatibilidade por aplicativo. Use a [matriz de validação manual no Windows](validacao-windows.md) para registrar os ambientes e aplicativos efetivamente verificados.

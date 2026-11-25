@@ -64,7 +64,7 @@ public interface IKeyboardAutomation
 {
     IntPtr GetForegroundWindow();
     Task<bool> WaitForModifiersReleasedAsync(CancellationToken cancellationToken = default);
-    bool SendCut();
+    bool SendCopy();
     bool SendPaste();
 }
 
@@ -115,16 +115,16 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
         if (!await keyboard.WaitForModifiersReleasedAsync(cancellationToken))
             return new(false, "Solte Ctrl, Alt, Shift e Win para executar a substituição.");
         if (keyboard.GetForegroundWindow() != sourceWindow)
-            return new(false, "A janela ativa mudou antes do recorte; nenhuma tecla foi enviada.");
-        var sequenceBeforeCut = clipboard.SequenceNumber;
-        if (!keyboard.SendCut()) return new(false, "O Windows não permitiu enviar Ctrl+X à janela ativa.");
+            return new(false, "A janela ativa mudou antes da cópia; nenhuma tecla foi enviada.");
+        var sequenceBeforeCopy = clipboard.SequenceNumber;
+        if (!keyboard.SendCopy()) return new(false, "O Windows não permitiu enviar Ctrl+C à janela ativa.");
 
         string? selectedText = null;
         var clipboardChanged = false;
         for (var attempt = 0; attempt < 20; attempt++)
         {
             await _delay.WaitAsync(TimeSpan.FromMilliseconds(25), cancellationToken);
-            if (clipboard.SequenceNumber == sequenceBeforeCut) continue;
+            if (clipboard.SequenceNumber == sequenceBeforeCopy) continue;
             clipboardChanged = true;
             selectedText = await clipboard.TryGetTextAsync(cancellationToken);
             break;
@@ -132,16 +132,15 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
 
         if (selectedText is null)
         {
-            if (clipboardChanged && keyboard.GetForegroundWindow() == sourceWindow)
+            if (clipboardChanged)
             {
-                var restored = keyboard.SendPaste();
-                if (restored && originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
-                return new(false, restored ? "A seleção não é texto Unicode; ela foi restaurada sem transformação." : "A seleção não é texto Unicode. O conteúdo recortado continua no clipboard para recuperação manual.");
+                if (originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
+                return new(false, "A seleção continua intacta, mas não contém texto Unicode.");
             }
             if (!clipboardChanged)
             {
                 if (keyboard.GetForegroundWindow() != sourceWindow)
-                    return new(false, "A janela ativa mudou. O clipboard original foi mantido sem transformação.");
+                    return new(false, "A janela ativa mudou. A seleção e o clipboard original foram mantidos.");
                 if (originalClipboard is null)
                     return new(false, "Nenhuma seleção de texto foi detectada e o clipboard não contém texto Unicode.");
                 if (!allowClipboardFallback)
@@ -164,37 +163,55 @@ public sealed class SelectionTransformer(IClipboardText clipboard, IKeyboardAuto
             return new(false, "Não foi possível confirmar uma seleção de texto; nenhuma colagem foi enviada.");
         }
 
-        var result = transform(selectedText);
+        if (keyboard.GetForegroundWindow() != sourceWindow)
+        {
+            if (originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
+            return new(false, "A janela ativa mudou. A seleção original permanece intacta.");
+        }
+
+        TransformationResult result;
+        try
+        {
+            result = transform(selectedText);
+        }
+        catch (OperationCanceledException)
+        {
+            if (originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, CancellationToken.None);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            if (originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
+            return new(false, $"A transformação falhou: {exception.Message} A seleção original permanece intacta.");
+        }
         if (!result.Success)
         {
-            var restored = await RestoreSelectionAsync(sourceWindow, selectedText, cancellationToken);
-            if (restored && originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
-            return new(false, restored ? result.Error ?? "A transformação falhou; a seleção foi restaurada." : $"{result.Error ?? "A transformação falhou."} Não consegui restaurar o texto ao editor; ele continua no clipboard.");
+            if (originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
+            return new(false, $"{result.Error ?? "A transformação falhou."} A seleção original permanece intacta.");
         }
         if (keyboard.GetForegroundWindow() != sourceWindow)
         {
-            await clipboard.TrySetTextAsync(selectedText, cancellationToken);
-            return new(false, "A janela ativa mudou. O texto original foi mantido no clipboard, mas não foi colado.");
+            if (originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
+            return new(false, "A janela ativa mudou. A seleção original permanece intacta.");
         }
         if (!await clipboard.TrySetTextAsync(result.Value!, cancellationToken))
         {
-            var restored = await RestoreSelectionAsync(sourceWindow, selectedText, cancellationToken);
-            return new(false, restored ? "Não foi possível atualizar o clipboard; a seleção original foi restaurada." : "Não foi possível atualizar o clipboard nem restaurar a seleção. O texto original continua em memória nesta operação.");
+            if (originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
+            return new(false, "Não foi possível atualizar o clipboard. A seleção original permanece intacta.");
+        }
+        if (!string.Equals(await clipboard.TryGetTextAsync(cancellationToken), result.Value, StringComparison.Ordinal))
+        {
+            if (originalClipboard is not null) await clipboard.TrySetTextAsync(originalClipboard, cancellationToken);
+            return new(false, "O Windows não confirmou a atualização do clipboard. A seleção original permanece intacta.");
         }
         if (keyboard.GetForegroundWindow() != sourceWindow || !keyboard.SendPaste())
         {
-            await clipboard.TrySetTextAsync(selectedText, cancellationToken);
-            return new(false, "Não foi possível colar o resultado. O texto recortado foi restaurado no clipboard.");
+            return new(false, "Não foi possível colar o resultado. A seleção original permanece intacta e o texto transformado continua no clipboard para colagem manual.");
         }
         return new(true, "Texto selecionado substituído.", selectedText, result.Value,
             InputItemCount: result.InputItemCount, OutputItemCount: result.OutputItemCount);
     }
 
-    private async Task<bool> RestoreSelectionAsync(IntPtr sourceWindow, string selectedText, CancellationToken cancellationToken)
-    {
-        if (!await clipboard.TrySetTextAsync(selectedText, cancellationToken)) return false;
-        return keyboard.GetForegroundWindow() == sourceWindow && keyboard.SendPaste();
-    }
 }
 
 public static class ShortcutParser

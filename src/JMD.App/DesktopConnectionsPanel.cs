@@ -560,7 +560,7 @@ internal sealed class DesktopConnectionsPanel : UserControl
         try
         {
             await JmdroidFirewallRule.ConfigurePrivateNetworkAccessAsync(address, _server.ListeningPort);
-            _serviceStatus.Text = $"API disponível em {address}:{_server.ListeningPort}; acesso do Firewall limitado à rede local privada.";
+            _serviceStatus.Text = $"API TCP {address}:{_server.ListeningPort} e descoberta UDP {JmdroidApiServer.DiscoveryUdpPort} liberadas somente para a rede local privada.";
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or PlatformNotSupportedException)
         {

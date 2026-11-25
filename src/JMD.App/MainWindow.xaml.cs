@@ -378,11 +378,11 @@ public partial class MainWindow : Window
         _commands.Add(new CommandRow("clipboard", "Formatar clipboard para SQL IN",
             "Converte os valores copiados em uma lista SQL entre apóstrofos.", ShortcutDefaults.ForCommand("clipboard")));
         _commands.Add(new CommandRow("selection", "Substituir seleção formatada",
-            "Recorta o texto selecionado, formata e cola o resultado no lugar.", ShortcutDefaults.ForCommand("selection")));
+            "Copia o texto selecionado, formata e cola o resultado no lugar.", ShortcutDefaults.ForCommand("selection")));
         _commands.Add(new CommandRow("upperCase", "UpperCase · Maiúsculas",
-            "Recorta a seleção, transforma em maiúsculas e cola no lugar.", GetShortcut("upperCase")));
+            "Copia a seleção, transforma em maiúsculas e cola no lugar.", GetShortcut("upperCase")));
         _commands.Add(new CommandRow("lowerCase", "LowerCase · Minúsculas",
-            "Recorta a seleção, transforma em minúsculas e cola no lugar.", GetShortcut("lowerCase")));
+            "Copia a seleção, transforma em minúsculas e cola no lugar.", GetShortcut("lowerCase")));
         _commands.Add(new CommandRow("titleCase", "TitleCase · Título",
             "Capitaliza as palavras da seleção, mantendo preposições em minúsculas.", GetShortcut("titleCase")));
         _commands.Add(new CommandRow("jsonPretty", "Formatar",
@@ -578,7 +578,7 @@ public partial class MainWindow : Window
             ("snippets", "Inserir texto salvo", "Busca pelo título e cola no aplicativo anterior."),
             ("draftSave", "Salvar rascunho", "Salva a seleção ou a linha do cursor e limpa o campo."),
             ("saveSnippet", "Salvar seleção como texto", "Copia a seleção atual e pede um título."),
-            ("selection", "Substituir seleção", "Recorta, transforma e cola a seleção atual."),
+            ("selection", "Substituir seleção", "Copia, transforma e cola a seleção atual."),
             ("upperCase", "UpperCase · Maiúsculas", "Transforma a seleção em maiúsculas."),
             ("lowerCase", "LowerCase · Minúsculas", "Transforma a seleção em minúsculas."),
             ("titleCase", "TitleCase · Título", "Capitaliza as palavras, exceto preposições."),

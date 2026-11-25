@@ -9,7 +9,6 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
     private const uint KeyUp = 0x0002;
     private const uint Unicode = 0x0004;
     private const ushort VkControl = 0x11;
-    private const ushort VkX = 0x58;
     private const ushort VkC = 0x43;
     private const ushort VkV = 0x56;
     private const ushort VkA = 0x41;
@@ -32,7 +31,6 @@ public sealed class KeyboardAutomation : IKeyboardAutomation
         return true;
     }
 
-    public bool SendCut() => SendChord(VkX);
     public bool SendCopy() => SendChord(VkC);
     public bool SendPaste() => SendChord(VkV);
 

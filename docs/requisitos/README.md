@@ -54,14 +54,15 @@ O clipboard é compartilhado e pode ser alterado por outro processo durante a op
 
 ## Regras do fluxo de substituição da seleção
 
-1. Guardar uma cópia do conteúdo atual do clipboard quando possível.
-2. Guardar a janela de origem e enviar `Ctrl+X` à aplicação em foco.
-3. Aguardar, por tempo limitado, a atualização do clipboard e ler o texto recortado.
-4. Executar a transformação em memória.
-5. Só em caso de sucesso, gravar o resultado e enviar `Ctrl+V` à mesma aplicação.
-6. Se a leitura ou transformação falhar depois do recorte, restaurar o texto original ao clipboard e tentar colá-lo de volta na aplicação de origem; reportar falha de recuperação claramente.
+1. Guardar uma cópia do conteúdo textual atual do clipboard quando possível.
+2. Guardar a janela de origem, confirmar que ainda está ativa e enviar `Ctrl+C`.
+3. Aguardar, por tempo limitado, a atualização do clipboard e ler o texto selecionado.
+4. Executar a transformação em memória sem alterar a seleção na aplicação.
+5. Em sucesso, gravar o resultado, confirmar a leitura do clipboard e enviar `Ctrl+V` somente se a janela de origem continuar ativa.
+6. Se a leitura ou transformação falhar, não enviar teclas de colagem; manter a seleção original e restaurar o clipboard anterior quando disponível.
+7. Se a gravação ou a colagem falhar, informar o estado com precisão. Em caso de falha da colagem final, manter o resultado transformado no clipboard para colagem manual.
 
-O modo seleção usa `Ctrl+X` conforme solicitado, portanto remove o texto antes de sabermos se a transformação terminou bem. O texto recortado deve permanecer guardado em memória durante a operação para recuperação se necessário. Uma alternativa mais segura seria usar `Ctrl+C`, mantendo a seleção original até o resultado estar pronto; essa alternativa não será o comportamento padrão do fluxo atual.
+O fluxo não deve usar `Ctrl+X`: copiar mantém a seleção original até que o resultado esteja pronto e evita depender de uma colagem de recuperação após erro.
 
 ## Limitações conhecidas
 

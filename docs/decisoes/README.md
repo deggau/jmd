@@ -32,11 +32,11 @@ Usar a API nativa `RegisterHotKey`/mensagem `WM_HOTKEY` ou abstração equivalen
 
 O MVP lê e escreve texto Unicode. Outros formatos ficam para uma fase posterior, com comportamento explícito por tipo.
 
-### D-006 — Substituição de seleção usa recortar e colar
+### D-006 — Substituição de seleção copia, transforma e cola
 
 **Estado:** aceita.
 
-Para substituir uma seleção, enviar `Ctrl+X`, transformar o texto recortado e enviar `Ctrl+V`. A entrada recortada deve permanecer em memória para recuperação em caso de falha antes da colagem. A automação pode usar `SendInput` ou mecanismo equivalente. O Windows limita a injeção de entrada entre níveis de integridade por UIPI, então aplicativos executados com privilégios superiores podem não aceitar a sequência ([SendInput — Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)).
+Para substituir uma seleção, enviar `Ctrl+C`, transformar o texto copiado em memória e enviar `Ctrl+V` somente depois de confirmar o clipboard e a janela de origem. Isso mantém o original no editor durante a transformação. Se a colagem final falhar, o original permanece e o resultado fica disponível no clipboard para colagem manual. A automação usa `SendInput`; o Windows limita a injeção de entrada entre níveis de integridade por UIPI, então aplicativos executados com privilégios superiores podem não aceitar a sequência ([SendInput — Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)).
 
 ### D-007 — Paleta de comandos
 
@@ -80,4 +80,4 @@ Usar NSIS (Nullsoft Scriptable Install System) para gerar instalador e desinstal
 
 O fluxo proposto é viável tecnicamente. A documentação oficial do Windows descreve `RegisterHotKey` como registro de atalho de sistema e envio de `WM_HOTKEY` à aplicação ([Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey)). As APIs de clipboard permitem consultar, obter e definir formatos, mas exigem abertura correta do clipboard e tratamento de indisponibilidade ([Clipboard - Win32 apps](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard), [Clipboard Operations](https://learn.microsoft.com/windows/win32/dataxchg/clipboard-operations)).
 
-As principais condições são selecionar combinações não ocupadas, começar com texto simples e impedir que uma falha grave saída vazia ou incompleta. A substituição de seleção funciona nas aplicações que aceitam entrada sintetizada e respondem a `Ctrl+X`/`Ctrl+V`; aplicativos elevados podem bloquear a automação por UIPI. Esses comportamentos precisam ser confirmados no protótipo.
+As principais condições são selecionar combinações não ocupadas, começar com texto simples e impedir que uma falha grave saída vazia ou incompleta. A substituição de seleção funciona nas aplicações que aceitam entrada sintetizada e respondem a `Ctrl+C`/`Ctrl+V`; aplicativos elevados podem bloquear a automação por UIPI. Esses comportamentos precisam ser confirmados por aplicação na matriz de validação Windows.

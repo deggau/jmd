@@ -1,19 +1,149 @@
 # API local do JMD para o JMDroid
 
-**Estado:** implementada no JMD desktop; o cliente Android precisa integrar este contrato.
+**Estado:** descoberta UDP e pareamento por identidade implementados no JMD desktop. O JMDroid precisa implementar o protocolo Android descrito abaixo. O pareamento por QR com token continua disponível para versões anteriores.
 
 Este documento define como o JMDroid pode parear com uma instância do JMD na mesma rede local, descobrir e executar comandos, gerenciar tarefas e consultar o histórico de tarefas. Não há servidor central: o JMD no computador executa as ações.
 
 ## Premissas
 
 - O computador precisa estar ligado, com o JMD aberto e acessível pela rede local. O app não executa comandos do computador quando ele está desligado.
-- A primeira versão aceita conexão na mesma rede local. Não se deve publicar a porta do JMD diretamente na internet.
+- A conexão aceita aparelhos na mesma rede IPv4 privada. Não se deve publicar a porta do JMD diretamente na internet.
 - A API usa HTTPS por padrão. Opcionalmente, o usuário pode selecionar HTTP para uma rede local confiável; nesse modo, todo o tráfego fica sem criptografia e `certificateSha256` fica vazio. Não exponha a porta fora da rede privada.
-- Com pelo menos um aparelho pareado, o JMD mantém o listener ativo enquanto o aplicativo desktop estiver aberto e inicia o serviço novamente ao abrir o JMD. Isso permite que o celular reconecte sem reabrir a tela do QR. Sem aparelhos pareados, o serviço encerra após uma hora sem atividade, salvo enquanto a tela de pareamento estiver aberta.
+- O JMD inicia o listener de rede ao abrir o aplicativo. A API usa TCP na porta ativa (47831 por padrão) e responde à descoberta UDP na porta `47832`. O listener permanece ativo enquanto o JMD estiver aberto.
+- Para atravessar o Firewall do Windows, o usuário pode configurar regras restritas ao perfil privado, à sub-rede local, à porta TCP ativa e à porta UDP `47832`.
+- O JMD usa o mesmo par RSA persistente que identifica conexões entre computadores. A chave privada fica protegida no Windows; o telefone gera sua própria chave no Android Keystore. O `peerId` vincula a chave pública à identidade estável do aparelho.
+
+## Descoberta por broadcast na rede local
+
+O JMDroid deve enviar um datagrama UDP de broadcast por cada interface IPv4 privada conectada, para o broadcast da sub-rede (e opcionalmente `255.255.255.255`) na porta `47832`. A rede pode bloquear broadcast entre VLANs, redes de convidados ou VPNs; nesse caso, use o QR ou conecte os dispositivos à mesma sub-rede.
+
+Pedido (JSON UTF-8, até 512 bytes):
+
+```json
+{
+  "service": "jmdroid-discovery",
+  "apiVersion": 1,
+  "nonce": "64 caracteres hexadecimais aleatórios"
+}
+```
+
+Use um nonce novo de 32 bytes por varredura e aguarde as respostas por aproximadamente 1,5 segundo. O JMD responde por unicast ao endereço de origem do datagrama:
+
+```json
+{
+  "service": "jmd",
+  "apiVersion": 1,
+  "nonce": "o mesmo nonce do pedido",
+  "computerName": "JMD-DESKTOP-01",
+  "port": 47831,
+  "scheme": "https",
+  "appVersion": "0.1.132.0",
+  "peerId": "sha256-da-chave-publica-em-hex-minusculo",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+  "certificateSha256": "impressão SHA-256 do certificado TLS em hexadecimal",
+  "signature": "assinatura RSA-PSS em Base64"
+}
+```
+
+O JMD assina a string UTF-8, com LF entre campos, nesta ordem: `discovery`, `nonce`, `peerId`, `computerName`, `port`, `scheme`, `certificateSha256`. O JMDroid deve verificar que o nonce corresponde ao pedido, que `peerId` é SHA-256 do PEM público em UTF-8 e que a assinatura RSA-PSS/SHA-256 é válida. Ignore respostas inválidas e deduplique resultados por `peerId`.
+
+Mostre os computadores encontrados com nome, endereço IP de origem, versão e identidade. O usuário toca em **Conectar** para um novo JMD. Para HTTPS, valide o certificado pelo `certificateSha256` recebido; não desative a validação TLS. Antes de parear, confirme também a identidade no endpoint de desafio abaixo. Em uma primeira descoberta, a chave ainda não é conhecida pelo celular: o JMDroid deve guardar o `peerId` como identidade confiável somente após a aprovação do pareamento. Se uma chave já confiável mudar, bloqueie a reconexão automática e peça novo pareamento explícito.
+
+O broadcast permite encontrar dispositivos, mas não autentica por si só um primeiro contato. Para uma conexão nova, o pedido precisa ser aprovado no JMD desktop. Para redes que não permitem broadcast ou como opção de bootstrap fora de banda, continue oferecendo o QR.
+
+### Confirmar a identidade do JMD
+
+Antes de enviar credenciais ou aceitar uma sessão, gere um nonce hexadecimal aleatório de 32 bytes e consulte o endpoint pelo endereço retornado no broadcast:
+
+```http
+GET /api/v1/identity/{nonce}
+```
+
+Resposta:
+
+```json
+{
+  "peerId": "sha256-da-chave-publica-em-hex-minusculo",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+  "signature": "assinatura RSA-PSS em Base64"
+}
+```
+
+A assinatura cobre `identity\n{nonce}\n{peerId}`. Verifique nonce, `peerId`, chave pública e assinatura. Na reconexão automática, o `peerId` e a chave devem corresponder exatamente ao computador previamente pareado.
 
 ## Pareamento e autenticação
 
-### 1. Abrir o pareamento no desktop
+### Pareamento e reconexão por identidade (fluxo recomendado)
+
+O JMDroid cria um par RSA no Android Keystore e mantém a chave privada não exportável. Exporte a chave pública como PEM `SubjectPublicKeyInfo`, com linhas LF e Base64 de até 64 caracteres por linha. Calcule `peerId` como SHA-256 dos bytes UTF-8 desse PEM, em hexadecimal minúsculo. Use RSA-PSS com SHA-256 e salt de 32 bytes para as assinaturas.
+
+Depois da descoberta e da confirmação da identidade do JMD, gere `requestId` com 24 bytes aleatórios em hexadecimal minúsculo e `timestamp` em segundos Unix. Assine a string UTF-8:
+
+```text
+mobile-connect\n{requestId}\n{deviceName}\n{appVersion}\n{peerId}\n{timestamp}
+```
+
+Envie:
+
+```http
+POST /api/v1/pairing/identity-requests
+Content-Type: application/json
+```
+
+```json
+{
+  "requestId": "48 caracteres hexadecimais aleatórios",
+  "deviceName": "POCO X3",
+  "appVersion": "0.3.0",
+  "peerId": "sha256-da-chave-publica-em-hex-minusculo",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+  "timestamp": 1795632000,
+  "signature": "assinatura RSA-PSS em Base64"
+}
+```
+
+O JMD confere a assinatura e a origem na rede privada. Para uma chave nova, cria um pedido pendente que aparece na tela **Conectar um aparelho** do computador. O usuário aprova ou nega esse aparelho; o pedido expira em cinco minutos. A resposta pendente é HTTP `202` e contém o estado, a identidade pública do JMD e uma assinatura sobre:
+
+```text
+mobile-pairing-state\n{requestId}\n{state}\n{devicePeerId}\n{serverPeerId}\n{tokenHash}
+```
+
+`tokenHash` é SHA-256 do token UTF-8 em hexadecimal maiúsculo; fica vazio enquanto não há token. O JMDroid deve validar `serverPeerId`, `serverPublicKey` e a assinatura com a chave conferida no desafio de identidade. Se o estado for `pending`, consulte a cada `pollAfterMs` (1.500 ms) `GET /api/v1/pairing/identity-requests/{requestId}`; cada resposta usa a mesma assinatura por estado.
+
+Exemplo de resposta pendente:
+
+```json
+{
+  "state": "pending",
+  "pollAfterMs": 1500,
+  "requestId": "request-id-assinado",
+  "devicePeerId": "identidade-publica-do-telefone",
+  "deviceId": null,
+  "accessToken": null,
+  "serverPeerId": "identidade-publica-do-jmd",
+  "serverPublicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+  "certificateSha256": "impressão TLS ou string vazia em HTTP",
+  "signature": "assinatura RSA-PSS do estado"
+}
+```
+
+Quando o estado for `approved`, a resposta também contém `deviceId` e `accessToken`. Verifique a assinatura antes de armazenar o token no armazenamento protegido do Android. O JMD guarda somente o hash do token, o `peerId` e a chave pública do aparelho. O `deviceId` é estável e igual ao `peerId` do JMDroid.
+
+Estados possíveis no novo fluxo: `pending`, `approved`, `denied` e `expired`. Erros do pedido podem incluir `invalid_identity_pairing`, `identity_key_changed`, `same_identity`, `private_network_only` e `rate_limited`.
+
+Em uma reconexão, o JMDroid descobre novamente os computadores e repete o pedido assinado usando sua mesma chave para cada identidade de JMD já salva. Se o `peerId` e a chave pública forem idênticos aos aprovados, o JMD valida a posse da chave, renova o token automaticamente e assina a resposta sem pedir aprovação outra vez. O JMDroid valida novamente a identidade do computador, verifica a assinatura da resposta, grava o token renovado antes de abrir a sessão e não deve executar duas renovações em paralelo para a mesma identidade. Chave diferente, token revogado ou resposta de outro `peerId` não devem ser aceitos automaticamente. Se os dados do app Android forem apagados ou a chave do Keystore for perdida, será necessário aprovar a nova identidade no JMD.
+
+O token retornado continua sendo a credencial das rotas HTTP/WebSocket existentes: envie-o como `Authorization: Bearer {accessToken}`. Isso mantém compatibilidade com o cliente QR atual. Nunca registre token, chave privada ou assinatura de pareamento em logs.
+
+### Usar QR como bootstrap com o protocolo por identidade
+
+O JMDroid atualizado também pode ler o QR para obter `baseUrl` e `certificateSha256` quando o broadcast estiver bloqueado. Depois, deve validar `GET /api/v1/identity/{nonce}` e usar `POST /api/v1/pairing/identity-requests`, igual ao fluxo recomendado. O QR não precisa ser requisito para aparelhos na mesma rede e continua visível no desktop.
+
+### Pareamento legado por QR code
+
+O endpoint `/api/v1/pairing/requests` continua aceito para versões anteriores do JMDroid. Ele usa token sem identidade RSA e serve para compatibilidade; a versão atual do app deve preferir o pareamento por identidade, inclusive quando o endereço veio do QR.
+
+#### 1. Abrir o pareamento no desktop
 
 Ao abrir a tela de conexão, o JMD inicia o listener em uma porta local disponível e cria uma sessão de pareamento aleatória, válida por 2 minutos e utilizável uma única vez. HTTPS é o padrão. Com HTTP selecionado, `baseUrl` começa com `http://` e `certificateSha256` fica vazio. O QR code HTTPS contém um objeto JSON neste formato:
 
@@ -31,7 +161,7 @@ Ao abrir a tela de conexão, o JMD inicia o listener em uma porta local disponí
 
 O `pairingSecret` é temporário e serve apenas para iniciar o pedido. Ele não é o token de acesso do aparelho. HTTP só deve ser usado em uma rede local confiável, pois o segredo e os tokens trafegam sem criptografia.
 
-### 2. Solicitar pareamento pelo JMDroid
+#### 2. Solicitar pareamento pelo JMDroid
 
 ```http
 POST /api/v1/pairing/requests
@@ -64,7 +194,7 @@ Resposta enquanto aguarda confirmação no desktop:
 
 `computerName` identifica o computador que está oferecendo o pareamento. O JMDroid deve mostrá-lo e associá-lo à conexão salva, pois um celular pode parear com mais de um computador. Esse campo também aparece nas respostas de consulta abaixo, tanto enquanto o pedido está pendente quanto depois da aprovação. O JMD desktop mostra o nome do aparelho e os botões **Aprovar** e **Negar**. O pedido expira junto com a sessão de pareamento. O QR, por si só, nunca autoriza um aparelho.
 
-### 3. Consultar a aprovação
+#### 3. Consultar a aprovação
 
 ```http
 GET /api/v1/pairing/requests/{requestId}
@@ -643,7 +773,7 @@ Todas as respostas de erro usam:
 }
 ```
 
-Códigos esperados: `invalid_pairing_session`, `pairing_expired`, `pairing_denied`, `unauthorized`, `device_revoked`, `command_not_found`, `command_disabled`, `command_unavailable`, `task_not_found`, `task_state_conflict`, `invalid_input`, `attachment_too_large`, `attachment_storage_failed`, `duplicate_request`, `rate_limited`.
+Códigos esperados: `invalid_pairing_session`, `pairing_expired`, `pairing_denied`, `invalid_identity_challenge`, `invalid_identity_pairing`, `identity_key_changed`, `same_identity`, `private_network_only`, `unauthorized`, `device_revoked`, `command_not_found`, `command_disabled`, `command_unavailable`, `task_not_found`, `task_state_conflict`, `invalid_input`, `attachment_too_large`, `attachment_storage_failed`, `duplicate_request`, `rate_limited`.
 
 - `400`: pedido ou parâmetros inválidos.
 - `401`: token ausente/inválido ou sessão de pareamento inválida.
@@ -660,9 +790,11 @@ Códigos esperados: `invalid_pairing_session`, `pairing_expired`, `pairing_denie
 
 ## Regras mínimas de segurança
 
-- Token de pelo menos 256 bits, diferente por aparelho, hash no desktop e armazenamento protegido no Android.
-- Aprovação explícita no desktop para cada novo aparelho; QR temporário, aleatório e de uso único.
-- HTTPS com pinning da impressão digital do certificado recebido pelo QR; falha fechada se a impressão digital divergir.
+- Chave privada RSA do JMD protegida pelo Windows e chave privada do aparelho não exportável pelo Android Keystore; o desktop guarda a chave pública aprovada.
+- Aprovação explícita no desktop para cada identidade nova. A mesma chave aprovada pode renovar o token sem novo pedido; chave diferente exige aprovação.
+- Tokens com pelo menos 256 bits, renovados no pareamento por identidade, diferentes por aparelho, guardados somente como hash no desktop e em armazenamento protegido no Android.
+- HTTPS com pinning do certificado descoberto e validação de identidade RSA assinada. Nunca aceite automaticamente outro `peerId` nem ignore divergência de chave ou certificado.
+- As respostas UDP são limitadas à rede privada, incluem nonce aleatório e assinatura; não trate broadcast como autenticação do primeiro contato. Mantenha aprovação visível no JMD desktop e ofereça QR como canal alternativo de bootstrap.
 - Revogação imediata invalida token e sessão WebSocket daquele aparelho.
 - Limite de tentativas de pareamento e de chamadas por aparelho; entradas de usuário com tamanho limitado.
 - Somente IDs fixos do catálogo; nunca executar shell ou comandos arbitrários enviados pelo telefone.

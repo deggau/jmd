@@ -434,6 +434,7 @@ internal sealed class JmdroidPairedDevice
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "JMDroid";
     public string TokenSha256 { get; set; } = string.Empty;
+    public string PublicKey { get; set; } = string.Empty;
     public DateTimeOffset PairedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 

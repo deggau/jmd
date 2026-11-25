@@ -1,65 +1,71 @@
 # JMD
 
-Suite local de ferramentas para acelerar tarefas comuns de desenvolvimento, acionadas principalmente por atalhos globais no Windows.
+O JMD é uma caixa de ferramentas residente para Windows. A paleta e os atalhos globais permitem executar ações sobre texto e automatizar tarefas sem trocar de janela. O padrão é manter configurações e histórico localmente; recursos de rede e serviços externos são opcionais e precisam ser configurados.
 
-## Objetivo inicial
+## O que o JMD oferece
 
-Permitir que o usuário transforme o conteúdo da área de transferência sem trocar de janela. Exemplo: após copiar um texto, pressionar `Ctrl+Shift+I` executa a transformação SQL `IN` e coloca o resultado de volta no clipboard, pronto para colar.
+- **Paleta e atalhos globais:** pesquisar e executar comandos; atalhos podem ser alterados e comandos desativados.
+- **Ferramentas de texto:** converter listas para SQL `IN`, alterar maiúsculas/minúsculas e formatar ou compactar JSON e XML.
+- **Snippets e rascunhos:** salvar textos pelo título, inserir conteúdo reutilizável e guardar/restaurar rascunhos.
+- **Workflows personalizados:** encadear ações configuradas, com variáveis e parâmetros definidos pelo usuário.
+- **Tarefas:** criar e acompanhar tarefas, checklists, lembretes e referências a arquivos ou URLs.
+- **Voz:** acionar comandos e transcrever fala com os mecanismos disponíveis nas configurações do Jey.
+- **Android e rede local:** descobrir computadores por broadcast, aprovar identidades por chave pública, reconectar aparelhos conhecidos, executar comandos autorizados, consultar tarefas e compartilhar a tela. QR segue disponível como alternativa.
+- **Histórico e energia:** consultar ações recentes e pedir ao Windows para manter a tela ativa durante uma atividade.
+
+Os recursos disponíveis dependem da configuração e dos dispositivos conectados. A integração Android usa a rede local; não exponha a porta do JMD diretamente à internet. Para o contrato de pareamento, autenticação e compartilhamento, consulte [a documentação da API](docs/api/jmdroid-api.md).
 
 ## Documentação
 
 - [Visão do produto](docs/visao/README.md)
 - [Requisitos e limites](docs/requisitos/README.md)
-- [Arquitetura inicial](docs/arquitetura/README.md)
-- [Plano de entrega](docs/planejamento/README.md)
-- [Casos de uso](docs/use-cases/README.md)
+- [Arquitetura](docs/arquitetura/README.md)
+- [Planejamento](docs/planejamento/README.md)
 - [Decisões técnicas](docs/decisoes/README.md)
+- [Riscos conhecidos](docs/riscos/README.md)
+- [Casos de uso](docs/use-cases/README.md)
+- [Testes e validação no Windows](docs/testes/README.md)
+- [API local para Android](docs/api/jmdroid-api.md)
+- [Instalador](installer/README.md)
 
-## Stack
+## Stack e estrutura
 
-- C# com .NET 10.
-- WPF para a paleta e a tela de atalhos.
+- C# com .NET 10 e interface WPF.
 - APIs Win32 isoladas no projeto `JMD.Windows`.
 - NSIS para o instalador Windows por usuário.
-
-## Estrutura
-
-- `src/JMD.App`: aplicação WPF residente e interface.
-- `src/JMD.Core`: contratos e tipos compartilhados.
-- `src/JMD.Tools`: transformações independentes da plataforma.
-- `src/JMD.Windows`: atalhos globais, clipboard e automação de teclado.
+- `src/JMD.App`: aplicação residente e interface.
+- `src/JMD.Core`: políticas, modelos e serviços compartilhados.
+- `src/JMD.Tools`: transformações de texto.
+- `src/JMD.Windows`: atalhos globais, clipboard e automação de entrada.
 
 ## Executar no Windows
 
-Requer o SDK .NET 10 instalado.
+Com o SDK .NET 10 instalado:
 
 ```powershell
 dotnet build .\JMD.sln
 dotnet run --project .\src\JMD.App\JMD.App.csproj
 ```
 
-A aplicação inicia minimizada na área de notificação. `Alt+J` abre a paleta, `Ctrl+Shift+I` converte o texto do clipboard, `Ctrl+Alt+I` transforma e substitui a seleção, `Ctrl+Shift+Y` busca textos salvos pelo título e `Ctrl+Alt+Shift+Y` copia uma seleção para salvá-la com um título. A busca insere o texto no aplicativo que estava ativo e preserva HTML/RTF quando disponíveis; os textos também podem ser adicionados, editados e excluídos nas configurações. Os atalhos podem ser reconfigurados pela paleta; comandos podem ser desativados sem apagar sua configuração. A tela de configurações também permite consultar o histórico das conversões e ajustar sua retenção, inicialmente em 15 dias.
+Por padrão, `Alt+J` abre a paleta, `Ctrl+Shift+I` formata o clipboard para SQL `IN`, `Ctrl+Alt+I` transforma uma seleção, `Ctrl+Shift+Y` procura snippets e `Ctrl+Alt+Shift+Y` salva uma seleção como snippet. Os atalhos são configuráveis e podem estar indisponíveis se outra aplicação já os tiver registrado.
 
-No menu `...`, a opção **Manter tela ativa** solicita ao Windows que mantenha o monitor e o sistema ativos enquanto estiver ligada. O JMD não simula atividade do teclado ou do mouse; políticas de segurança da organização ainda podem bloquear a tela.
+O comando de seleção copia o texto antes de transformar. Se a transformação falhar, a seleção continua no lugar; se a colagem final falhar, o resultado fica no clipboard para colagem manual. Aplicativos elevados, sessões remotas e campos protegidos podem bloquear atalhos ou entrada sintetizada. A compatibilidade deve ser confirmada por aplicativo; veja a [matriz de validação no Windows](docs/testes/validacao-windows.md).
 
-## Criar instalador Windows
+Para classificar workflows antigos salvos como `Open`, execute `./tools/Organize-Workflows.ps1` no PowerShell. A execução padrão só mostra uma prévia. Para aplicar a conversão ao `settings.json` do usuário, use `./tools/Organize-Workflows.ps1 -Apply`; o script cria um backup ao lado do arquivo antes de salvar. Um arquivo alternativo pode ser selecionado com `-Path`.
 
-Com o .NET 10 SDK e o NSIS instalados e `makensis.exe` no `PATH`, execute `./installer/Build-Installer.ps1`. O procedimento e os parâmetros estão descritos em [installer/README.md](installer/README.md).
+## Instalar
 
-## Organizar workflows existentes
-
-O editor separa etapas **Abrir programa** e **Abrir URL**. Para classificar etapas antigas salvas como `Open`, execute `./tools/Organize-Workflows.ps1` no PowerShell. A execução padrão só mostra uma prévia. Para aplicar a conversão ao `settings.json` do usuário, use `./tools/Organize-Workflows.ps1 -Apply`; o script cria um backup ao lado do arquivo antes de salvar. Um arquivo alternativo pode ser selecionado com `-Path`.
-
-### Instalar pelo PowerShell
-
-Com o repositório público, abra o PowerShell e execute:
+O instalador publicado inclui o runtime do .NET. Com o repositório público, abra o PowerShell e execute:
 
 ```powershell
 irm https://raw.githubusercontent.com/deggau/jmd/main/installer/install.ps1 | iex
 ```
 
-O comando baixa o instalador x64 da release mais recente, confere o checksum SHA-256 e abre o assistente de instalação. O JMD inclui o runtime do .NET e não exige uma instalação separada do .NET.
+O script baixa o instalador x64 da release mais recente, verifica o SHA-256 e abre o assistente. Para compilar um instalador localmente, consulte [installer/README.md](installer/README.md).
 
-## Status
+## Limites conhecidos
 
-MVP inicial em implementação. O protótipo cobre conversão SQL `IN`, paleta WPF, armazenamento local, registro de atalhos globais e operações sobre o clipboard/seleção. O funcionamento real precisa ser validado no Windows nas aplicações alvo, especialmente o registro dos atalhos e a recuperação da seleção após falhas.
+- Atalhos globais dependem de disponibilidade no Windows e podem conflitar com outros programas.
+- A substituição de texto depende de o aplicativo aceitar `Ctrl+C`/`Ctrl+V` sintetizados e manter a janela de origem ativa.
+- O compartilhamento Android depende de pareamento, conectividade na rede local e consentimento de captura no aparelho.
+- Validação de interação com Win32, clipboard real e aplicativos de terceiros precisa ser feita em uma sessão Windows; os testes automatizados cobrem principalmente regras e lógica isoladas.

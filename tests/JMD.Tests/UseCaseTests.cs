@@ -195,10 +195,10 @@ public sealed class UseCaseTests
 
     // UC-004: selection replace pipeline and recovery paths, with fake OS boundaries.
     [Fact]
-    public async Task Selection_use_case_cuts_transforms_and_pastes()
+    public async Task Selection_use_case_copies_transforms_and_pastes()
     {
         var clipboard = new FakeClipboard { Text = "previous" };
-        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCut = "abc,def" };
+        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCopy = "abc,def" };
         var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
         Assert.True(result.Success, result.Message);
         Assert.Equal("abc,def", result.BeforeValue);
@@ -206,12 +206,12 @@ public sealed class UseCaseTests
         Assert.Equal("'abc','def'", result.AfterValue);
         Assert.Equal(2, result.InputItemCount);
         Assert.Equal(2, result.OutputItemCount);
-        Assert.Equal(new[] { "cut", "paste" }, keyboard.Events);
-        Assert.Equal(new[] { "wait", "cut", "paste" }, keyboard.CallOrder);
+        Assert.Equal(new[] { "copy", "paste" }, keyboard.Events);
+        Assert.Equal(new[] { "wait", "copy", "paste" }, keyboard.CallOrder);
     }
 
     [Fact]
-    public async Task Selection_use_case_waits_until_hotkey_modifiers_are_released_before_cutting()
+    public async Task Selection_use_case_waits_until_hotkey_modifiers_are_released_before_copying()
     {
         var clipboard = new FakeClipboard { Text = "alpha,beta" };
         var keyboard = new FakeKeyboard(clipboard) { ModifiersReleased = false };
@@ -226,7 +226,7 @@ public sealed class UseCaseTests
     }
 
     [Fact]
-    public async Task Selection_use_case_does_not_cut_if_foreground_window_changes_while_waiting()
+    public async Task Selection_use_case_does_not_copy_if_foreground_window_changes_while_waiting()
     {
         var clipboard = new FakeClipboard { Text = "alpha,beta" };
         var keyboard = new FakeKeyboard(clipboard) { WindowAfterWait = 2 };
@@ -241,10 +241,10 @@ public sealed class UseCaseTests
     }
 
     [Fact]
-    public async Task Selection_use_case_restores_text_instead_of_converting_the_previous_output_again()
+    public async Task Selection_use_case_keeps_selection_and_clipboard_when_conversion_guard_rejects_input()
     {
         var clipboard = new FakeClipboard { Text = "prior clipboard" };
-        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCut = "'alpha','beta'" };
+        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCopy = "'alpha','beta'" };
         var guard = new SqlInConversionGuard();
         guard.Remember("alpha,beta", "'alpha','beta'");
 
@@ -253,8 +253,9 @@ public sealed class UseCaseTests
 
         Assert.False(result.Success);
         Assert.Contains("alpha,beta", result.Message);
-        Assert.Equal("'alpha','beta'", keyboard.PastedText);
-        Assert.Equal(new[] { "cut", "paste" }, keyboard.Events);
+        Assert.Null(keyboard.PastedText);
+        Assert.Equal("prior clipboard", clipboard.Text);
+        Assert.Equal(new[] { "copy" }, keyboard.Events);
     }
 
     [Fact]
@@ -271,8 +272,8 @@ public sealed class UseCaseTests
         Assert.Equal("'alpha','beta'", result.AfterValue);
         Assert.Equal("'alpha','beta'", clipboard.Text);
         Assert.Null(keyboard.PastedText);
-        Assert.Equal(new[] { "cut" }, keyboard.Events);
-        Assert.Equal(new[] { "wait", "cut" }, keyboard.CallOrder);
+        Assert.Equal(new[] { "copy" }, keyboard.Events);
+        Assert.Equal(new[] { "wait", "copy" }, keyboard.CallOrder);
     }
 
     [Fact]
@@ -294,12 +295,12 @@ public sealed class UseCaseTests
     [InlineData("{ \"a\": 1 }", StructuredDataLayout.Compact, StructuredDataFormat.Json)]
     [InlineData("<root><item>1</item></root>", StructuredDataLayout.Pretty, StructuredDataFormat.Xml)]
     [InlineData("<root>\n <item>1</item>\n</root>", StructuredDataLayout.Compact, StructuredDataFormat.Xml)]
-    public async Task Structured_data_shortcut_uses_cut_transform_paste_pipeline(
+    public async Task Structured_data_shortcut_uses_copy_transform_paste_pipeline(
         string selectedText, StructuredDataLayout layout, StructuredDataFormat expectedFormat)
     {
         var formatter = new StructuredDataFormatter();
         var clipboard = new FakeClipboard { Text = "previous clipboard" };
-        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCut = selectedText };
+        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCopy = selectedText };
         StructuredDataFormat? detectedFormat = null;
 
         var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(value =>
@@ -313,7 +314,7 @@ public sealed class UseCaseTests
         Assert.Equal(expectedFormat, detectedFormat);
         Assert.Equal(selectedText, result.BeforeValue);
         Assert.Equal(result.AfterValue, keyboard.PastedText);
-        Assert.Equal(new[] { "wait", "cut", "paste" }, keyboard.CallOrder);
+        Assert.Equal(new[] { "wait", "copy", "paste" }, keyboard.CallOrder);
         Assert.Contains("paste", keyboard.Events);
     }
 
@@ -335,7 +336,7 @@ public sealed class UseCaseTests
         Assert.Equal(clipboardText, result.BeforeValue);
         Assert.Equal(result.AfterValue, clipboard.Text);
         Assert.Null(keyboard.PastedText);
-        Assert.Contains("cut", keyboard.Events);
+        Assert.Contains("copy", keyboard.Events);
         Assert.DoesNotContain("paste", keyboard.Events);
     }
 
@@ -354,29 +355,31 @@ public sealed class UseCaseTests
     }
 
     [Fact]
-    public async Task Selection_use_case_restores_original_selection_when_transformation_fails()
+    public async Task Selection_use_case_keeps_selection_intact_and_restores_clipboard_when_transformation_fails()
     {
         var clipboard = new FakeClipboard { Text = "prior" };
-        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCut = "a,,b" };
+        var keyboard = new FakeKeyboard(clipboard) { SelectedTextOnCopy = "a,,b" };
         var result = await new SelectionTransformer(clipboard, keyboard, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
         Assert.False(result.Success);
-        Assert.Equal("a,,b", keyboard.PastedText);
+        Assert.Null(keyboard.PastedText);
+        Assert.DoesNotContain("paste", keyboard.Events);
         Assert.Equal("prior", clipboard.Text);
     }
 
     [Fact]
-    public async Task Selection_use_case_does_not_paste_if_cut_fails_or_selection_is_not_detected()
+    public async Task Selection_use_case_does_not_paste_if_copy_fails_or_selection_is_not_detected()
     {
-        var noCutClipboard = new FakeClipboard { Text = "prior" };
-        var noCut = new FakeKeyboard(noCutClipboard) { CutSucceeds = false };
-        Assert.False((await new SelectionTransformer(noCutClipboard, noCut, new ImmediateDelay()).ExecuteAsync(_sql.Transform)).Success);
-        Assert.Empty(noCut.Events);
+        var noCopyClipboard = new FakeClipboard { Text = "prior" };
+        var noCopy = new FakeKeyboard(noCopyClipboard) { CopySucceeds = false };
+        Assert.False((await new SelectionTransformer(noCopyClipboard, noCopy, new ImmediateDelay()).ExecuteAsync(_sql.Transform)).Success);
+        Assert.Empty(noCopy.Events);
 
         var noChangeClipboard = new FakeClipboard { Text = "prior" };
         var noChange = new FakeKeyboard(noChangeClipboard);
         var fallback = await new SelectionTransformer(noChangeClipboard, noChange, new ImmediateDelay()).ExecuteAsync(_sql.Transform);
         Assert.True(fallback.Success, fallback.Message);
         Assert.True(fallback.UsedClipboardFallback);
+        Assert.Contains("copy", noChange.Events);
         Assert.Empty(noChange.Events.Where(item => item == "paste"));
 
         var emptyClipboard = new FakeClipboard { Text = null };
@@ -404,11 +407,11 @@ public sealed class UseCaseTests
     private sealed class FakeKeyboard(FakeClipboard clipboard) : IKeyboardAutomation
     {
         public int Window { get; set; } = 1;
-        public bool CutSucceeds { get; set; } = true;
+        public bool CopySucceeds { get; set; } = true;
         public bool PasteSucceeds { get; set; } = true;
         public bool ModifiersReleased { get; set; } = true;
         public int? WindowAfterWait { get; set; }
-        public string? SelectedTextOnCut { get; set; }
+        public string? SelectedTextOnCopy { get; set; }
         public string? PastedText { get; private set; }
         public List<string> Events { get; } = [];
         public List<string> CallOrder { get; } = [];
@@ -419,12 +422,12 @@ public sealed class UseCaseTests
             if (WindowAfterWait is { } window) Window = window;
             return Task.FromResult(ModifiersReleased);
         }
-        public bool SendCut()
+        public bool SendCopy()
         {
-            CallOrder.Add("cut");
-            if (!CutSucceeds) return false;
-            Events.Add("cut");
-            if (SelectedTextOnCut is not null) { clipboard.Text = SelectedTextOnCut; clipboard.SequenceNumber++; }
+            CallOrder.Add("copy");
+            if (!CopySucceeds) return false;
+            Events.Add("copy");
+            if (SelectedTextOnCopy is not null) { clipboard.Text = SelectedTextOnCopy; clipboard.SequenceNumber++; }
             return true;
         }
         public bool SendPaste()

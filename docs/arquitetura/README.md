@@ -25,7 +25,7 @@ Atalho global → comando da ferramenta → leitura do clipboard → transforma�
                                            notificação discreta
 ```
 
-Para atuar sobre uma seleção, o fluxo inicial usa `Ctrl+X` → leitura e transformação → gravação do resultado → `Ctrl+V`. A janela de origem deve manter o foco durante toda a sequência. Como o recorte remove o original antes de validar o resultado, manter o texto recortado em memória e restaurá-lo se qualquer etapa falhar.
+Para atuar sobre uma seleção, o fluxo usa `Ctrl+C` → leitura e transformação em memória → gravação confirmada do resultado → `Ctrl+V`. A seleção original permanece na janela de origem até a colagem do resultado. Antes de colar, confirmar que a janela de origem continua ativa; se a colagem falhar, deixar o resultado no clipboard para recuperação manual.
 
 Em caso de erro na leitura ou transformação, o fluxo termina sem substituir o clipboard.
 

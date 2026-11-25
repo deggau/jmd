@@ -26,7 +26,9 @@ internal static class JmdroidFirewallRule
                      "$profile = if ($networkProfile.NetworkCategory -eq 'DomainAuthenticated') { 'Domain' } else { 'Private' }; " +
                      "$ruleName = 'JMD JMDroid API (Private)'; " +
                      "Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction Stop; " +
+                     "Get-NetFirewallRule -DisplayName ($ruleName + ' Discovery') -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction Stop; " +
                      $"New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Program '{escapedPath}' -Action Allow -Profile $profile -Protocol TCP -LocalPort {listeningPort} -LocalAddress '{escapedAddress}' -RemoteAddress LocalSubnet | Out-Null; " +
+                     $"New-NetFirewallRule -DisplayName ($ruleName + ' Discovery') -Direction Inbound -Program '{escapedPath}' -Action Allow -Profile $profile -Protocol UDP -LocalPort {JmdroidApiServer.DiscoveryUdpPort} -LocalAddress '{escapedAddress}' -RemoteAddress LocalSubnet | Out-Null; " +
                      "exit 0 } catch { exit 1 }";
         var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         var powershellPath = Path.Combine(

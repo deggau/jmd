@@ -149,7 +149,7 @@ internal sealed class AndroidPairingPanel : UserControl
         var details = new StackPanel { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         details.Children.Add(new TextBlock
         {
-            Text = "No JMDroid, toque em Conectar e leia o QR code.",
+            Text = "No JMDroid, procure JMDs na rede e toque em Conectar. O QR code continua disponível como alternativa.",
             Foreground = Brushes.White,
             FontWeight = FontWeights.SemiBold,
             TextWrapping = TextWrapping.Wrap,
@@ -315,7 +315,8 @@ internal sealed class AndroidPairingPanel : UserControl
                 : pairing.CertificateSha256;
             _httpDiagnosticCheckBox.IsEnabled = _server.HttpDiagnosticPort > 0;
             var transportName = useHttp ? "HTTP sem criptografia" : "HTTPS";
-            _status.Text = $"Listener {transportName} iniciado · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
+            var discoveryStatus = _server.DiscoveryError ?? $"descoberta UDP ativa na porta {JmdroidApiServer.DiscoveryUdpPort}";
+            _status.Text = $"Listener {transportName} iniciado · {discoveryStatus} · QR válido até {pairing.ExpiresAt.ToLocalTime():HH:mm:ss}. " +
                            (useHttp ? "Use em uma rede local confiável." : "No navegador, aceite o certificado local.");
             RefreshLists();
         }
@@ -427,7 +428,7 @@ internal sealed class AndroidPairingPanel : UserControl
         {
             var listeningAddress = _server.ListeningAddress ?? throw new InvalidOperationException("A API ainda não está ouvindo em um endereço de rede.");
             await JmdroidFirewallRule.ConfigurePrivateNetworkAccessAsync(listeningAddress, _server.ListeningPort);
-            _status.Text = $"Firewall configurado para a porta {_server.ListeningPort} na rede local. O celular e o computador precisam estar na mesma rede.";
+            _status.Text = $"Firewall configurado para a API TCP {_server.ListeningPort} e a descoberta UDP {JmdroidApiServer.DiscoveryUdpPort}, limitadas à rede local. O celular e o computador precisam estar na mesma rede.";
         }
         catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
         {
@@ -466,7 +467,7 @@ internal sealed class AndroidPairingPanel : UserControl
             approve.Click += (_, _) =>
             {
                 if (!_server.ApprovePairing(request.Id))
-                    MessageBox.Show(Window.GetWindow(this), "O pedido expirou. Gere um novo QR code e tente novamente.", "Pareamento", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show(Window.GetWindow(this), "O pedido expirou ou a identidade mudou. Peça uma nova conexão no JMDroid e confira a chave do aparelho.", "Pareamento", MessageBoxButton.OK, MessageBoxImage.Information);
                 RefreshLists();
             };
             var deny = SmallButton("Negar", false);
@@ -477,7 +478,8 @@ internal sealed class AndroidPairingPanel : UserControl
             layout.Children.Add(actions);
             layout.Children.Add(new TextBlock
             {
-                Text = $"{request.DeviceName}\nJMDroid {request.AppVersion}",
+                Text = $"{request.DeviceName}\nJMDroid {request.AppVersion}" +
+                       (request.IdentityPeerId is { Length: >= 12 } peerId ? $"\nIdentidade {peerId[..12]}" : string.Empty),
                 Foreground = Brushes.White,
                 VerticalAlignment = VerticalAlignment.Center
             });
