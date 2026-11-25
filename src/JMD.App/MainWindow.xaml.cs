@@ -2497,13 +2497,13 @@ public partial class MainWindow : Window
             }
         }
         var capture = TodoTaskClipboardCapturePolicy.Resolve(copiedContent?.Text, copiedContent?.Html, selectedFiles);
-        var connectedPeers = await GetConnectedDesktopPeersAsync();
+        var availablePeers = _settings.DesktopPeers.ToArray();
         var dialog = new TodoTaskEditWindow(initialDescription: capture.Description, initialUrls: capture.Urls,
-            initialAttachments: capture.Attachments, connectedPeers: connectedPeers);
+            initialAttachments: capture.Attachments, connectedPeers: availablePeers);
         if (!ShowTodoTaskDialog(dialog)) return false;
         if (dialog.TargetPeerId is { } targetPeerId)
         {
-            var peer = connectedPeers.FirstOrDefault(candidate => candidate.Id == targetPeerId);
+            var peer = availablePeers.FirstOrDefault(candidate => candidate.Id == targetPeerId);
             if (peer is null) return false;
             try
             {
@@ -2781,12 +2781,12 @@ public partial class MainWindow : Window
 
     private async void EditTodoTask(TodoTask task)
     {
-        var connectedPeers = await GetConnectedDesktopPeersAsync();
-        var dialog = new TodoTaskEditWindow(task, connectedPeers: connectedPeers);
+        var availablePeers = _settings.DesktopPeers.ToArray();
+        var dialog = new TodoTaskEditWindow(task, connectedPeers: availablePeers);
         if (!ShowTodoTaskDialog(dialog)) return;
         if (dialog.TargetPeerId is { } targetPeerId)
         {
-            var peer = connectedPeers.FirstOrDefault(candidate => candidate.Id == targetPeerId);
+            var peer = availablePeers.FirstOrDefault(candidate => candidate.Id == targetPeerId);
             if (peer is null) return;
             try
             {
