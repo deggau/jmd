@@ -101,6 +101,7 @@ public partial class MainWindow : Window
     private bool _loadingNotificationSchedule;
     private bool _loadingAdvancedSoundSettings;
     private bool _showingDialog;
+    private TodoTaskEditWindow? _activeTodoTaskEditWindow;
     private bool _checkingUpdates;
     private readonly AsyncLocal<CommandExecutionContext?> _commandExecutionContext = new();
     private IntPtr _dictationTargetWindow;
@@ -2534,7 +2535,10 @@ public partial class MainWindow : Window
     private async Task AppendSelectionToTodoTaskAsync()
     {
         var sourceWindow = _previousWindow;
-        if (sourceWindow == IntPtr.Zero || !await _keyboard.WaitForModifiersReleasedAsync() ||
+        var activeEditor = _activeTodoTaskEditWindow is { IsVisible: true } editor ? editor : null;
+        var editorHandle = activeEditor is null ? IntPtr.Zero : new WindowInteropHelper(activeEditor).Handle;
+        var sourceIsEditor = editorHandle != IntPtr.Zero && sourceWindow == editorHandle;
+        if ((!sourceIsEditor && sourceWindow == IntPtr.Zero) || !await _keyboard.WaitForModifiersReleasedAsync() ||
             _keyboard.GetForegroundWindow() != sourceWindow)
         {
             Notify("Tarefas", "Selecione uma URL, um arquivo ou um texto em outro aplicativo e tente novamente.", false);
@@ -2543,15 +2547,15 @@ public partial class MainWindow : Window
 
         var oldClipboard = _clipboard.TryGetRichContent();
         var sequenceBeforeCopy = _clipboard.SequenceNumber;
-        if (!_keyboard.SendCopy())
+        if (!sourceIsEditor && !_keyboard.SendCopy())
         {
             Notify("Tarefas", "Não foi possível copiar a seleção.", false);
             return;
         }
-        await Task.Delay(180);
+        if (!sourceIsEditor) await Task.Delay(180);
         RichClipboardContent? copiedContent = null;
         IReadOnlyList<string> selectedFiles = [];
-        if (_clipboard.SequenceNumber != sequenceBeforeCopy)
+        if (sourceIsEditor || _clipboard.SequenceNumber != sequenceBeforeCopy)
         {
             copiedContent = _clipboard.TryGetRichContent();
             try
@@ -2570,6 +2574,19 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(capture.Description) && string.IsNullOrWhiteSpace(capture.Urls) && string.IsNullOrWhiteSpace(capture.Attachments))
         {
             Notify("Tarefas", "Nenhuma URL, anexo ou texto foi encontrado na seleção.", false);
+            return;
+        }
+
+        if (activeEditor is not null)
+        {
+            var editorChanges = activeEditor.AppendCapturedContent(capture);
+            if (editorChanges.Count == 0)
+            {
+                Notify("Tarefas", "Esse conteúdo já está na tarefa em edição.", false);
+                return;
+            }
+
+            Notify("Tarefas", $"Conteúdo acrescentado à tarefa em edição: {string.Join(", ", editorChanges)}. Salve para aplicar.", true);
             return;
         }
 
@@ -2961,6 +2978,8 @@ public partial class MainWindow : Window
         }
 
         var wasShowingDialog = _showingDialog;
+        var previousTaskEditor = _activeTodoTaskEditWindow;
+        if (dialog is TodoTaskEditWindow taskEditor) _activeTodoTaskEditWindow = taskEditor;
         _showingDialog = true;
         try
         {
@@ -2968,6 +2987,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _activeTodoTaskEditWindow = previousTaskEditor;
             _showingDialog = wasShowingDialog;
             if (hasVisiblePanel) panel!.SetModalChildActive(false);
         }

@@ -428,6 +428,7 @@ internal static class TodoTaskDisplay
 internal sealed class TodoTaskEditWindow : Window
 {
     private readonly TextBlock _validation = new();
+    private readonly TextBlock _appendNotice = new();
     private readonly TextBox _title = new();
     private readonly TextBox _description = new();
     private readonly TextBox _reminderInterval = new();
@@ -561,6 +562,10 @@ internal sealed class TodoTaskEditWindow : Window
         _validation.FontSize = 11;
         _validation.Margin = new Thickness(0, 0, 0, 8);
         panel.Children.Add(_validation);
+        _appendNotice.Foreground = new SolidColorBrush(Color.FromRgb(180, 243, 106));
+        _appendNotice.FontSize = 11;
+        _appendNotice.Margin = new Thickness(0, 0, 0, 8);
+        panel.Children.Add(_appendNotice);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var cancel = CreateButton("Cancelar"); cancel.Click += (_, _) => { DialogResult = false; Close(); };
         var save = CreateButton("Salvar"); save.IsDefault = true; save.Click += (_, _) =>
@@ -590,6 +595,56 @@ internal sealed class TodoTaskEditWindow : Window
         PreviewKeyDown += TodoTaskEditWindow_PreviewKeyDown;
         _title.KeyDown += (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; _description.Focus(); } };
         _description.KeyDown += (_, e) => { if (e.Key == Key.Enter && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { e.Handled = true; save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); } };
+    }
+
+    public IReadOnlyList<string> AppendCapturedContent(TodoTaskClipboardCapture capture)
+    {
+        var changes = new List<string>();
+        if (!string.IsNullOrWhiteSpace(capture.Description))
+        {
+            var text = capture.Description.Trim();
+            if (!_description.Text.Contains(text, StringComparison.Ordinal))
+            {
+                _description.Text = string.IsNullOrWhiteSpace(_description.Text)
+                    ? text
+                    : $"{_description.Text.TrimEnd()}{Environment.NewLine}{Environment.NewLine}{text}";
+                changes.Add("texto acrescentado à descrição");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(capture.Urls))
+        {
+            var appended = AppendLines(_urls.Text, capture.Urls);
+            if (!string.Equals(appended, _urls.Text, StringComparison.Ordinal))
+            {
+                _urls.Text = appended;
+                changes.Add("URL adicionada");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(capture.Attachments))
+        {
+            var appended = AppendLines(_attachments.Text, capture.Attachments);
+            if (!string.Equals(appended, _attachments.Text, StringComparison.Ordinal))
+            {
+                _attachments.Text = appended;
+                changes.Add("anexo adicionado");
+            }
+        }
+
+        _appendNotice.Text = changes.Count == 0
+            ? "Esse conteúdo já está nos campos desta tarefa."
+            : $"Conteúdo adicionado: {string.Join(", ", changes)}. Salve para aplicar.";
+        return changes;
+    }
+
+    private static string AppendLines(string existing, string additions)
+    {
+        var lines = existing.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var known = lines.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        lines.AddRange(additions.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(known.Add));
+        return string.Join(Environment.NewLine, lines);
     }
 
     private void FocusInitialField()
