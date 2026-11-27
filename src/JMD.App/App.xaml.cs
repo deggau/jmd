@@ -410,7 +410,7 @@ internal sealed class UserSettings
         ["draftRestore"] = ShortcutDefaults.ForCommand("draftRestore"),
         ["screenShare"] = ShortcutDefaults.ForCommand("screenShare"),
         ["todoCreate"] = "Ctrl+Alt+T",
-        ["todoAppendSelection"] = "Ctrl+Alt+Q",
+        ["todoAppendSelection"] = "Ctrl+Shift+Q",
         ["todoPanel"] = "Ctrl+Alt+Left",
         ["todoPanelClose"] = "Ctrl+Alt+Right",
         ["about"] = string.Empty,
@@ -506,7 +506,10 @@ internal sealed class SettingsStore
                     }
                     loaded.Shortcuts ??= new Dictionary<string, string>(StringComparer.Ordinal);
                     loaded.Shortcuts.TryAdd("todoCreate", "Ctrl+Alt+T");
-                    loaded.Shortcuts.TryAdd("todoAppendSelection", "Ctrl+Alt+Q");
+                    if (!loaded.Shortcuts.TryGetValue("todoAppendSelection", out var appendSelectionShortcut))
+                        loaded.Shortcuts["todoAppendSelection"] = "Ctrl+Shift+Q";
+                    else if (string.Equals(appendSelectionShortcut, "Ctrl+Alt+Q", StringComparison.OrdinalIgnoreCase))
+                        loaded.Shortcuts["todoAppendSelection"] = "Ctrl+Shift+Q";
                     loaded.Shortcuts.TryAdd("todoPanel", "Ctrl+Alt+Left");
                     loaded.Shortcuts.TryAdd("todoPanelClose", "Ctrl+Alt+Right");
                     loaded.Shortcuts.TryAdd("upperCase", ShortcutDefaults.ForCommand("upperCase"));

@@ -31,6 +31,12 @@
         <Button Content="Parar" Click="StopAudioDebug_Click" Padding="10,5"
                 Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" FontSize="11" FontWeight="SemiBold" />
       </StackPanel>
+      <StackPanel x:Name="PairingActions" Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,9,0,0" Visibility="Collapsed">
+        <Button Content="Recusar" Click="DenyPairing_Click" Padding="10,6" Margin="0,0,7,0"
+                Background="#FF30343E" Foreground="White" BorderThickness="0" FontSize="11" />
+        <Button Content="Aprovar" Click="ApprovePairing_Click" Padding="12,6"
+                Background="#FFB4F36A" Foreground="#FF17191F" BorderThickness="0" FontSize="11" FontWeight="SemiBold" />
+      </StackPanel>
       <ProgressBar x:Name="ProcessingProgress" Grid.Row="3" Height="3" Margin="0,9,0,0"
                    IsIndeterminate="True" Background="#FF3A3E48" Foreground="#FFB4F36A"
                    BorderThickness="0" Visibility="Collapsed" />

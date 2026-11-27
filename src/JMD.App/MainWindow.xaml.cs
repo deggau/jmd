@@ -86,6 +86,9 @@ public partial class MainWindow : Window
     private readonly AppNavigationState _navigation = new();
     private ICollectionView? _commandView;
     private readonly List<ShortcutRow> _shortcutRows = [];
+    private readonly Dictionary<string, Border> _shortcutCards = new(StringComparer.Ordinal);
+    private TextBox? _shortcutSearchBox;
+    private TextBlock? _shortcutSearchEmptyState;
     private readonly DraftStack _draftStack = new();
     private readonly Dictionary<string, TextBlock> _shortcutStatusLabels = new(StringComparer.Ordinal);
     private GlobalHotkeyService? _hotkeys;
@@ -118,6 +121,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<TodoTask> _todoTasks;
     private TodoTaskPanelWindow? _todoTaskPanel;
     private JmdroidApiServer? _jmdroidApiServer;
+    private readonly Dictionary<string, JmdNotificationWindow> _jmdroidPairingNotifications = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _dismissedJmdroidPairingRequests = new(StringComparer.Ordinal);
     private string? _lastJmdroidApiStartError;
     private readonly Dictionary<string, AndroidScreenShareWindow> _androidScreenShareWindows = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (string ShareId, CancellationTokenSource Cancellation)> _desktopScreenCaptures = new(StringComparer.Ordinal);
@@ -549,6 +554,9 @@ public partial class MainWindow : Window
         SettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
+        _shortcutCards.Clear();
+        _shortcutSearchBox = null;
+        _shortcutSearchEmptyState = null;
         AddManagementNavigation(SettingsPanel, workflowsSelected: false);
         SettingsPanel.Children.Add(new TextBlock
         {
@@ -566,6 +574,31 @@ public partial class MainWindow : Window
             FontSize = 12,
             Margin = new Thickness(0, 0, 0, 14)
         });
+
+        _shortcutSearchBox = new TextBox
+        {
+            Height = 48,
+            Padding = new Thickness(16, 12, 16, 12),
+            FontSize = 15,
+            Background = new SolidColorBrush(Color.FromRgb(36, 39, 48)),
+            Foreground = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(58, 62, 72)),
+            CaretBrush = new SolidColorBrush(Color.FromRgb(180, 243, 106)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 12),
+            ToolTip = "Buscar por nome do comando, descrição, atalho ou frase de voz"
+        };
+        _shortcutSearchBox.TextChanged += ShortcutSearchBox_TextChanged;
+        SettingsPanel.Children.Add(_shortcutSearchBox);
+        _shortcutSearchEmptyState = new TextBlock
+        {
+            Text = "Nenhum comando corresponde à busca.",
+            Foreground = new SolidColorBrush(Color.FromRgb(150, 155, 167)),
+            FontSize = 12,
+            Margin = new Thickness(2, 0, 2, 10),
+            Visibility = Visibility.Collapsed
+        };
+        SettingsPanel.Children.Add(_shortcutSearchEmptyState);
 
         (string Id, string Name, string Description)[] configurableCommands =
         [
@@ -622,6 +655,7 @@ public partial class MainWindow : Window
             row.Status = status.Status;
             row.StatusBrush = status.StatusBrush;
         }
+        FilterShortcutSettings();
         RefreshShortcutStatuses();
     }
 
@@ -632,6 +666,9 @@ public partial class MainWindow : Window
         WorkflowSettingsPanel.Children.Clear();
         _shortcutRows.Clear();
         _shortcutStatusLabels.Clear();
+        _shortcutCards.Clear();
+        _shortcutSearchBox = null;
+        _shortcutSearchEmptyState = null;
         AddManagementNavigation(WorkflowSettingsPanel, workflowsSelected: true);
         WorkflowSettingsPanel.Children.Add(new TextBlock
         {
@@ -870,6 +907,7 @@ public partial class MainWindow : Window
             Padding = new Thickness(14),
             Margin = new Thickness(0, 0, 0, 8)
         };
+        _shortcutCards[id] = card;
         var content = new StackPanel();
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition());
@@ -965,6 +1003,28 @@ public partial class MainWindow : Window
         (target ?? SettingsPanel).Children.Add(card);
     }
 
+    private void ShortcutSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        => FilterShortcutSettings();
+
+    private void FilterShortcutSettings()
+    {
+        var query = _shortcutSearchBox?.Text.Trim() ?? string.Empty;
+        var visibleCount = 0;
+        foreach (var row in _shortcutRows)
+        {
+            var matches = query.Length == 0 ||
+                row.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                row.Description.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                row.Shortcut.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                GetVoicePhrasesText(row.Id).Contains(query, StringComparison.CurrentCultureIgnoreCase);
+            if (_shortcutCards.TryGetValue(row.Id, out var card))
+                card.Visibility = matches ? Visibility.Visible : Visibility.Collapsed;
+            if (matches) visibleCount++;
+        }
+        if (_shortcutSearchEmptyState is not null)
+            _shortcutSearchEmptyState.Visibility = visibleCount == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private string GetVoicePhrasesText(string commandId)
         => _settings.VoicePhrases.TryGetValue(commandId, out var phrases)
             ? string.Join(Environment.NewLine, phrases.Where(phrase => !string.IsNullOrWhiteSpace(phrase)))
@@ -993,6 +1053,7 @@ public partial class MainWindow : Window
             return;
         }
         _settings.VoicePhrases[commandId] = phrases;
+        FilterShortcutSettings();
         UpdateVoiceCommandPhrases();
         var command = _commands.FirstOrDefault(item => item.Id == commandId);
         if (command is not null) command.VoicePhrasesDisplay = GetVoicePhrasesDisplay(commandId);
@@ -1777,6 +1838,7 @@ public partial class MainWindow : Window
             SetStatus($"Atalho ativo, mas não foi possível salvar: {exception.Message}", false);
         }
         row.Shortcut = shortcut;
+        FilterShortcutSettings();
         row.Status = row.Enabled
             ? _navigation.IsEditingShortcuts ? "Ativado ao sair das configurações" : "Ativo"
             : "Desativado";
@@ -3074,6 +3136,10 @@ public partial class MainWindow : Window
 
     private void CheckTodoTaskReminders(object? sender, EventArgs e)
     {
+        // Task reminders are a notification event: outside the configured window,
+        // defer both the popup and its sound until the next timer tick in range.
+        if (!IsNotificationTimeAllowed(DateTime.Now)) return;
+
         var now = DateTimeOffset.Now;
         var dueTasks = _todoTasks.Where(task => task.CompletedAt is null && task.PausedAt is null && task.ReminderIntervalMinutes is { } interval &&
             now - (task.LastReminderAt ?? task.CreatedAt) >= TimeSpan.FromMinutes(interval)).ToList();
@@ -4935,8 +5001,52 @@ public partial class MainWindow : Window
             _jmdroidApiServer.ScreenShareEnded += UpdateAndroidScreenShareStatus;
             _jmdroidApiServer.DesktopScreenShareReady += StartDesktopScreenCapture;
             _jmdroidApiServer.DesktopScreenShareEnded += StopDesktopScreenCapture;
+            _jmdroidApiServer.PairingRequestsChanged += ShowNextJmdroidPairingRequest;
         }
         return _jmdroidApiServer;
+    }
+
+    private void ShowNextJmdroidPairingRequest()
+    {
+        _ = Dispatcher.BeginInvoke(new Action(ShowNextJmdroidPairingRequestOnUiThread));
+    }
+
+    private void ShowNextJmdroidPairingRequestOnUiThread()
+    {
+        var server = _jmdroidApiServer;
+        if (server is null) return;
+        var requests = server.GetPendingRequests()
+            .Where(request => request.IdentityPeerId is not null)
+            .OrderBy(request => request.CreatedAt)
+            .ToArray();
+        var pendingIds = requests.Select(request => request.Id).ToHashSet(StringComparer.Ordinal);
+        _dismissedJmdroidPairingRequests.RemoveWhere(requestId => !pendingIds.Contains(requestId));
+
+        foreach (var active in _jmdroidPairingNotifications.ToArray())
+            if (!pendingIds.Contains(active.Key)) active.Value.Close();
+        if (_jmdroidPairingNotifications.Count > 0) return;
+
+        var request = requests.FirstOrDefault(candidate => !_dismissedJmdroidPairingRequests.Contains(candidate.Id));
+        if (request is null) return;
+        var displayDuration = request.CreatedAt.AddMinutes(5) - DateTimeOffset.UtcNow;
+        if (displayDuration <= TimeSpan.Zero) return;
+
+        var identity = request.IdentityPeerId!;
+        var message = $"{request.DeviceName} · JMDroid {request.AppVersion}\nIdentidade: {identity[..Math.Min(identity.Length, 16)]}\nAprovar o acesso deste celular ao JMD?";
+        var notification = new JmdNotificationWindow(message, historyId: null, displayDuration: displayDuration,
+            resolvePairing: approve => approve
+                ? server.ApprovePairing(request.Id)
+                : server.DenyPairing(request.Id));
+        _jmdroidPairingNotifications[request.Id] = notification;
+        notification.Closed += (_, _) =>
+        {
+            _jmdroidPairingNotifications.Remove(request.Id);
+            if (server.GetPendingRequests().Any(pending => pending.Id == request.Id))
+                _dismissedJmdroidPairingRequests.Add(request.Id);
+            ShowNextJmdroidPairingRequest();
+        };
+        PrepareWindowForCaptureExclusion(notification);
+        notification.Show();
     }
 
     private void ShowAndroidScreenShareWindow(string deviceId, string deviceName, string shareId)
